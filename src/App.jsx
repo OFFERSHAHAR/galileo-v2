@@ -470,9 +470,6 @@ export default function App() {
     toastTimer.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2500);
   };
 
-  // ── Setup callback ────────────────────────────────────────────────────────
-  if (showSetup) return <SetupScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||"גליליאו"); setShowSetup(false); }}/>;
-
   // ── Load cache on start ───────────────────────────────────────────────────
   useEffect(()=>{
     try {
@@ -658,6 +655,9 @@ export default function App() {
   // ════════════════════════════════════════════════════════════════════════════
   // SCREEN: LOGIN
   // ════════════════════════════════════════════════════════════════════════════
+  // ── Setup screen ──────────────────────────────────────────────────────────
+  if (showSetup) return <SetupScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||"גליליאו"); setShowSetup(false); }}/>;
+
   if(screen==="login") return (
     <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}`}</style>
