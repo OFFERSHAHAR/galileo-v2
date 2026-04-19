@@ -397,7 +397,8 @@ export default function App() {
   const [workStart,setWorkStart]     = useState(()=>localStorage.getItem("galileo_workstart")||null);
   const [workLogs,setWorkLogs]       = useState(()=>{try{return JSON.parse(localStorage.getItem("galileo_worklogs")||"[]");}catch{return [];}});
   const [showQR,setShowQR]           = useState(false);
-  const [showQRCode,setShowQRCode]   = useState(null); // client name to show QR for
+  const [showQRCode,setShowQRCode]   = useState(null);
+  const [dismissed,setDismissed]     = useState(false); // client name to show QR for
   const logoLongPress = useRef();
   const fileRef = useRef();
   const toastTimer = useRef();
@@ -547,7 +548,7 @@ export default function App() {
     setSyncing(true);
     let saved=false;
     if(sheetId){const res=await sheetCall("saveReport",{report}).catch(()=>null);saved=res?.success===true;}
-    if(!saved)setPending(p=>[...p,report]);
+    if(!saved){setPending(p=>[...p,report]);setDismissed(false);}
     setSyncing(false);
     const phone=clientPhone(client);
     const waMsg=buildWA(report);
@@ -667,6 +668,41 @@ export default function App() {
 
         {/* Tasks */}
         <div style={{padding:"16px 16px 0"}}>
+          {/* Pending banner */}
+          {pending.length>0&&!dismissed&&(
+            <div style={{...card({background:"#fff8e1",border:"1px solid #ffe082",marginBottom:12,display:"flex",alignItems:"center",gap:10}),padding:"12px 16px"}}>
+              <span style={{fontSize:18}}>⚠️</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:13,color:C.orange}}>{pending.length} דוחות ממתינים לשליחה</div>
+                <div style={{fontSize:11,color:C.muted}}>שמורים מקומית — לחץ לשליחה</div>
+              </div>
+              <Press onClick={async()=>{
+                setSyncing(true);
+                let ok=true;
+                for(const r of pending){
+                  const res=await sheetCall("saveReport",{report:r}).catch(()=>null);
+                  if(!res?.success)ok=false;
+                }
+                if(ok){setPending([]);showToast("✅ כל הדוחות נשלחו!");}
+                setSyncing(false);
+              }} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>
+                {syncing?"...":"שלח"}
+              </Press>
+              <Press onClick={()=>setDismissed(true)}
+                style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
+            </div>
+          )}
+
+          {/* Manual report button */}
+          <Press onClick={()=>{setForm(blank());setScreen("form");haptic("medium");}}
+            style={{...card({marginBottom:16,display:"flex",alignItems:"center",gap:12,border:`2px dashed ${C.lightBlue}`,background:"#f5f9ff"}),padding:"14px 18px"}}>
+            <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📝</div>
+            <div>
+              <div style={{fontWeight:800,fontSize:15,color:C.blue}}>+ פתח דוח חדש</div>
+              <div style={{fontSize:12,color:C.muted}}>דוח ידני — בחירת לקוח חופשית</div>
+            </div>
+          </Press>
+
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
             <h2 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:0}}>משימות היום</h2>
             <input type="date" value={dailyDate} onChange={e=>setDailyDate(e.target.value)}
@@ -733,6 +769,23 @@ export default function App() {
                     </div>
                   </div>
                 )}
+
+                {/* Follow-up for restricted pool */}
+                {(()=>{
+                  const lr=lastReadings[t.client];
+                  const isRestricted = lr?.poolStatus==="אחר" && lr?.restrictedUntil;
+                  if(!isRestricted) return null;
+                  const phone = clientPhone(t.client);
+                  const msg = `שלום!\nהגבלת השימוש בבריכה הסתיימה ב-${fmtDate(lr.restrictedUntil)}.\nהבריכה מוכנה לשימוש מלא 🏊\n_צוות גליליאו_`;
+                  return (
+                    <a href={`https://wa.me/972${phone.replace(/^0/,"")}?text=${encodeURIComponent(msg)}`}
+                      target="_blank" rel="noreferrer"
+                      style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"#fff8e1",borderRadius:10,marginBottom:10,textDecoration:"none",border:"1px solid #ffe082"}}>
+                      <span style={{fontSize:16}}>📲</span>
+                      <span style={{fontSize:12,fontWeight:700,color:C.orange}}>שלח follow-up — בריכה חזרה לפעילות</span>
+                    </a>
+                  );
+                })()}
 
                 {/* Action buttons */}
                 {!done&&(
