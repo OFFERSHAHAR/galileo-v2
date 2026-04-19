@@ -492,8 +492,23 @@ export default function App() {
   const handleLogin = async () => {
     setLoginErr(""); setLoginLoading(true);
 
-    // 1. נסה להתחבר מה-cache קודם (מהיר)
-    const found = allUsers.find(u=>
+    // שלוף משתמשים עדכניים מ-Sheets
+    let usersToCheck = allUsers; // התחל עם מה שיש (cache/demo)
+    try {
+      const uRes = await sheetCall("getUsers");
+      if (uRes?.users?.length) {
+        usersToCheck = uRes.users;
+        setAllUsers(uRes.users);
+        // שמור ב-cache
+        try {
+          const cached = localStorage.getItem("galileo_cache");
+          const cacheData = cached ? JSON.parse(cached) : {};
+          localStorage.setItem("galileo_cache", JSON.stringify({...cacheData, users:uRes.users}));
+        } catch {}
+      }
+    } catch {}
+
+    const found = usersToCheck.find(u=>
       u.username.toLowerCase()===loginUser.toLowerCase().trim() &&
       u.password.toLowerCase()===loginPass.toLowerCase().trim()
     );
@@ -503,24 +518,7 @@ export default function App() {
       localStorage.setItem("galileo_user", JSON.stringify(found));
       setScreen(found.role==="admin"?"admin":"daily");
       haptic("medium");
-      setLoginLoading(false);
-      // רענן נתונים ברקע
-      connectSheets(true);
-      return;
-    }
-
-    // 2. אם לא נמצא ב-cache — נסה מ-Sheets
-    await connectSheets(false);
-    const foundFromSheets = allUsers.find(u=>
-      u.username.toLowerCase()===loginUser.toLowerCase().trim() &&
-      u.password.toLowerCase()===loginPass.toLowerCase().trim()
-    );
-
-    if(foundFromSheets){
-      setUser(foundFromSheets);
-      localStorage.setItem("galileo_user", JSON.stringify(foundFromSheets));
-      setScreen(foundFromSheets.role==="admin"?"admin":"daily");
-      haptic("medium");
+      connectSheets(true); // רענן שאר הנתונים ברקע
     } else {
       setLoginErr("שם משתמש או סיסמה שגויים");
     }
