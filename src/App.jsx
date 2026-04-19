@@ -366,7 +366,9 @@ export default function App() {
   const company = getCompany();
   const [showSetup, setShowSetup] = useState(!company.name);
   const [companyName, setCompanyName] = useState(company.name||"גליליאו");
-  const [user,setUser]               = useState(null);
+  const [user,setUser]               = useState(()=>{
+    try { return JSON.parse(localStorage.getItem("galileo_user")||"null"); } catch { return null; }
+  });
   const [loginUser,setLoginUser]     = useState("");
   const [loginPass,setLoginPass]     = useState("");
   const [loginErr,setLoginErr]       = useState("");
@@ -379,7 +381,12 @@ export default function App() {
   const [lastReadings,setLastReadings] = useState({}); // {clientName: {chlorine, ph, date}}
   const [reports,setReports]         = useState([]);
   const [pending,setPending]         = useState([]);
-  const [screen,setScreen]           = useState("login");
+  const [screen,setScreen]           = useState(()=>{
+    try {
+      const u = JSON.parse(localStorage.getItem("galileo_user")||"null");
+      return u ? (u.role==="admin"?"admin":"daily") : "login";
+    } catch { return "login"; }
+  });
   const [syncing,setSyncing]         = useState(false);
   const [form,setForm]               = useState(blank());
   const [adminTab,setAdminTab]       = useState("daily");
@@ -415,6 +422,15 @@ export default function App() {
   const myTasks       = (date=dailyDate) => tasks.filter(t=>t.date===date&&(user?.role==="admin"||t.operators.includes(user?.name)));
   const todayReported = reports.filter(r=>r.reportDate===dailyDate&&r.operator===user?.name).map(r=>r.client);
 
+  const handleLogout = () => {
+    localStorage.removeItem("galileo_user");
+    setUser(null);
+    setLoginUser("");
+    setLoginPass("");
+    setScreen("login");
+    haptic("medium");
+  };
+
   const showToast = (msg) => {
     clearTimeout(toastTimer.current);
     setToast({msg,visible:true});
@@ -423,6 +439,24 @@ export default function App() {
 
   // ── Setup callback ────────────────────────────────────────────────────────
   if (showSetup) return <SetupScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||"גליליאו"); setShowSetup(false); }}/>;
+
+  // ── Load cache on start ───────────────────────────────────────────────────
+  useEffect(()=>{
+    try {
+      const cached = localStorage.getItem("galileo_cache");
+      if(cached){
+        const {users,clients:cls,tasks:tsk,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached);
+        if(users?.length) setAllUsers(users);
+        if(cls?.length)   setClients(cls);
+        if(tsk)           setTasks(tsk);
+        if(sdb)           setSupplyDB(sdb);
+        if(lr)            setLastReadings(lr);
+        setSheetId("connected");
+      }
+    } catch {}
+    // Refresh in background
+    connectSheets(true);
+  },[]);
 
   // ── Sheets ────────────────────────────────────────────────────────────────
   const connectSheets = async (bg=false) => {
@@ -459,7 +493,12 @@ export default function App() {
     setLoginErr(""); setLoginLoading(true);
     await connectSheets();
     const found = allUsers.find(u=>u.username.toLowerCase()===loginUser.toLowerCase().trim()&&u.password.toLowerCase()===loginPass.toLowerCase().trim());
-    if(found){setUser(found);setScreen(found.role==="admin"?"admin":"daily");haptic("medium");}
+    if(found){
+      setUser(found);
+      localStorage.setItem("galileo_user", JSON.stringify(found));
+      setScreen(found.role==="admin"?"admin":"daily");
+      haptic("medium");
+    }
     else setLoginErr("שם משתמש או סיסמה שגויים");
     setLoginLoading(false);
   };
@@ -625,7 +664,7 @@ export default function App() {
               <h1 style={{color:"#fff",fontSize:24,fontWeight:900,margin:0,lineHeight:1.1}}>שלום, {user?.name}! {user?.icon}</h1>
               <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,margin:"4px 0 0"}}>{user?.welcomeMessage}</p>
             </div>
-            <Press onClick={()=>{setUser(null);setScreen("login");}}
+            <Press onClick={handleLogout}
               style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>
               יציאה
             </Press>
@@ -844,19 +883,29 @@ export default function App() {
         {showQR&&(
           <QRScanner
             onClose={()=>setShowQR(false)}
-            onResult={(clientName)=>{
+            onResult={(scannedUrl)=>{
               setShowQR(false);
-              // Find matching task for this client today
-              const match = myTasks(dailyDate).find(t=>
-                t.client.includes(clientName)||clientName.includes(t.client.split(" - ")[0])
+              // Try match by qrUrl first, then by client name
+              const byUrl  = clients.find(c=>c.qrUrl&&scannedUrl.includes(c.qrUrl));
+              const byName = clients.find(c=>scannedUrl.includes(c.name.split(" - ")[0]));
+              const matched = byUrl || byName;
+              // Find matching task
+              const matchTask = matched && myTasks(dailyDate).find(t=>
+                t.client===matched.name || t.client.includes(matched.name.split(" - ")[0])
               );
-              if(match){
+              if(matchTask){
                 haptic("success");
-                setForm({...blank(),client:match.client,reportDate:dailyDate,clientLocked:true});
+                setForm({...blank(),client:matchTask.client,reportDate:dailyDate,clientLocked:true});
                 setScreen("form");
-                showToast(`✅ נפתח דוח עבור ${match.client.split(" - ")[0]}`);
+                showToast(`✅ נפתח דוח עבור ${matchTask.client.split(" - ")[0]}`);
+              } else if(matched) {
+                // Client found but no task — open free report
+                haptic("medium");
+                setForm({...blank(),client:matched.name,reportDate:dailyDate,clientLocked:true});
+                setScreen("form");
+                showToast(`📝 נפתח דוח עבור ${matched.name.split(" - ")[0]}`);
               } else {
-                showToast("⚠️ לקוח לא נמצא בלוח היומי");
+                showToast("⚠️ לקוח לא זוהה");
               }
             }}
           />
@@ -1168,7 +1217,7 @@ export default function App() {
               <p style={{color:"rgba(255,255,255,0.65)",fontSize:12,fontWeight:600,margin:"0 0 4px"}}>פאנל ניהול 👔</p>
               <h1 style={{color:"#fff",fontSize:22,fontWeight:900,margin:0}}>שלום, {user?.name}</h1>
             </div>
-            <Press onClick={()=>{setUser(null);setScreen("login");}}
+            <Press onClick={handleLogout}
               style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>
               יציאה
             </Press>
