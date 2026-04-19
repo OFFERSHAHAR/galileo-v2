@@ -419,24 +419,34 @@ export default function App() {
   const clientAddress = (n) => (clients.find(c=>c.name===n)||{}).address||"";
   const operatorUsers = allUsers.filter(u=>u.role==="operator");
   const opNames       = operatorUsers.map(u=>u.name);
-  // ── Normalize date helper ─────────────────────────────────────────────────
-  const normalizeDate = (d) => {
-    if(!d) return "";
-    // Handle ISO timestamp like "2026-04-19T00:00:00.000Z"
-    return String(d).slice(0,10);
-  };
 
-  const myTasks = (date=dailyDate) => tasks.filter(t=>
-    normalizeDate(t.date)===date &&
-    (user?.role==="admin" || t.operators.includes(user?.name))
-  );
+  // ── Normalize helpers ─────────────────────────────────────────────────────
+  const normalizeDate = (d) => String(d||"").trim().slice(0,10);
+  const normalizeName = (n) => String(n||"").trim().toLowerCase();
+
+  const myTasks = (date=dailyDate) => tasks.filter(t=>{
+    const tDate = normalizeDate(t.date);
+    const tDate2 = tDate.includes("T") ? tDate.split("T")[0] : tDate;
+    const dateMatch = tDate2 === date;
+    const nameMatch = user?.role==="admin" ||
+      (t.operators||[]).some(op => normalizeName(op)===normalizeName(user?.name));
+    return dateMatch && nameMatch;
+  });
 
   // ── Auto refresh tasks every 30 seconds ──────────────────────────────────
   useEffect(()=>{
     if(!user) return;
     const interval = setInterval(async()=>{
       const tR = await sheetCall("getTasks");
-      if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
+      if(Array.isArray(tR?.tasks) && tR.tasks.length>0) {
+        setTasks(tR.tasks);
+        // Update cache
+        try {
+          const cached = localStorage.getItem("galileo_cache");
+          const c = cached ? JSON.parse(cached) : {};
+          localStorage.setItem("galileo_cache", JSON.stringify({...c, tasks:tR.tasks}));
+        } catch {}
+      }
     }, 30000);
     return ()=>clearInterval(interval);
   },[user]);
@@ -549,7 +559,8 @@ export default function App() {
   const saveTask = async (task) => {
     const isEdit=!!editTaskId;
     const cleanTask={...task, date: task.date?.slice(0,10)||todayStr()};
-    const logEntry={at:nowStr(),note:taskNote||(isEdit?"משימה עודכנה":"משימה נוצרה"),by:user?.name,...(taskNote?{needsAck:true,ackedBy:[]}:{})};
+    // needsAck תמיד — גם ביצירה וגם בעריכה
+    const logEntry={at:nowStr(),note:taskNote||(isEdit?"משימה עודכנה":"📋 משימה חדשה הוקצתה לך"),by:user?.name,needsAck:true,ackedBy:[]};
     const newTasks=isEdit?tasks.map(t=>t.id===editTaskId?{...t,...cleanTask,changeLog:[...(t.changeLog||[]),logEntry]}:t):[...tasks,{id:Date.now(),...cleanTask,status:"pending",changeLog:[logEntry]}];
     setTasks(newTasks); setEditTaskId(null); setTaskClient(""); setTaskOps([]); setTaskNote("");
     if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
@@ -1353,7 +1364,14 @@ export default function App() {
                       </select>
                       <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}}
                         style={{padding:"7px 14px",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:12,fontWeight:700}}>✏️</Press>
-                      <Press onClick={async()=>{if(!window.confirm("למחוק?"))return;const n=tasks.filter(x=>x.id!==t.id);setTasks(n);if(sheetId)await sheetCall("saveTasks",{tasks:n});showToast("🗑️ משימה נמחקה");}}
+                      <Press onClick={async()=>{
+                if(!window.confirm("למחוק?"))return;
+                // הוסף לוג מחיקה לכל שאר המשימות של אותו לקוח שיום
+                const n=tasks.filter(x=>x.id!==t.id);
+                setTasks(n);
+                if(sheetId)await sheetCall("saveTasks",{tasks:n});
+                showToast("🗑️ משימה נמחקה");
+              }}
                         style={{padding:"7px 14px",borderRadius:10,background:"#ffebee",color:C.red,fontSize:12,fontWeight:700}}>🗑️</Press>
                     </div>
                     {lastLog&&(
