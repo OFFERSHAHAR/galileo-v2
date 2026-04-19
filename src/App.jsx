@@ -491,15 +491,39 @@ export default function App() {
 
   const handleLogin = async () => {
     setLoginErr(""); setLoginLoading(true);
-    await connectSheets();
-    const found = allUsers.find(u=>u.username.toLowerCase()===loginUser.toLowerCase().trim()&&u.password.toLowerCase()===loginPass.toLowerCase().trim());
+
+    // 1. נסה להתחבר מה-cache קודם (מהיר)
+    const found = allUsers.find(u=>
+      u.username.toLowerCase()===loginUser.toLowerCase().trim() &&
+      u.password.toLowerCase()===loginPass.toLowerCase().trim()
+    );
+
     if(found){
       setUser(found);
       localStorage.setItem("galileo_user", JSON.stringify(found));
       setScreen(found.role==="admin"?"admin":"daily");
       haptic("medium");
+      setLoginLoading(false);
+      // רענן נתונים ברקע
+      connectSheets(true);
+      return;
     }
-    else setLoginErr("שם משתמש או סיסמה שגויים");
+
+    // 2. אם לא נמצא ב-cache — נסה מ-Sheets
+    await connectSheets(false);
+    const foundFromSheets = allUsers.find(u=>
+      u.username.toLowerCase()===loginUser.toLowerCase().trim() &&
+      u.password.toLowerCase()===loginPass.toLowerCase().trim()
+    );
+
+    if(foundFromSheets){
+      setUser(foundFromSheets);
+      localStorage.setItem("galileo_user", JSON.stringify(foundFromSheets));
+      setScreen(foundFromSheets.role==="admin"?"admin":"daily");
+      haptic("medium");
+    } else {
+      setLoginErr("שם משתמש או סיסמה שגויים");
+    }
     setLoginLoading(false);
   };
 
