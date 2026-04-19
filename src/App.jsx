@@ -419,7 +419,27 @@ export default function App() {
   const clientAddress = (n) => (clients.find(c=>c.name===n)||{}).address||"";
   const operatorUsers = allUsers.filter(u=>u.role==="operator");
   const opNames       = operatorUsers.map(u=>u.name);
-  const myTasks       = (date=dailyDate) => tasks.filter(t=>t.date===date&&(user?.role==="admin"||t.operators.includes(user?.name)));
+  // ── Normalize date helper ─────────────────────────────────────────────────
+  const normalizeDate = (d) => {
+    if(!d) return "";
+    // Handle ISO timestamp like "2026-04-19T00:00:00.000Z"
+    return String(d).slice(0,10);
+  };
+
+  const myTasks = (date=dailyDate) => tasks.filter(t=>
+    normalizeDate(t.date)===date &&
+    (user?.role==="admin" || t.operators.includes(user?.name))
+  );
+
+  // ── Auto refresh tasks every 30 seconds ──────────────────────────────────
+  useEffect(()=>{
+    if(!user) return;
+    const interval = setInterval(async()=>{
+      const tR = await sheetCall("getTasks");
+      if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
+    }, 30000);
+    return ()=>clearInterval(interval);
+  },[user]);
   const todayReported = reports.filter(r=>r.reportDate===dailyDate&&r.operator===user?.name).map(r=>r.client);
 
   const handleLogout = () => {
@@ -528,8 +548,9 @@ export default function App() {
   // ── Tasks ─────────────────────────────────────────────────────────────────
   const saveTask = async (task) => {
     const isEdit=!!editTaskId;
+    const cleanTask={...task, date: task.date?.slice(0,10)||todayStr()};
     const logEntry={at:nowStr(),note:taskNote||(isEdit?"משימה עודכנה":"משימה נוצרה"),by:user?.name,...(taskNote?{needsAck:true,ackedBy:[]}:{})};
-    const newTasks=isEdit?tasks.map(t=>t.id===editTaskId?{...t,...task,changeLog:[...(t.changeLog||[]),logEntry]}:t):[...tasks,{id:Date.now(),...task,status:"pending",changeLog:[logEntry]}];
+    const newTasks=isEdit?tasks.map(t=>t.id===editTaskId?{...t,...cleanTask,changeLog:[...(t.changeLog||[]),logEntry]}:t):[...tasks,{id:Date.now(),...cleanTask,status:"pending",changeLog:[logEntry]}];
     setTasks(newTasks); setEditTaskId(null); setTaskClient(""); setTaskOps([]); setTaskNote("");
     if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
     showToast(isEdit?"✏️ משימה עודכנה":"✅ משימה נוספה");
