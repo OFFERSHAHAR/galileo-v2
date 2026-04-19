@@ -667,7 +667,7 @@ export default function App() {
           onPointerDown={()=>{ logoLongPress.current = setTimeout(()=>{ haptic("success"); setShowSetup(true); }, 3000); }}
           onPointerUp={()=>clearTimeout(logoLongPress.current)}
           onPointerLeave={()=>clearTimeout(logoLongPress.current)}>
-          <div style={{fontSize:60,marginBottom:12,filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))",cursor:"pointer"}}>🌊</div>
+          <div style={{fontSize:60,marginBottom:12,filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))",cursor:"pointer",userSelect:"none"}}>🌊</div>
           <h1 style={{color:"#fff",fontSize:28,fontWeight:900,margin:"0 0 6px",letterSpacing:"-0.5px"}}>{companyName}</h1>
           <p style={{color:"rgba(255,255,255,0.6)",fontSize:14,margin:0}}>מערכת ניהול בריכות</p>
         </div>
@@ -721,10 +721,16 @@ export default function App() {
               <h1 style={{color:"#fff",fontSize:24,fontWeight:900,margin:0,lineHeight:1.1}}>שלום, {user?.name}! {user?.icon}</h1>
               <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,margin:"4px 0 0"}}>{user?.welcomeMessage}</p>
             </div>
-            <Press onClick={handleLogout}
-              style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>
-              יציאה
-            </Press>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <div onPointerDown={()=>{logoLongPress.current=setTimeout(()=>{haptic("success");setShowSetup(true);},3000);}}
+                onPointerUp={()=>clearTimeout(logoLongPress.current)}
+                onPointerLeave={()=>clearTimeout(logoLongPress.current)}
+                style={{fontSize:18,cursor:"pointer",userSelect:"none",padding:"4px 6px",color:"rgba(255,255,255,0.4)"}}>⚙️</div>
+              <Press onClick={handleLogout}
+                style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>
+                יציאה
+              </Press>
+            </div>
           </div>
           {/* Stats */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,position:"relative"}}>
