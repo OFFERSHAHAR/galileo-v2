@@ -433,22 +433,25 @@ export default function App() {
     return dateMatch && nameMatch;
   });
 
-  // ── Auto refresh tasks every 30 seconds ──────────────────────────────────
+  // ── Auto refresh tasks every 10 seconds + on focus ──────────────────────
   useEffect(()=>{
     if(!user) return;
-    const interval = setInterval(async()=>{
+
+    const refresh = async() => {
       const tR = await sheetCall("getTasks");
       if(Array.isArray(tR?.tasks) && tR.tasks.length>0) {
         setTasks(tR.tasks);
-        // Update cache
         try {
           const cached = localStorage.getItem("galileo_cache");
           const c = cached ? JSON.parse(cached) : {};
           localStorage.setItem("galileo_cache", JSON.stringify({...c, tasks:tR.tasks}));
         } catch {}
       }
-    }, 30000);
-    return ()=>clearInterval(interval);
+    };
+
+    const interval = setInterval(refresh, 10000);
+    window.addEventListener("focus", refresh);
+    return ()=>{ clearInterval(interval); window.removeEventListener("focus", refresh); };
   },[user]);
   const todayReported = reports.filter(r=>r.reportDate===dailyDate&&r.operator===user?.name).map(r=>r.client);
 
