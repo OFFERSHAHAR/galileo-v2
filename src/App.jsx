@@ -509,8 +509,8 @@ export default function App() {
     } catch {}
 
     const found = usersToCheck.find(u=>
-      u.username.toLowerCase()===loginUser.toLowerCase().trim() &&
-      u.password.toLowerCase()===loginPass.toLowerCase().trim()
+      String(u.username).toLowerCase()===loginUser.toLowerCase().trim() &&
+      String(u.password).toLowerCase()===loginPass.toLowerCase().trim()
     );
 
     if(found){
