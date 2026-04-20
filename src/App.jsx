@@ -158,7 +158,7 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
           <span style={{color:col,fontSize:22,fontWeight:900,minWidth:50,textAlign:"right"}}>{value}{unit}</span>
         </div>
       </div>
-      <div style={{position:"relative",height:8,borderRadius:99,background:C.border,marginBottom:6}}>
+      <div dir="ltr" style={{position:"relative",height:8,borderRadius:99,background:C.border,marginBottom:6}}>
         <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${pct}%`,borderRadius:99,
           background:`linear-gradient(90deg,${C.blue},${col})`,transition:"width 0.15s"}}/>
         {optimal&&<div style={{position:"absolute",top:-4,left:`${((optimal-min)/(max-min))*100}%`,
@@ -167,7 +167,7 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
           dir="ltr"
           style={{position:"absolute",top:-8,left:0,width:"100%",opacity:0,cursor:"pointer",height:24}}/>
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.muted}}>
+      <div dir="ltr" style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.muted}}>
         <span>{min}</span>{optimal&&<span style={{color:C.blue}}>אופטימלי {optimal}</span>}<span>{max}</span>
       </div>
     </div>
