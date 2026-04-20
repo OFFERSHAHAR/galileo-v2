@@ -164,6 +164,7 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
         {optimal&&<div style={{position:"absolute",top:-4,left:`${((optimal-min)/(max-min))*100}%`,
           width:2,height:16,background:C.blue,borderRadius:2,transform:"translateX(-50%)"}}/>}
         <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(parseFloat(e.target.value))}
+          dir="ltr"
           style={{position:"absolute",top:-8,left:0,width:"100%",opacity:0,cursor:"pointer",height:24}}/>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.muted}}>
