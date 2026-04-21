@@ -413,7 +413,9 @@ export default function App() {
   const [showQRCode,setShowQRCode]   = useState(null);
   const [dismissed,setDismissed]     = useState(false);
   const [newClient,setNewClient]     = useState({name:"",phone:"",address:""});
-  const [reportFilter,setReportFilter] = useState(""); // client name to show QR for
+  const [reportFilter,setReportFilter] = useState("");
+  const [reportDateFilter,setReportDateFilter] = useState("");
+  const [sheetReports,setSheetReports] = useState([]);
   const logoLongPress = useRef();
   const fileRef = useRef();
   const toastTimer = useRef();
@@ -1570,37 +1572,73 @@ export default function App() {
           {/* ── TAB: reports ── */}
           {adminTab==="reports"&&(
             <div>
-              <div style={{marginBottom:14}}>
-                <input value={reportFilter} onChange={e=>setReportFilter(e.target.value)}
-                  placeholder="🔍 חפש לפי לקוח או מפעיל..."
-                  style={{...inp,marginBottom:0}}/>
-              </div>
-              {reports.length===0&&(
-                <div style={{...card({textAlign:"center"}),padding:32,color:C.muted,fontSize:14}}>אין דוחות עדיין</div>
-              )}
-              {[...reports].reverse().filter(r=>
-                !reportFilter || r.client?.includes(reportFilter) || r.operator?.includes(reportFilter)
-              ).map((r,i)=>(
-                <div key={i} style={{...card({marginBottom:12})}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-                    <div>
-                      <div style={{fontWeight:800,fontSize:15,color:C.text}}>{r.client?.split(" - ")[0]}</div>
-                      <div style={{fontSize:12,color:C.muted,marginTop:2}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div>
-                    </div>
-                    <Badge label={r.poolStatus==="מאוזנת"?"✅ מאוזנת":"⚠️ אחר"} col={r.poolStatus==="מאוזנת"?C.green:C.orange}/>
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:r.notes?10:0}}>
-                    {[["כלור",`${r.chlorine} ppm`,"#e3f2fd","#1565c0"],["pH",r.ph,"#f3e5f5","#6a1b9a"],["מלח",`${r.salt} g/L`,"#e8f5e9","#1b5e20"]].map(([k,v,bg,col])=>(
-                      <div key={k} style={{background:bg,borderRadius:10,padding:"8px",textAlign:"center"}}>
-                        <div style={{fontSize:10,fontWeight:700,color:"#90a4ae",marginBottom:2}}>{k}</div>
-                        <div style={{fontSize:14,fontWeight:900,color:col}}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {r.notes&&<div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 12px",fontSize:12,color:C.muted}}>📝 {r.notes}</div>}
-                  {r.supplyLabel&&<div style={{marginTop:8,fontSize:11,color:C.blue,fontWeight:700}}>📦 {r.supplyLabel}</div>}
+              {/* Filters */}
+              <div style={{...card({marginBottom:14})}}>
+                <div style={{marginBottom:10}}>
+                  <input value={reportFilter} onChange={e=>setReportFilter(e.target.value)}
+                    placeholder="🔍 חפש לפי לקוח או מפעיל..."
+                    style={{...inp,marginBottom:0}}/>
                 </div>
-              ))}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תאריך</label>
+                    <input type="date" value={reportDateFilter} onChange={e=>setReportDateFilter(e.target.value)} style={inp}/>
+                  </div>
+                  <div style={{display:"flex",alignItems:"flex-end"}}>
+                    <Press onClick={async()=>{
+                      showToast("⏳ טוען דוחות...");
+                      const res = await sheetCall("getReports");
+                      if(res?.reports?.length){
+                        setSheetReports(res.reports);
+                        showToast(`✅ ${res.reports.length} דוחות נטענו`);
+                      } else {
+                        showToast("⚠️ לא נמצאו דוחות");
+                      }
+                    }} style={{width:"100%",padding:"12px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:13,textAlign:"center"}}>
+                      🔄 טען מגיליון
+                    </Press>
+                  </div>
+                </div>
+              </div>
+
+              {/* Reports list */}
+              {(()=>{
+                const allReports = [...sheetReports, ...reports];
+                // Deduplicate by id
+                const seen = new Set();
+                const unique = allReports.filter(r=>{ if(seen.has(r.id))return false; seen.add(r.id); return true; });
+                const filtered = unique.reverse().filter(r=>{
+                  const matchText = !reportFilter || r.client?.includes(reportFilter) || r.operator?.includes(reportFilter);
+                  const matchDate = !reportDateFilter || r.reportDate===reportDateFilter;
+                  return matchText && matchDate;
+                });
+                if(filtered.length===0) return (
+                  <div style={{...card({textAlign:"center"}),padding:32,color:C.muted,fontSize:14}}>
+                    אין דוחות — לחץ "טען מגיליון"
+                  </div>
+                );
+                return filtered.map((r,i)=>(
+                  <div key={i} style={{...card({marginBottom:12})}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                      <div>
+                        <div style={{fontWeight:800,fontSize:15,color:C.text}}>{r.client?.split(" - ")[0]}</div>
+                        <div style={{fontSize:12,color:C.muted,marginTop:2}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div>
+                      </div>
+                      <Badge label={r.poolStatus==="מאוזנת"?"✅ מאוזנת":"⚠️ אחר"} col={r.poolStatus==="מאוזנת"?C.green:C.orange}/>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:r.notes?10:0}}>
+                      {[["כלור",`${r.chlorine} ppm`,"#e3f2fd","#1565c0"],["pH",r.ph,"#f3e5f5","#6a1b9a"],["מלח",`${r.salt} g/L`,"#e8f5e9","#1b5e20"]].map(([k,v,bg,col])=>(
+                        <div key={k} style={{background:bg,borderRadius:10,padding:"8px",textAlign:"center"}}>
+                          <div style={{fontSize:10,fontWeight:700,color:"#90a4ae",marginBottom:2}}>{k}</div>
+                          <div style={{fontSize:14,fontWeight:900,color:col}}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {r.notes&&<div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 12px",fontSize:12,color:C.muted}}>📝 {r.notes}</div>}
+                    {r.supplyLabel&&<div style={{marginTop:8,fontSize:11,color:C.blue,fontWeight:700}}>📦 {r.supplyLabel}</div>}
+                  </div>
+                ));
+              })()}
             </div>
           )}
 
