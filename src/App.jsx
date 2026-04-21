@@ -30,7 +30,7 @@ function saveCompany(data) {
   localStorage.setItem("galileo_company", JSON.stringify(data));
 }
 
-const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzCCIaYlxPKOwN37ID8t38zdhykLIXHsDlHl8vJg-s2uKkencXUXdUxan-gqjYj8z_-Ug/exec";
+const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 function getScriptUrl() {
   const c = getCompany();
   return c.scriptUrl || localStorage.getItem("galileo_script_url") || FIXED_SCRIPT_URL;
@@ -530,14 +530,14 @@ export default function App() {
   const handleLogin = async () => {
     setLoginErr(""); setLoginLoading(true);
 
-    // שלוף משתמשים עדכניים מ-Sheets
-    let usersToCheck = allUsers; // התחל עם מה שיש (cache/demo)
+    let usersToCheck = [...allUsers];
+
+    // נסה לשלוף מ-Sheets
     try {
       const uRes = await sheetCall("getUsers");
       if (uRes?.users?.length) {
         usersToCheck = uRes.users;
         setAllUsers(uRes.users);
-        // שמור ב-cache
         try {
           const cached = localStorage.getItem("galileo_cache");
           const cacheData = cached ? JSON.parse(cached) : {};
@@ -546,9 +546,10 @@ export default function App() {
       }
     } catch {}
 
+    // חפש משתמש — case insensitive, trim, password כ-string
     const found = usersToCheck.find(u=>
-      String(u.username).toLowerCase()===loginUser.toLowerCase().trim() &&
-      String(u.password).toLowerCase()===loginPass.toLowerCase().trim()
+      String(u.username||"").toLowerCase().trim() === loginUser.toLowerCase().trim() &&
+      String(u.password||"").trim() === loginPass.trim()
     );
 
     if(found){
@@ -556,7 +557,7 @@ export default function App() {
       localStorage.setItem("galileo_user", JSON.stringify(found));
       setScreen(found.role==="admin"?"admin":"daily");
       haptic("medium");
-      connectSheets(true); // רענן שאר הנתונים ברקע
+      connectSheets(true);
     } else {
       setLoginErr("שם משתמש או סיסמה שגויים");
     }
