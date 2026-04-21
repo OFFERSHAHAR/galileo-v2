@@ -307,13 +307,14 @@ function QRScanner({ onResult, onClose }) {
 function SetupScreen({ onDone }) {
   const [name,   setName]   = useState(getCompany().name||"");
   const [sheetId, setSheetId] = useState(getCompany().sheetId||"");
+  const [adminEmail, setAdminEmail] = useState(getCompany().adminEmail||"");
   const [saving, setSaving] = useState(false);
   const [err,    setErr]    = useState("");
 
   const save = async () => {
     if (!name.trim()) { setErr("נא להזין שם חברה"); return; }
     setSaving(true);
-    saveCompany({ name: name.trim(), sheetId: sheetId.trim(), scriptUrl: FIXED_SCRIPT_URL });
+    saveCompany({ name: name.trim(), sheetId: sheetId.trim(), scriptUrl: FIXED_SCRIPT_URL, adminEmail: adminEmail.trim() });
     if (sheetId.trim()) localStorage.setItem("galileo_sheet_id", sheetId.trim());
     setTimeout(() => { setSaving(false); onDone(); }, 600);
   };
@@ -335,13 +336,19 @@ function SetupScreen({ onDone }) {
               style={{width:"100%",background:"#f5f9ff",border:"2px solid #e3f2fd",borderRadius:12,padding:"12px 14px",fontSize:14,outline:"none",fontFamily:"'Plus Jakarta Sans',sans-serif",color:"#1a237e",boxSizing:"border-box"}}/>
           </div>
 
-          <div style={{marginBottom:6}}>
+          <div style={{marginBottom:14}}>
             <label style={{fontSize:12,fontWeight:700,color:"#90a4ae",display:"block",marginBottom:6}}>Google Sheet ID <span style={{fontWeight:400,opacity:0.7}}>(אופציונלי)</span></label>
             <input value={sheetId} onChange={e=>setSheetId(e.target.value)} placeholder="1abc123xyz..."
               style={{width:"100%",background:"#f5f9ff",border:"2px solid #e3f2fd",borderRadius:12,padding:"12px 14px",fontSize:13,outline:"none",fontFamily:"'Plus Jakarta Sans',sans-serif",color:"#1a237e",boxSizing:"border-box"}}/>
             <p style={{fontSize:11,color:"#90a4ae",marginTop:6,marginBottom:0}}>
               מתוך כתובת הגיליון: docs.google.com/spreadsheets/d/<b>ID</b>/edit
             </p>
+          </div>
+
+          <div style={{marginBottom:6}}>
+            <label style={{fontSize:12,fontWeight:700,color:"#90a4ae",display:"block",marginBottom:6}}>מייל מנהל לדוחות עם תמונות <span style={{fontWeight:400,opacity:0.7}}>(אופציונלי)</span></label>
+            <input value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} placeholder="admin@gmail.com" type="email"
+              style={{width:"100%",background:"#f5f9ff",border:"2px solid #e3f2fd",borderRadius:12,padding:"12px 14px",fontSize:13,outline:"none",fontFamily:"'Plus Jakarta Sans',sans-serif",color:"#1a237e",boxSizing:"border-box"}}/>
           </div>
 
           {err && <div style={{background:"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:12,color:"#c62828",fontSize:13,fontWeight:700}}>{err}</div>}
@@ -647,11 +654,28 @@ export default function App() {
     }
     const match=tasks.find(t=>t.date===reportDate&&t.client===client&&t.operators.includes(user?.name)&&t.status!=="done");
     if(match)markDone(match.id);
+
+    // Convert photos to base64
+    let photosBase64 = [];
+    if(photos.length>0){
+      photosBase64 = await Promise.all(photos.map(url=>
+        fetch(url).then(r=>r.blob()).then(blob=>new Promise(res=>{
+          const reader=new FileReader();
+          reader.onload=e=>res(e.target.result.split(",")[1]);
+          reader.readAsDataURL(blob);
+        }))
+      ));
+    }
+
     const report={id:Date.now(),reportDate,operator:user?.name||"",client,chlorine,ph,salt,elModel,elSerial,elDate,elNext:elNext||"",supplyLabel,waterLevel,clarity,fat,flow,poolStatus,customStatusText,restrictedUntil,notes,photosCount:photos.length};
     setReports(r=>[...r,report]);
     setSyncing(true);
     let saved=false;
-    if(sheetId){const res=await sheetCall("saveReport",{report}).catch(()=>null);saved=res?.success===true;}
+    const adminEmail = getCompany().adminEmail||"";
+    if(sheetId){
+      const res=await sheetCall("saveReport",{report, photos:photosBase64, adminEmail, clientAddress:clientAddress(client), clientPhone:clientPhone(client)}).catch(()=>null);
+      saved=res?.success===true;
+    }
     if(!saved){setPending(p=>[...p,report]);setDismissed(false);}
     setSyncing(false);
     const phone=clientPhone(client);
