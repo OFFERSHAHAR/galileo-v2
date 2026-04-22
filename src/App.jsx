@@ -1719,16 +1719,18 @@ export default function App() {
               </Press>
             ))}
             {saltPkg&&(
-              <div style={{paddingTop:10,display:"flex",alignItems:"center",gap:10}}>
-                <label style={{fontSize:13,fontWeight:700,color:C.text}}>כמות שקים:</label>
-                {[1,2,3,4,5].map(n=>(
-                  <Press key={n} onClick={()=>sf("saltBags",n)}
-                    style={{width:34,height:34,borderRadius:99,background:saltBags===n?C.blue:C.border,
-                      color:saltBags===n?"#fff":C.muted,fontWeight:800,fontSize:13,textAlign:"center",
-                      display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    {n}
-                  </Press>
-                ))}
+              <div style={{paddingTop:10}}>
+                <label style={{fontSize:13,fontWeight:700,color:C.text,display:"block",marginBottom:8}}>כמות שקים:</label>
+                <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4}}>
+                  {[0,1,2,3,4,5,6,7,8,9,10].map(n=>(
+                    <Press key={n} onClick={()=>sf("saltBags",n)}
+                      style={{width:40,height:40,borderRadius:99,background:saltBags===n?C.blue:C.border,
+                        color:saltBags===n?"#fff":C.muted,fontWeight:800,fontSize:14,textAlign:"center",
+                        display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      {n}
+                    </Press>
+                  ))}
+                </div>
               </div>
             )}
           </div>
