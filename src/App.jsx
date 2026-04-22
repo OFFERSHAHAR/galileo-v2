@@ -2074,15 +2074,30 @@ export default function App() {
                     await saveTask({date:taskDate,client:taskClient,operators:taskOps});
                   } else {
                     if(!taskClients.length||!taskOps.length) return;
-                    // Create one task per client with its own note
-                    for(const tc of taskClients){
-                      const prevNote = taskNote;
-                      setTaskNote(tc.note||taskNote);
-                      await saveTask({date:taskDate,client:tc.name,operators:taskOps,noteOverride:tc.note||taskNote});
-                      setTaskNote(prevNote);
-                    }
+                    // Build all tasks at once and save in one call
+                    const newTasksBatch = taskClients.map(tc=>({
+                      id: Date.now()+Math.floor(Math.random()*100000),
+                      date: taskDate.slice(0,10),
+                      client: tc.name,
+                      operators: [...taskOps],
+                      status: "pending",
+                      changeLog: [{
+                        at: nowStr(),
+                        note: tc.note||taskNote||"📋 משימה חדשה הוקצתה לך",
+                        by: user?.name,
+                        needsAck: true,
+                        ackedBy: []
+                      }]
+                    }));
+                    const newTasks = [...tasks, ...newTasksBatch];
+                    setTasks(newTasks);
                     setTaskClients([]);
                     setTaskClientSearch("");
+                    setTaskOps([]);
+                    setTaskNote("");
+                    if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
+                    showToast(`✅ ${newTasksBatch.length} משימות נוצרו`);
+                    haptic("success");
                   }
                 }} disabled={editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length)}
                   style={{padding:"13px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:`0 4px 14px rgba(21,101,192,0.3)`,opacity:(editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length))?0.5:1}}>
