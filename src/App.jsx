@@ -887,7 +887,7 @@ export default function App() {
   const [taskDate,setTaskDate]       = useState(todayStr());
   const [taskClient,setTaskClient]   = useState("");
   const [taskClientSearch,setTaskClientSearch] = useState("");
-  const [taskClients,setTaskClients] = useState([]);
+  const [taskClients,setTaskClients] = useState([]); // [{name, note}]
   const [taskOps,setTaskOps]         = useState([]);
   const [taskNote,setTaskNote]       = useState("");
   const [editTaskId,setEditTaskId]   = useState(null);
@@ -1089,8 +1089,8 @@ export default function App() {
   const saveTask = async (task) => {
     const isEdit=!!editTaskId;
     const cleanTask={...task, date: task.date?.slice(0,10)||todayStr()};
-    // needsAck תמיד — גם ביצירה וגם בעריכה
-    const logEntry={at:nowStr(),note:taskNote||(isEdit?"משימה עודכנה":"📋 משימה חדשה הוקצתה לך"),by:user?.name,needsAck:true,ackedBy:[]};
+    const note = task.noteOverride !== undefined ? task.noteOverride : taskNote;
+    const logEntry={at:nowStr(),note:note||(isEdit?"משימה עודכנה":"📋 משימה חדשה הוקצתה לך"),by:user?.name,needsAck:true,ackedBy:[]};
     const newTasks=isEdit?tasks.map(t=>t.id===editTaskId?{...t,...cleanTask,changeLog:[...(t.changeLog||[]),logEntry]}:t):[...tasks,{id:Date.now(),...cleanTask,status:"pending",changeLog:[logEntry]}];
     setTasks(newTasks); setEditTaskId(null); setTaskClient(""); setTaskClients([]); setTaskOps([]); setTaskNote("");
     if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
@@ -1910,8 +1910,7 @@ export default function App() {
                 {!editTaskId&&(
                   <div style={{marginBottom:10}}>
                     <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>
-                      לקוחות <span style={{color:C.blue}}>({taskClients.length} נבחרו)</span>
-                    </label>
+                      לקוחות <span style={{color:C.blue}}>({taskClients.length} נבחרו)</span>                    </label>
                     {/* Search */}
                     <div style={{position:"relative",marginBottom:8}}>
                       <input value={taskClientSearch} onChange={e=>setTaskClientSearch(e.target.value)}
@@ -1920,11 +1919,11 @@ export default function App() {
                     {/* Client list */}
                     <div style={{maxHeight:200,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#f5f9ff"}}>
                       {clients.filter(c=>!taskClientSearch||c.name.toLowerCase().includes(taskClientSearch.toLowerCase())).map(c=>{
-                        const selected = taskClients.includes(c.name);
+                        const selected = taskClients.find(x=>x.name===c.name);
                         return (
                           <Press key={c.name} onClick={()=>{
                             haptic();
-                            setTaskClients(prev=>selected?prev.filter(x=>x!==c.name):[...prev,c.name]);
+                            setTaskClients(prev=>selected?prev.filter(x=>x.name!==c.name):[...prev,{name:c.name,note:""}]);
                           }} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:`1px solid ${C.border}`,background:selected?"#e3f2fd":"transparent"}}>
                             <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${selected?C.blue:C.border}`,background:selected?C.blue:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                               {selected&&<span style={{color:"#fff",fontSize:13,fontWeight:900}}>✓</span>}
@@ -1937,16 +1936,29 @@ export default function App() {
                         );
                       })}
                     </div>
-                    {/* Selected chips */}
+
+                    {/* Selected with note per client */}
                     {taskClients.length>0&&(
-                      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
-                        {taskClients.map(n=>(
-                          <span key={n} style={{background:C.blue,color:"#fff",borderRadius:99,padding:"4px 10px",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
-                            {n.split(" - ")[0]}
-                            <span onClick={()=>setTaskClients(prev=>prev.filter(x=>x!==n))} style={{cursor:"pointer",opacity:0.7}}>✕</span>
-                          </span>
+                      <div style={{marginTop:10}}>
+                        <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:8}}>לקוחות נבחרים — הוסף הערה לכל אחד:</div>
+                        {taskClients.map((tc,i)=>(
+                          <div key={tc.name} style={{background:C.white,borderRadius:12,padding:"10px 12px",marginBottom:8,border:`1px solid ${C.border}`}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                              <span style={{fontWeight:800,fontSize:13,color:C.blue}}>🏊 {tc.name.split(" - ")[0]}</span>
+                              <Press onClick={()=>setTaskClients(prev=>prev.filter(x=>x.name!==tc.name))}
+                                style={{color:C.muted,fontSize:16,padding:"0 4px"}}>✕</Press>
+                            </div>
+                            <input value={tc.note} onChange={e=>{
+                              const updated=[...taskClients];
+                              updated[i]={...tc,note:e.target.value};
+                              setTaskClients(updated);
+                            }} placeholder="הערה ספציפית ללקוח זה (אופציונלי)..." style={{...inp,fontSize:12,padding:"8px 12px"}}/>
+                          </div>
                         ))}
-                        <span onClick={()=>setTaskClients([])} style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>נקה הכל</span>
+                        <Press onClick={()=>setTaskClients([])}
+                          style={{padding:"6px 14px",borderRadius:99,background:"#ffebee",color:C.red,fontWeight:700,fontSize:12,display:"inline-block"}}>
+                          נקה הכל
+                        </Press>
                       </div>
                     )}
                   </div>
@@ -2008,9 +2020,12 @@ export default function App() {
                     await saveTask({date:taskDate,client:taskClient,operators:taskOps});
                   } else {
                     if(!taskClients.length||!taskOps.length) return;
-                    // Create one task per client
-                    for(const client of taskClients){
-                      await saveTask({date:taskDate,client,operators:taskOps});
+                    // Create one task per client with its own note
+                    for(const tc of taskClients){
+                      const prevNote = taskNote;
+                      setTaskNote(tc.note||taskNote);
+                      await saveTask({date:taskDate,client:tc.name,operators:taskOps,noteOverride:tc.note||taskNote});
+                      setTaskNote(prevNote);
                     }
                     setTaskClients([]);
                     setTaskClientSearch("");
