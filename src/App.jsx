@@ -887,6 +887,7 @@ export default function App() {
   const [taskDate,setTaskDate]       = useState(todayStr());
   const [taskClient,setTaskClient]   = useState("");
   const [taskClientSearch,setTaskClientSearch] = useState("");
+  const [taskClients,setTaskClients] = useState([]);
   const [taskOps,setTaskOps]         = useState([]);
   const [taskNote,setTaskNote]       = useState("");
   const [editTaskId,setEditTaskId]   = useState(null);
@@ -1091,7 +1092,7 @@ export default function App() {
     // needsAck תמיד — גם ביצירה וגם בעריכה
     const logEntry={at:nowStr(),note:taskNote||(isEdit?"משימה עודכנה":"📋 משימה חדשה הוקצתה לך"),by:user?.name,needsAck:true,ackedBy:[]};
     const newTasks=isEdit?tasks.map(t=>t.id===editTaskId?{...t,...cleanTask,changeLog:[...(t.changeLog||[]),logEntry]}:t):[...tasks,{id:Date.now(),...cleanTask,status:"pending",changeLog:[logEntry]}];
-    setTasks(newTasks); setEditTaskId(null); setTaskClient(""); setTaskOps([]); setTaskNote("");
+    setTasks(newTasks); setEditTaskId(null); setTaskClient(""); setTaskClients([]); setTaskOps([]); setTaskNote("");
     if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
     showToast(isEdit?"✏️ משימה עודכנה":"✅ משימה נוספה");
   };
@@ -1897,13 +1898,63 @@ export default function App() {
           {adminTab==="daily"&&(
             <div>
               <div style={{...card({marginBottom:16})}}>
-                <h3 style={{fontSize:14,fontWeight:800,color:C.text,margin:"0 0 14px"}}>{editTaskId?"✏️ עריכת משימה":"➕ הוספת משימה"}</h3>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                  <div>
-                    <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תאריך</label>
-                    <input type="date" value={taskDate} onChange={e=>setTaskDate(e.target.value)} style={inp}/>
+                <h3 style={{fontSize:14,fontWeight:800,color:C.text,margin:"0 0 14px"}}>{editTaskId?"✏️ עריכת משימה":"➕ הוספת משימות"}</h3>
+
+                {/* Date */}
+                <div style={{marginBottom:10}}>
+                  <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תאריך</label>
+                  <input type="date" value={taskDate} onChange={e=>setTaskDate(e.target.value)} style={inp}/>
+                </div>
+
+                {/* Multi-client selection */}
+                {!editTaskId&&(
+                  <div style={{marginBottom:10}}>
+                    <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>
+                      לקוחות <span style={{color:C.blue}}>({taskClients.length} נבחרו)</span>
+                    </label>
+                    {/* Search */}
+                    <div style={{position:"relative",marginBottom:8}}>
+                      <input value={taskClientSearch} onChange={e=>setTaskClientSearch(e.target.value)}
+                        placeholder="🔍 חפש וסמן לקוחות..." style={inp} autoComplete="off"/>
+                    </div>
+                    {/* Client list */}
+                    <div style={{maxHeight:200,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#f5f9ff"}}>
+                      {clients.filter(c=>!taskClientSearch||c.name.toLowerCase().includes(taskClientSearch.toLowerCase())).map(c=>{
+                        const selected = taskClients.includes(c.name);
+                        return (
+                          <Press key={c.name} onClick={()=>{
+                            haptic();
+                            setTaskClients(prev=>selected?prev.filter(x=>x!==c.name):[...prev,c.name]);
+                          }} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:`1px solid ${C.border}`,background:selected?"#e3f2fd":"transparent"}}>
+                            <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${selected?C.blue:C.border}`,background:selected?C.blue:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              {selected&&<span style={{color:"#fff",fontSize:13,fontWeight:900}}>✓</span>}
+                            </div>
+                            <div style={{flex:1}}>
+                              <div style={{fontWeight:700,fontSize:13,color:selected?C.blue:C.text}}>{c.name.split(" - ")[0]}</div>
+                              {c.address&&<div style={{fontSize:11,color:C.muted}}>{c.address}</div>}
+                            </div>
+                          </Press>
+                        );
+                      })}
+                    </div>
+                    {/* Selected chips */}
+                    {taskClients.length>0&&(
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                        {taskClients.map(n=>(
+                          <span key={n} style={{background:C.blue,color:"#fff",borderRadius:99,padding:"4px 10px",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
+                            {n.split(" - ")[0]}
+                            <span onClick={()=>setTaskClients(prev=>prev.filter(x=>x!==n))} style={{cursor:"pointer",opacity:0.7}}>✕</span>
+                          </span>
+                        ))}
+                        <span onClick={()=>setTaskClients([])} style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>נקה הכל</span>
+                      </div>
+                    )}
                   </div>
-                  <div>
+                )}
+
+                {/* Single client for edit mode */}
+                {editTaskId&&(
+                  <div style={{marginBottom:10}}>
                     <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>לקוח</label>
                     {taskClient?(
                       <div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}>
@@ -1916,16 +1967,10 @@ export default function App() {
                           placeholder="🔍 חפש לקוח..." style={inp} autoComplete="off"/>
                         {taskClientSearch&&(
                           <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:220,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
-                            {clients.filter(c=>c.name.includes(taskClientSearch)).length===0&&(
-                              <div style={{padding:"12px 16px",color:C.muted,fontSize:13}}>לא נמצא</div>
-                            )}
                             {clients.filter(c=>c.name.toLowerCase().includes(taskClientSearch.toLowerCase())).map(c=>(
                               <div key={c.name} onClick={()=>{setTaskClient(c.name);setTaskClientSearch("");haptic();}}
-                                style={{padding:"12px 16px",fontSize:14,fontWeight:600,color:C.text,cursor:"pointer",borderBottom:`1px solid ${C.border}`}}
-                                onMouseEnter={e=>e.target.style.background="#f5f9ff"}
-                                onMouseLeave={e=>e.target.style.background=""}>
+                                style={{padding:"12px 16px",fontSize:14,fontWeight:600,color:C.text,cursor:"pointer",borderBottom:`1px solid ${C.border}`}}>
                                 {c.name.split(" - ")[0]}
-                                {c.address&&<span style={{fontSize:11,color:C.muted,marginRight:6}}>· {c.address}</span>}
                               </div>
                             ))}
                           </div>
@@ -1933,7 +1978,9 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                </div>
+                )}
+
+                {/* Operators */}
                 <div style={{marginBottom:10}}>
                   <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>מפעילים</label>
                   <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
@@ -1949,14 +1996,28 @@ export default function App() {
                     {opNames.filter(n=>!taskOps.includes(n)).map(n=><option key={n}>{n}</option>)}
                   </select>
                 </div>
+
+                {/* Note */}
                 <div style={{marginBottom:12}}>
                   <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>הערה (תופיע אצל המפעיל)</label>
                   <input value={taskNote} onChange={e=>setTaskNote(e.target.value)} placeholder="הערה אופציונלית..." style={inp}/>
                 </div>
-                <Press onClick={()=>saveTask({date:taskDate,client:taskClient,operators:taskOps})}
-                  disabled={!taskClient||!taskOps.length}
-                  style={{padding:"13px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:`0 4px 14px rgba(21,101,192,0.3)`,opacity:!taskClient||!taskOps.length?0.5:1}}>
-                  {editTaskId?"💾 שמור שינויים":"➕ הוסף משימה"}
+
+                <Press onClick={async()=>{
+                  if(editTaskId){
+                    await saveTask({date:taskDate,client:taskClient,operators:taskOps});
+                  } else {
+                    if(!taskClients.length||!taskOps.length) return;
+                    // Create one task per client
+                    for(const client of taskClients){
+                      await saveTask({date:taskDate,client,operators:taskOps});
+                    }
+                    setTaskClients([]);
+                    setTaskClientSearch("");
+                  }
+                }} disabled={editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length)}
+                  style={{padding:"13px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:`0 4px 14px rgba(21,101,192,0.3)`,opacity:(editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length))?0.5:1}}>
+                  {editTaskId?"💾 שמור שינויים":taskClients.length>1?`➕ צור ${taskClients.length} משימות`:"➕ הוסף משימה"}
                 </Press>
               </div>
 
