@@ -31,6 +31,16 @@ function saveCompany(data) {
 }
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
+const SUPER_ADMIN_PASS = "0389076914";
+const MGMT_SHEET_ID    = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
+
+async function mgmtCall(action, payload={}) {
+  try {
+    const r = await fetch(FIXED_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},
+      body:JSON.stringify({action, sheetId: MGMT_SHEET_ID, ...payload})});
+    return await r.json();
+  } catch { return null; }
+}
 function getScriptUrl() {
   const c = getCompany();
   return c.scriptUrl || localStorage.getItem("galileo_script_url") || FIXED_SCRIPT_URL;
@@ -374,6 +384,168 @@ const blank = () => ({
   notes:"",photos:[],clientLocked:false,
 });
 
+// ─── Super Admin Screen ───────────────────────────────────────────────────
+function SuperAdminScreen({ onClose }) {
+  const [pass, setPass]         = useState("");
+  const [auth, setAuth]         = useState(false);
+  const [err,  setErr]          = useState("");
+  const [tab,  setTab]          = useState("clients");
+  const [clients, setClients]   = useState([]);
+  const [issues,  setIssues]    = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [newIssue, setNewIssue] = useState({client:"",desc:"",priority:"רגיל"});
+  const [vis, setVis]           = useState(false);
+
+  useEffect(()=>{ setTimeout(()=>setVis(true),10); },[]);
+  const close = () => { setVis(false); setTimeout(onClose,350); };
+
+  const login = () => {
+    if(pass===SUPER_ADMIN_PASS){ setAuth(true); loadData(); }
+    else setErr("סיסמה שגויה");
+  };
+
+  const loadData = async () => {
+    setLoading(true);
+    const [cRes, iRes] = await Promise.all([
+      mgmtCall("getMgmtClients"),
+      mgmtCall("getMgmtIssues"),
+    ]);
+    if(cRes?.clients) setClients(cRes.clients);
+    if(iRes?.issues)  setIssues(iRes.issues);
+    setLoading(false);
+  };
+
+  const C2 = { blue:"#1565c0", bg:"#f0f7ff", white:"#fff", text:"#1a237e", muted:"#90a4ae", border:"#e3f2fd", green:"#2e7d32", orange:"#e65100", red:"#c62828" };
+  const inp2 = {width:"100%",background:"#f5f9ff",border:"2px solid #e3f2fd",borderRadius:12,padding:"10px 14px",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"'Plus Jakarta Sans',sans-serif",color:C2.text};
+
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+      <div onClick={close} style={{position:"absolute",inset:0,background:`rgba(0,0,0,${vis?0.6:0})`,transition:"background 0.3s",backdropFilter:"blur(6px)"}}/>
+      <div style={{position:"relative",background:"#f0f7ff",borderRadius:"24px 24px 0 0",
+        transform:vis?"translateY(0)":"translateY(100%)",
+        transition:"transform 0.4s cubic-bezier(0.34,1.2,0.64,1)",
+        height:"92vh",display:"flex",flexDirection:"column",fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
+
+        {/* Header */}
+        <div style={{background:`linear-gradient(135deg,#0d47a1,#1565c0)`,padding:"16px 20px",borderRadius:"24px 24px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <div>
+            <div style={{color:"rgba(255,255,255,0.6)",fontSize:11,fontWeight:600,letterSpacing:"0.1em"}}>SUPER ADMIN</div>
+            <div style={{color:"#fff",fontSize:18,fontWeight:900}}>PoolSync PRO — ניהול לקוחות</div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {auth&&<div onClick={loadData} style={{background:"rgba(255,255,255,0.15)",borderRadius:10,padding:"6px 12px",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>🔄</div>}
+            <div onClick={close} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:16,cursor:"pointer"}}>✕</div>
+          </div>
+        </div>
+
+        {!auth?(
+          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+            <div style={{background:"#fff",borderRadius:20,padding:28,width:"100%",maxWidth:340,boxShadow:"0 8px 32px rgba(0,0,0,0.1)"}}>
+              <div style={{fontSize:40,textAlign:"center",marginBottom:16}}>🔐</div>
+              <div style={{fontWeight:900,fontSize:18,color:C2.text,textAlign:"center",marginBottom:20}}>כניסה מאובטחת</div>
+              <input type="password" value={pass} onChange={e=>{setPass(e.target.value);setErr("");}}
+                placeholder="סיסמה סודית" style={inp2} onKeyDown={e=>e.key==="Enter"&&login()}/>
+              {err&&<div style={{color:C2.red,fontSize:13,fontWeight:700,marginTop:8,textAlign:"center"}}>{err}</div>}
+              <div onClick={login} style={{marginTop:16,padding:"13px",borderRadius:12,background:`linear-gradient(135deg,#1565c0,#42a5f5)`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",cursor:"pointer"}}>
+                כניסה →
+              </div>
+            </div>
+          </div>
+        ):(
+          <>
+            <div style={{background:"#fff",padding:"8px 12px",borderBottom:`1px solid ${C2.border}`,display:"flex",gap:6,flexShrink:0}}>
+              {[["clients","👥 לקוחות"],["issues","🔧 תקלות"]].map(([t,lbl])=>(
+                <div key={t} onClick={()=>setTab(t)}
+                  style={{padding:"8px 14px",borderRadius:99,fontSize:12,fontWeight:800,cursor:"pointer",
+                    background:tab===t?`linear-gradient(135deg,#1565c0,#42a5f5)`:"#f0f4f8",
+                    color:tab===t?"#fff":C2.muted}}>
+                  {lbl}
+                </div>
+              ))}
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"16px"}}>
+              {loading&&<div style={{textAlign:"center",padding:40,color:C2.muted}}>⏳ טוען...</div>}
+
+              {tab==="clients"&&!loading&&(
+                <div>
+                  <div style={{fontSize:12,fontWeight:800,color:C2.muted,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>{clients.length} לקוחות רשומים</div>
+                  {clients.length===0&&<div style={{background:"#fff",borderRadius:14,padding:24,textAlign:"center",color:C2.muted}}>אין לקוחות עדיין</div>}
+                  {clients.map((c,i)=>(
+                    <div key={i} style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,boxShadow:"0 2px 8px rgba(0,0,0,0.05)",border:`1px solid ${C2.border}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                        <div>
+                          <div style={{fontWeight:800,fontSize:15,color:C2.text}}>{c[1]}</div>
+                          <div style={{fontSize:12,color:C2.muted,marginTop:2}}>{c[2]} · {c[3]}</div>
+                        </div>
+                        <span style={{background:c[5]==="PRO"?"#e3f2fd":"#f3e5f5",color:c[5]==="PRO"?C2.blue:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:11,fontWeight:800}}>{c[5]||"Basic"}</span>
+                      </div>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                        {c[6]&&<span style={{background:"#e8f5e9",color:"#2e7d32",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700}}>{c[6]}</span>}
+                        {c[7]&&<a href={`https://docs.google.com/spreadsheets/d/${c[7]}`} target="_blank" rel="noreferrer" style={{background:"#e3f2fd",color:C2.blue,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700,textDecoration:"none"}}>📊 גיליון</a>}
+                        {c[4]&&<a href={`mailto:${c[4]}`} style={{background:"#f5f5f5",color:"#555",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700,textDecoration:"none"}}>✉️ מייל</a>}
+                        {c[3]&&<a href={`tel:${c[3]}`} style={{background:"#f5f5f5",color:"#555",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700,textDecoration:"none"}}>📞</a>}
+                      </div>
+                      {c[14]&&<div style={{marginTop:8,fontSize:11,color:C2.muted,borderTop:`1px solid ${C2.border}`,paddingTop:6}}>📝 {c[14]}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {tab==="issues"&&!loading&&(
+                <div>
+                  <div style={{background:"#fff",borderRadius:14,padding:14,marginBottom:16,border:`1px solid ${C2.border}`}}>
+                    <div style={{fontWeight:800,fontSize:13,color:C2.text,marginBottom:12}}>➕ תקלה חדשה</div>
+                    <input value={newIssue.client} onChange={e=>setNewIssue(n=>({...n,client:e.target.value}))} placeholder="שם לקוח" style={{...inp2,marginBottom:8}}/>
+                    <textarea value={newIssue.desc} onChange={e=>setNewIssue(n=>({...n,desc:e.target.value}))} placeholder="תיאור התקלה..." rows={2} style={{...inp2,resize:"none",marginBottom:8}}/>
+                    <div style={{display:"flex",gap:8,marginBottom:10}}>
+                      {["רגיל","דחוף","קריטי"].map(p=>(
+                        <div key={p} onClick={()=>setNewIssue(n=>({...n,priority:p}))}
+                          style={{flex:1,padding:"8px",borderRadius:10,textAlign:"center",fontSize:12,fontWeight:800,cursor:"pointer",
+                            background:newIssue.priority===p?(p==="קריטי"?C2.red:p==="דחוף"?C2.orange:C2.blue):"#f0f4f8",
+                            color:newIssue.priority===p?"#fff":C2.muted}}>
+                          {p}
+                        </div>
+                      ))}
+                    </div>
+                    <div onClick={async()=>{
+                      if(!newIssue.client||!newIssue.desc)return;
+                      await mgmtCall("saveMgmtIssue",{issue:[Date.now(),newIssue.client,todayStr(),newIssue.desc,newIssue.priority,"פתוח","",""]});
+                      setNewIssue({client:"",desc:"",priority:"רגיל"});
+                      loadData();
+                    }} style={{padding:"11px",borderRadius:12,background:`linear-gradient(135deg,#1565c0,#42a5f5)`,color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",cursor:"pointer"}}>
+                      שמור תקלה
+                    </div>
+                  </div>
+                  {issues.length===0&&<div style={{background:"#fff",borderRadius:14,padding:24,textAlign:"center",color:C2.muted}}>אין תקלות פתוחות</div>}
+                  {issues.map((issue,i)=>{
+                    const priority=issue[4]||"רגיל";
+                    const status=issue[5]||"פתוח";
+                    const priColor=priority==="קריטי"?C2.red:priority==="דחוף"?C2.orange:C2.blue;
+                    return (
+                      <div key={i} style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,border:`2px solid ${priColor}22`}}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                          <div style={{fontWeight:800,fontSize:14,color:C2.text}}>{issue[1]}</div>
+                          <div style={{display:"flex",gap:5}}>
+                            <span style={{background:priColor+"18",color:priColor,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{priority}</span>
+                            <span style={{background:status==="סגור"?"#e8f5e9":"#fff8e1",color:status==="סגור"?C2.green:C2.orange,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{status}</span>
+                          </div>
+                        </div>
+                        <div style={{fontSize:13,color:"#546e7a",marginBottom:4}}>{issue[3]}</div>
+                        <div style={{fontSize:11,color:C2.muted}}>{issue[2]}</div>
+                        {issue[6]&&<div style={{marginTop:6,fontSize:12,color:C2.green,fontWeight:700}}>✅ {issue[6]}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 export default function App() {
   const company = getCompany();
@@ -419,6 +591,10 @@ export default function App() {
   const [showQR,setShowQR]           = useState(false);
   const [showQRCode,setShowQRCode]   = useState(null);
   const [dismissed,setDismissed]     = useState(false);
+  const [showSuperAdmin,setShowSuperAdmin] = useState(false);
+  const [showReportIssue,setShowReportIssue] = useState(false);
+  const [issueDesc,setIssueDesc]         = useState("");
+  const [issuePriority,setIssuePriority] = useState("רגיל");
   const [newClient,setNewClient]     = useState({name:"",phone:"",address:""});
   const [reportFilter,setReportFilter] = useState("");
   const [reportDateFilter,setReportDateFilter] = useState("");
@@ -696,6 +872,15 @@ export default function App() {
   if(screen==="login") return (
     <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}`}</style>
+
+      {/* Hidden gear icon - Super Admin */}
+      <div onClick={()=>setShowSuperAdmin(true)}
+        style={{position:"fixed",bottom:20,left:20,fontSize:18,opacity:0.15,cursor:"pointer",userSelect:"none",zIndex:10}}>
+        ⚙️
+      </div>
+
+      {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
+
       <div style={{width:"100%",maxWidth:360}}>
         {/* Logo — long press 3s to return to setup */}
         <div style={{textAlign:"center",marginBottom:36}}
@@ -730,6 +915,11 @@ export default function App() {
           <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:16,marginBottom:0}}>
             demo: admin/1234 · avi/1234
           </p>
+        </div>
+        {/* Gear icon — hidden super admin access */}
+        <div style={{position:"absolute",bottom:16,left:16,opacity:0.2,cursor:"pointer",fontSize:20}}
+          onClick={()=>setShowSuperAdmin(true)}>
+          ⚙️
         </div>
       </div>
     </div>
@@ -1680,14 +1870,72 @@ export default function App() {
                   <Badge label={u.role==="admin"?"מנהל":"מפעיל"} col={u.role==="admin"?C.orange:C.blue}/>
                 </div>
               ))}
+
+              {/* Report issue button */}
+              <div style={{marginTop:24}}>
+                <Press onClick={()=>setShowReportIssue(true)}
+                  style={{...card({background:"#fff8e1",border:"1px solid #ffe082",display:"flex",alignItems:"center",gap:12}),padding:"14px 16px"}}>
+                  <span style={{fontSize:22}}>🔧</span>
+                  <div>
+                    <div style={{fontWeight:800,fontSize:14,color:C.orange}}>דווח על תקלה</div>
+                    <div style={{fontSize:12,color:C.muted}}>שלח דיווח ישירות למפתח</div>
+                  </div>
+                </Press>
+              </div>
             </div>
           )}
         </div>
+
+        {/* Report Issue Modal */}
+        {showReportIssue&&(
+          <BottomSheet title="🔧 דווח על תקלה" onClose={()=>setShowReportIssue(false)}>
+            <div>
+              <div style={{marginBottom:12}}>
+                <label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תיאור הבעיה</label>
+                <textarea value={issueDesc} onChange={e=>setIssueDesc(e.target.value)}
+                  rows={4} placeholder="תאר את הבעיה בפירוט..."
+                  style={{...inp,resize:"none"}}/>
+              </div>
+              <div style={{marginBottom:16}}>
+                <label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:8}}>עדיפות</label>
+                <div style={{display:"flex",gap:8}}>
+                  {["רגיל","דחוף","קריטי"].map(p=>(
+                    <Press key={p} onClick={()=>setIssuePriority(p)}
+                      style={{flex:1,padding:"10px",borderRadius:10,textAlign:"center",fontSize:13,fontWeight:800,
+                        background:issuePriority===p?(p==="קריטי"?C.red:p==="דחוף"?C.orange:C.blue):"#f0f4f8",
+                        color:issuePriority===p?"#fff":C.muted}}>
+                      {p}
+                    </Press>
+                  ))}
+                </div>
+              </div>
+              <Press onClick={async()=>{
+                if(!issueDesc.trim()){showToast("⚠️ נא להזין תיאור");return;}
+                setSyncing(true);
+                const company=getCompany();
+                await mgmtCall("saveMgmtIssue",{issue:[
+                  Date.now(), company.name||"לא ידוע", todayStr(),
+                  issueDesc.trim(), issuePriority, "פתוח", "", ""
+                ]});
+                setSyncing(false);
+                setIssueDesc("");
+                setIssuePriority("רגיל");
+                setShowReportIssue(false);
+                showToast("✅ הדיווח נשלח!");
+                haptic("success");
+              }} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 4px 14px rgba(21,101,192,0.3)"}}>
+                {syncing?"⏳ שולח...":"שלח דיווח →"}
+              </Press>
+            </div>
+          </BottomSheet>
+        )}
 
         <Toast msg={toast.msg} visible={toast.visible}/>
       </div>
     );
   }
+
+  if(showSuperAdmin) return <SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>;
 
   return null;
 }
