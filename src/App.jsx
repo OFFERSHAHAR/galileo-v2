@@ -31,7 +31,7 @@ function saveCompany(data) {
 }
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
-const DEFAULT_SUPER_PASS = "0389076914";
+const DEFAULT_SUPER_PASS = "039076914";
 function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
 const MGMT_SHEET_ID    = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
@@ -319,7 +319,7 @@ function QRScanner({ onResult, onClose }) {
 }
 
 // ─── Setup Screen ─────────────────────────────────────────────────────────
-function SetupScreen({ onDone }) {
+function SetupScreen({ onDone, onSuperAdmin }) {
   const [name,   setName]   = useState(getCompany().name||"");
   const [sheetId, setSheetId] = useState(getCompany().sheetId||"");
   const [adminEmail, setAdminEmail] = useState(getCompany().adminEmail||"");
@@ -374,6 +374,12 @@ function SetupScreen({ onDone }) {
               boxShadow:saving?"none":"0 6px 20px rgba(21,101,192,0.4)"}}>
             {saving?"⏳ שומר...":"התחל →"}
           </Press>
+        </div>
+
+        {/* Gear — Super Admin */}
+        <div onClick={onSuperAdmin}
+          style={{position:"fixed",bottom:16,left:16,fontSize:28,opacity:0.22,padding:10,zIndex:10,WebkitTapHighlightColor:"transparent",cursor:"pointer"}}>
+          ⚙️
         </div>
       </div>
     </div>
@@ -979,17 +985,16 @@ export default function App() {
   // SCREEN: LOGIN
   // ════════════════════════════════════════════════════════════════════════════
   // ── Setup screen ──────────────────────────────────────────────────────────
-  if (showSetup) return <SetupScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||"גליליאו"); setShowSetup(false); }}/>;
+  if (showSetup) return (
+    <>
+      <SetupScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||"גליליאו"); setShowSetup(false); }} onSuperAdmin={()=>setShowSuperAdmin(true)}/>
+      {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
+    </>
+  );
 
   if(screen==="login") return (
     <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}`}</style>
-
-      {/* Hidden gear icon - Super Admin */}
-      <div onClick={()=>setShowSuperAdmin(true)}
-        style={{position:"fixed",bottom:20,left:20,fontSize:18,opacity:0.15,cursor:"pointer",userSelect:"none",zIndex:10}}>
-        ⚙️
-      </div>
 
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
 
@@ -1027,11 +1032,6 @@ export default function App() {
           <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:16,marginBottom:0}}>
             demo: admin/1234 · avi/1234
           </p>
-        </div>
-        {/* Gear icon — hidden super admin access */}
-        <div style={{position:"absolute",bottom:16,left:16,opacity:0.2,cursor:"pointer",fontSize:20}}
-          onClick={()=>setShowSuperAdmin(true)}>
-          ⚙️
         </div>
       </div>
     </div>
