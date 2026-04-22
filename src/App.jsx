@@ -1637,7 +1637,7 @@ export default function App() {
           <SliderField label="כלור" min={0} max={8} value={chlorine} onChange={v=>sf("chlorine",v)} unit=" ppm" warnAbove={3} optimal={1.5} large={String(user?.username||"").toLowerCase()==="or"}/>
           <SliderField label="pH"   min={5} max={9} value={ph}       onChange={v=>sf("ph",v)}       warnAbove={8} warnBelow={6} optimal={7.4} large={String(user?.username||"").toLowerCase()==="or"}/>
           <SliderField label="מלח"  min={0} max={6} value={salt}     onChange={v=>sf("salt",v)}     unit=" g/L" optimal={3.5} large={String(user?.username||"").toLowerCase()==="or"}/>
-          <SliderField label="כלור (TAB)" min={0} max={5} step={0.2} value={form.chlora??0} onChange={v=>sf("chlora",v)} unit=" kg" optimal={1} large={String(user?.username||"").toLowerCase()==="or"}/>
+          <SliderField label="טבליות כלור (TAB)" min={0} max={5} step={0.5} value={form.chlora??0} onChange={v=>sf("chlora",v)} unit="" optimal={1} large={String(user?.username||"").toLowerCase()==="or"}/>
           <SliderField label="HTH"  min={0} max={5} step={0.5}  value={form.hth??0}    onChange={v=>sf("hth",v)}    unit=" kg" optimal={1} large={String(user?.username||"").toLowerCase()==="or"}/>
         </Sec>
 
