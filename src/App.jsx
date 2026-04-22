@@ -850,6 +850,7 @@ export default function App() {
   const [loginErr,setLoginErr]       = useState("");
   const [loginLoading,setLoginLoading] = useState(false);
   const [sheetId,setSheetId]         = useState("");
+  const [clientPlan,setClientPlan]   = useState({plan:"",status:""});
   const [allUsers,setAllUsers]       = useState(DEMO_USERS);
   const [clients,setClients]         = useState(DEMO_CLIENTS);
   const [tasks,setTasks]             = useState([]);
@@ -1000,6 +1001,15 @@ export default function App() {
       if(u)setAllUsers(u); if(c)setClients(c); if(t)setTasks(t); if(s)setSupplyDB(s); if(lr)setLastReadings(lr);
       localStorage.setItem("galileo_cache",JSON.stringify({users:u||allUsers,clients:c||clients,tasks:t||[],supplyDB:s||{},lastReadings:lr||{},cachedAt:Date.now()}));
       setSheetId("connected");
+      // Fetch plan/status from mgmt
+      try {
+        const company = getCompany();
+        if(company.sheetId) {
+          const mgmtRes = await mgmtCall("getMgmtClients");
+          const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId));
+          if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""});
+        }
+      } catch {}
     } catch {}
   };
 
@@ -1019,6 +1029,22 @@ export default function App() {
           const cacheData = cached ? JSON.parse(cached) : {};
           localStorage.setItem("galileo_cache", JSON.stringify({...cacheData, users:uRes.users}));
         } catch {}
+      }
+    } catch {}
+
+    // בדוק אם המנוי מושהה
+    try {
+      const company = getCompany();
+      if(company.sheetId) {
+        const mgmtRes = await mgmtCall("getMgmtClients");
+        const mgmtClients = mgmtRes?.clients||[];
+        const myRecord = mgmtClients.find(c => String(c[7])===String(company.sheetId));
+        if(myRecord && myRecord[6]==="מושהה") {
+          setLoginErr("⛔ המנוי שלך מושהה. לפרטים צור קשר עם מנהל המערכת.");
+          setLoginLoading(false);
+          haptic("medium");
+          return;
+        }
       }
     } catch {}
 
@@ -1230,6 +1256,16 @@ export default function App() {
               <p style={{color:"rgba(255,255,255,0.65)",fontSize:12,fontWeight:600,margin:"0 0 4px"}}>{fmtDate(dailyDate)} 🌊</p>
               <h1 style={{color:"#fff",fontSize:24,fontWeight:900,margin:0,lineHeight:1.1}}>שלום, {user?.name}! {user?.icon}</h1>
               <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,margin:"4px 0 0"}}>{user?.welcomeMessage}</p>
+              {clientPlan.plan&&(
+                <div style={{display:"flex",gap:6,marginTop:8}}>
+                  <span style={{background:"rgba(255,255,255,0.2)",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,color:"#fff"}}>
+                    {clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}
+                  </span>
+                  <span style={{background:clientPlan.status==="פעיל"?"rgba(46,125,50,0.4)":clientPlan.status==="מושהה"?"rgba(198,40,40,0.4)":"rgba(230,81,0,0.4)",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,color:"#fff"}}>
+                    {clientPlan.status==="פעיל"?"✅ פעיל":clientPlan.status==="מושהה"?"⛔ מושהה":"🔬 ניסיון"}
+                  </span>
+                </div>
+              )}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <div onPointerDown={()=>{logoLongPress.current=setTimeout(()=>{haptic("success");setShowSetup(true);},3000);}}
@@ -1789,6 +1825,16 @@ export default function App() {
             <div>
               <p style={{color:"rgba(255,255,255,0.65)",fontSize:12,fontWeight:600,margin:"0 0 4px"}}>פאנל ניהול 👔</p>
               <h1 style={{color:"#fff",fontSize:22,fontWeight:900,margin:0}}>שלום, {user?.name}</h1>
+              {clientPlan.plan&&(
+                <div style={{display:"flex",gap:6,marginTop:6}}>
+                  <span style={{background:"rgba(255,255,255,0.2)",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,color:"#fff"}}>
+                    {clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}
+                  </span>
+                  <span style={{background:clientPlan.status==="פעיל"?"rgba(46,125,50,0.4)":"rgba(198,40,40,0.4)",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,color:"#fff"}}>
+                    {clientPlan.status==="פעיל"?"✅ פעיל":"⛔ "+clientPlan.status}
+                  </span>
+                </div>
+              )}
             </div>
             <Press onClick={handleLogout}
               style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>
