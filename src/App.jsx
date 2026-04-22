@@ -1414,12 +1414,25 @@ export default function App() {
 
                 {/* Last readings */}
                 {(()=>{const lr=lastReadings[t.client];if(!lr)return null;
+                  const elDaysLeft = lr.elDate ? Math.ceil((new Date(calcNext(lr.elDate,30))-new Date())/864e5) : null;
                   return (
-                    <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",gap:12,alignItems:"center"}}>
-                      <span style={{fontSize:12,fontWeight:700,color:C.blue}}>📊 מדידה אחרונה:</span>
-                      <span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>Cl: {lr.chlorine}</span>
-                      <span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph}</span>
-                      <span style={{fontSize:10,color:C.muted,marginRight:"auto"}}>{lr.date}</span>
+                    <div style={{marginBottom:10}}>
+                      <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+                        <span style={{fontSize:12,fontWeight:700,color:C.blue}}>📊 מדידה אחרונה:</span>
+                        <span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>Cl: {lr.chlorine}</span>
+                        <span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph}</span>
+                        <span style={{fontSize:10,color:C.muted,marginRight:"auto"}}>{lr.date}</span>
+                      </div>
+                      {(lr.elModel||lr.elDate)&&(
+                        <div style={{background:elDaysLeft!==null&&elDaysLeft<0?"#ffebee":elDaysLeft!==null&&elDaysLeft<7?"#fff8e1":"#f3e5f5",borderRadius:10,padding:"8px 12px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                          <span style={{fontSize:12,fontWeight:700,color:"#6a1b9a"}}>⚡ אלקטרודה:</span>
+                          {lr.elModel&&<span style={{fontSize:11,color:C.text,fontWeight:700}}>{lr.elModel}</span>}
+                          {lr.elSerial&&<span style={{fontSize:11,color:C.muted}}>#{lr.elSerial}</span>}
+                          {lr.elDate&&<span style={{fontSize:11,color:elDaysLeft!==null&&elDaysLeft<0?C.red:elDaysLeft!==null&&elDaysLeft<7?C.orange:"#6a1b9a",fontWeight:700}}>
+                            {elDaysLeft!==null&&elDaysLeft<0?`⚠️ באיחור ${Math.abs(elDaysLeft)} י׳`:elDaysLeft!==null&&elDaysLeft<7?`⏰ ${elDaysLeft} ימים לבדיקה`:`✅ ${fmtDate(lr.elDate)}`}
+                          </span>}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
@@ -1660,11 +1673,11 @@ export default function App() {
               <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תאריך ניקיון אחרון</label>
               <input type="date" value={elDate} onChange={e=>sf("elDate",e.target.value)} style={inp}/>
             </div>
-            {calcNext(elDate)&&(()=>{
-              const d=Math.ceil((new Date(calcNext(elDate))-new Date())/864e5);
-              const bg=d<0?"#ffebee":d<14?"#fff8e1":"#e8f5e9";
-              const col=d<0?C.red:d<14?C.orange:C.green;
-              const txt=d<0?`⚠️ ניקיון באיחור ${Math.abs(d)} ימים`:d<14?`⏰ ניקיון הבא בעוד ${d} ימים (${fmtDate(calcNext(elDate))})`:`✅ ניקיון הבא: ${fmtDate(calcNext(elDate))} (${d} ימים)`;
+            {calcNext(elDate,30)&&(()=>{
+              const d=Math.ceil((new Date(calcNext(elDate,30))-new Date())/864e5);
+              const bg=d<0?"#ffebee":d<7?"#fff8e1":"#e8f5e9";
+              const col=d<0?C.red:d<7?C.orange:C.green;
+              const txt=d<0?`⚠️ בדיקה באיחור של ${Math.abs(d)} ימים`:d<7?`⏰ בדיקה בעוד ${d} ימים (${fmtDate(calcNext(elDate,30))})`:`✅ בדיקה הבאה: ${fmtDate(calcNext(elDate,30))} (${d} ימים)`;
               return <div style={{marginTop:10,background:bg,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:700,color:col}}>{txt}</div>;
             })()}
           </div>
