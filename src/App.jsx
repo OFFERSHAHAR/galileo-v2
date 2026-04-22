@@ -1507,18 +1507,72 @@ export default function App() {
         <div style={{position:"fixed",bottom:0,right:0,left:0,background:C.white,borderTop:`1px solid ${C.border}`,
           display:"flex",justifyContent:"space-around",padding:"10px 0 20px",
           boxShadow:"0 -4px 20px rgba(0,0,0,0.06)"}}>
-          {[["🏠","בית"],["📋","משימות"],["📷","סרוק QR"],["💬","שיחה"]].map(([ic,lb],i)=>(
+          {[["🏠","בית"],["📋","משימות"],["📅","עתידי"],["📷","סרוק QR"],["💬","שיחה"]].map(([ic,lb],i)=>(
             <Press key={lb} onClick={()=>{
-              if(i===2){setShowQR(true);}
-              else if(i===3){setShowConv(true);setConvTarget("");}
+              if(i===3){setShowQR(true);}
+              else if(i===4){setShowConv(true);setConvTarget("");}
               else setNavTab(i);
               haptic();
-            }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 14px",borderRadius:12,background:navTab===i&&i<2?"#e3f2fd":"transparent"}}>
+            }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 10px",borderRadius:12,background:navTab===i&&i<3?"#e3f2fd":"transparent"}}>
               <span style={{fontSize:22}}>{ic}</span>
-              <span style={{fontSize:10,fontWeight:800,color:navTab===i&&i<2?C.blue:C.muted}}>{lb}</span>
+              <span style={{fontSize:10,fontWeight:800,color:navTab===i&&i<3?C.blue:C.muted}}>{lb}</span>
             </Press>
           ))}
         </div>
+
+        {/* Future tasks panel */}
+        {navTab===2&&(
+          <BottomSheet title="📅 משימות עתידיות" onClose={()=>setNavTab(0)}>
+            {(()=>{
+              const today = todayStr();
+              const futureTasks = tasks.filter(t=>{
+                const d = normalizeDate(t.date);
+                return d > today && (t.operators||[]).some(op=>normalizeName(op)===normalizeName(user?.name));
+              }).sort((a,b)=>normalizeDate(a.date).localeCompare(normalizeDate(b.date)));
+
+              if(futureTasks.length===0) return (
+                <div style={{textAlign:"center",padding:32,color:C.muted}}>
+                  <div style={{fontSize:40,marginBottom:8}}>📭</div>
+                  <div style={{fontWeight:700}}>אין משימות עתידיות</div>
+                </div>
+              );
+
+              // Group by date
+              const grouped = {};
+              futureTasks.forEach(t=>{
+                const d = normalizeDate(t.date);
+                if(!grouped[d]) grouped[d]=[];
+                grouped[d].push(t);
+              });
+
+              return Object.entries(grouped).map(([date, dayTasks])=>(
+                <div key={date} style={{marginBottom:20}}>
+                  <div style={{fontSize:12,fontWeight:800,color:C.blue,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+                    <span>📅 {fmtDate(date)}</span>
+                    <span style={{background:"#e3f2fd",borderRadius:99,padding:"2px 10px",color:C.blue,fontSize:11}}>{dayTasks.length} משימות</span>
+                  </div>
+                  {dayTasks.map(t=>(
+                    <div key={t.id} style={{...card({marginBottom:8})}}>
+                      <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:4}}>{t.client.split(" - ")[0]}</div>
+                      {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
+                      {(t.changeLog?.[t.changeLog.length-1]?.note)&&(
+                        <div style={{background:"#fff8e1",borderRadius:8,padding:"6px 10px",fontSize:12,color:C.orange,fontWeight:600}}>
+                          📝 {t.changeLog[t.changeLog.length-1].note}
+                        </div>
+                      )}
+                      {clientAddress(t.client)&&(
+                        <a href={wazeUrl(clientAddress(t.client))} target="_blank" rel="noreferrer"
+                          style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:8,padding:"6px 12px",background:"#e8f5e9",borderRadius:8,color:C.green,fontSize:12,fontWeight:700,textDecoration:"none"}}>
+                          🗺️ נווט
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ));
+            })()}
+          </BottomSheet>
+        )}
 
         {/* QR Scanner */}
         {showQR&&(
