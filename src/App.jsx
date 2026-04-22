@@ -167,25 +167,31 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
   if(warnAbove&&value>warnAbove){col=C.red;txt="⚠️ גבוה";}
   else if(warnBelow&&value<warnBelow){col=C.orange;txt="⚠️ נמוך";}
   else if(optimal&&Math.abs(value-optimal)<0.3){col=C.blue;txt="✓ אופטימלי";}
+
+  const trackH = large ? 28 : 8;
+  const thumbH = large ? 60 : 24;
+  const thumbTop = large ? -16 : -8;
+
   return (
     <div style={{...card(),marginBottom:10}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-        <span style={{fontWeight:700,fontSize:14,color:C.text}}>{label}</span>
+        <span style={{fontWeight:700,fontSize:large?18:14,color:C.text}}>{label}</span>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <span style={{background:col+"15",color:col,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,border:`1px solid ${col}30`}}>{txt}</span>
-          <span style={{color:col,fontSize:22,fontWeight:900,minWidth:50,textAlign:"right"}}>{value}{unit}</span>
+          <span style={{background:col+"15",color:col,borderRadius:99,padding:"3px 10px",fontSize:large?13:11,fontWeight:800,border:`1px solid ${col}30`}}>{txt}</span>
+          <span style={{color:col,fontSize:large?28:22,fontWeight:900,minWidth:large?70:50,textAlign:"right"}}>{value}{unit}</span>
         </div>
       </div>
-      <div dir="ltr" style={{position:"relative",height:large?16:8,borderRadius:99,background:C.border,marginBottom:6}}>
+      <div dir="ltr" style={{position:"relative",height:trackH,borderRadius:99,background:C.border,marginBottom:6}}>
         <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${pct}%`,borderRadius:99,
           background:`linear-gradient(90deg,${C.blue},${col})`,transition:"width 0.15s"}}/>
-        {optimal&&<div style={{position:"absolute",top:large?-4:-4,left:`${((optimal-min)/(max-min))*100}%`,
-          width:2,height:large?24:16,background:C.blue,borderRadius:2,transform:"translateX(-50%)"}}/>}
+        {optimal&&<div style={{position:"absolute",top:-4,left:`${((optimal-min)/(max-min))*100}%`,
+          width:large?3:2,height:large?36:16,background:C.blue,borderRadius:2,transform:"translateX(-50%)"}}/>}
         <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(parseFloat(e.target.value))}
           dir="ltr"
-          style={{position:"absolute",top:large?-12:-8,left:0,width:"100%",opacity:0,cursor:"pointer",height:large?40:24}}/>
+          style={{position:"absolute",top:thumbTop,left:0,width:"100%",opacity:0,cursor:"pointer",
+            height:thumbH,touchAction:"none",WebkitAppearance:"none"}}/>
       </div>
-      <div dir="ltr" style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.muted}}>
+      <div dir="ltr" style={{display:"flex",justifyContent:"space-between",fontSize:large?12:10,color:C.muted}}>
         <span>{min}</span>{optimal&&<span style={{color:C.blue}}>אופטימלי {optimal}</span>}<span>{max}</span>
       </div>
     </div>
@@ -840,7 +846,17 @@ function SuperAdminScreen({ onClose }) {
 // ══════════════════════════════════════════════════════════════════════════════
 export default function App() {
   const company = getCompany();
-  const [showSetup, setShowSetup] = useState(!company.name);
+  const [showSetup, setShowSetup] = useState(()=>{
+    const c = getCompany();
+    // אם יש שם חברה — לא מציגים setup
+    if(c.name) return false;
+    // אם יש cache עם נתונים — כנראה כבר הוגדר
+    try {
+      const cached = localStorage.getItem("galileo_cache");
+      if(cached && JSON.parse(cached)?.users?.length) return false;
+    } catch {}
+    return true;
+  });
   const [companyName, setCompanyName] = useState(company.name||"גליליאו");
   const [user,setUser]               = useState(()=>{
     try { return JSON.parse(localStorage.getItem("galileo_user")||"null"); } catch { return null; }
@@ -1562,7 +1578,7 @@ export default function App() {
   // ════════════════════════════════════════════════════════════════════════════
   if(screen==="form") return (
     <div dir="rtl" style={{minHeight:"100vh",background:C.bg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:100}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}input[type=range]{-webkit-appearance:none;height:8px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}select option{background:#fff}`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}input[type=range]{-webkit-appearance:none;height:8px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}select option{background:#fff}`}</style>
 
       {/* Header */}
       <div style={{background:`linear-gradient(145deg,#0d47a1,${C.blue},${C.lightBlue})`,padding:"24px 20px 28px",position:"relative",overflow:"hidden"}}>
@@ -1618,11 +1634,11 @@ export default function App() {
 
         {/* Measurements */}
         <Sec icon="📊" title="מדידות">
-          <SliderField label="כלור" min={0} max={8} value={chlorine} onChange={v=>sf("chlorine",v)} unit=" ppm" warnAbove={3} optimal={1.5} large={user?.username==="or"}/>
-          <SliderField label="pH"   min={5} max={9} value={ph}       onChange={v=>sf("ph",v)}       warnAbove={8} warnBelow={6} optimal={7.4} large={user?.username==="or"}/>
-          <SliderField label="מלח"  min={0} max={6} value={salt}     onChange={v=>sf("salt",v)}     unit=" g/L" optimal={3.5} large={user?.username==="or"}/>
-          <SliderField label="כלרה" min={0} max={5} step={0.25} value={form.chlora??0} onChange={v=>sf("chlora",v)} unit=" kg" optimal={1} large={user?.username==="or"}/>
-          <SliderField label="HTH"  min={0} max={5} step={0.5}  value={form.hth??0}    onChange={v=>sf("hth",v)}    unit=" kg" optimal={1} large={user?.username==="or"}/>
+          <SliderField label="כלור" min={0} max={8} value={chlorine} onChange={v=>sf("chlorine",v)} unit=" ppm" warnAbove={3} optimal={1.5} large={String(user?.username||"").toLowerCase()==="or"}/>
+          <SliderField label="pH"   min={5} max={9} value={ph}       onChange={v=>sf("ph",v)}       warnAbove={8} warnBelow={6} optimal={7.4} large={String(user?.username||"").toLowerCase()==="or"}/>
+          <SliderField label="מלח"  min={0} max={6} value={salt}     onChange={v=>sf("salt",v)}     unit=" g/L" optimal={3.5} large={String(user?.username||"").toLowerCase()==="or"}/>
+          <SliderField label="כלרה" min={0} max={5} step={0.25} value={form.chlora??0} onChange={v=>sf("chlora",v)} unit=" kg" optimal={1} large={String(user?.username||"").toLowerCase()==="or"}/>
+          <SliderField label="HTH"  min={0} max={5} step={0.5}  value={form.hth??0}    onChange={v=>sf("hth",v)}    unit=" kg" optimal={1} large={String(user?.username||"").toLowerCase()==="or"}/>
         </Sec>
 
         {/* Electrode */}
