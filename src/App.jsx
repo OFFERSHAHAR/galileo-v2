@@ -167,6 +167,7 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
   if(warnAbove&&value>warnAbove){col=C.red;txt="⚠️ גבוה";}
   else if(warnBelow&&value<warnBelow){col=C.orange;txt="⚠️ נמוך";}
   else if(optimal&&Math.abs(value-optimal)<0.3){col=C.blue;txt="✓ אופטימלי";}
+  const showStatus = !!(warnAbove||warnBelow||optimal);
 
   const trackH = large ? 28 : 8;
   const thumbH = large ? 60 : 24;
@@ -177,8 +178,8 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <span style={{fontWeight:700,fontSize:large?18:14,color:C.text}}>{label}</span>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <span style={{background:col+"15",color:col,borderRadius:99,padding:"3px 10px",fontSize:large?13:11,fontWeight:800,border:`1px solid ${col}30`}}>{txt}</span>
-          <span style={{color:col,fontSize:large?28:22,fontWeight:900,minWidth:large?70:50,textAlign:"right"}}>{value}{unit}</span>
+          {showStatus&&<span style={{background:col+"15",color:col,borderRadius:99,padding:"3px 10px",fontSize:large?13:11,fontWeight:800,border:`1px solid ${col}30`}}>{txt}</span>}
+          <span style={{color:showStatus?col:C.blue,fontSize:large?28:22,fontWeight:900,minWidth:large?70:50,textAlign:"right"}}>{value}{unit}</span>
         </div>
       </div>
       <div dir="ltr" style={{position:"relative",height:trackH,borderRadius:99,background:C.border,marginBottom:6}}>
@@ -1637,8 +1638,8 @@ export default function App() {
           <SliderField label="כלור" min={0} max={8} value={chlorine} onChange={v=>sf("chlorine",v)} unit=" ppm" warnAbove={3} optimal={1.5} large={String(user?.username||"").toLowerCase()==="or"}/>
           <SliderField label="pH"   min={5} max={9} value={ph}       onChange={v=>sf("ph",v)}       warnAbove={8} warnBelow={6} optimal={7.4} large={String(user?.username||"").toLowerCase()==="or"}/>
           <SliderField label="מלח"  min={0} max={6} value={salt}     onChange={v=>sf("salt",v)}     unit=" g/L" optimal={3.5} large={String(user?.username||"").toLowerCase()==="or"}/>
-          <SliderField label="טבליות כלור (TAB)" min={0} max={5} step={0.25} value={form.chlora??0} onChange={v=>sf("chlora",v)} unit="" optimal={1} large={String(user?.username||"").toLowerCase()==="or"}/>
-          <SliderField label="HTH"  min={0} max={5} step={0.5}  value={form.hth??0}    onChange={v=>sf("hth",v)}    unit=" cups" optimal={1} large={String(user?.username||"").toLowerCase()==="or"}/>
+          <SliderField label="טבליות כלור (TAB)" min={0} max={5} step={0.25} value={form.chlora??0} onChange={v=>sf("chlora",v)} unit="" large={String(user?.username||"").toLowerCase()==="or"}/>
+          <SliderField label="HTH"  min={0} max={5} step={0.5}  value={form.hth??0}    onChange={v=>sf("hth",v)}    unit=" cups" large={String(user?.username||"").toLowerCase()==="or"}/>
         </Sec>
 
         {/* Electrode */}
