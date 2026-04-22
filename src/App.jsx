@@ -31,13 +31,18 @@ function saveCompany(data) {
 }
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
-const SUPER_ADMIN_PASS = "0389076914";
+const DEFAULT_SUPER_PASS = "0389076914";
+function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
+function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
 const MGMT_SHEET_ID    = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
 
 async function mgmtCall(action, payload={}) {
   try {
-    const r = await fetch(FIXED_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},
-      body:JSON.stringify({action, sheetId: MGMT_SHEET_ID, ...payload})});
+    const r = await fetch(FIXED_SCRIPT_URL,{
+      method:"POST",
+      headers:{"Content-Type":"text/plain"},
+      body:JSON.stringify({action, sheetId: MGMT_SHEET_ID, ...payload})
+    });
     return await r.json();
   } catch { return null; }
 }
@@ -386,22 +391,26 @@ const blank = () => ({
 
 // ─── Super Admin Screen ───────────────────────────────────────────────────
 function SuperAdminScreen({ onClose }) {
-  const [pass, setPass]         = useState("");
-  const [auth, setAuth]         = useState(false);
-  const [err,  setErr]          = useState("");
-  const [tab,  setTab]          = useState("clients");
-  const [clients, setClients]   = useState([]);
-  const [issues,  setIssues]    = useState([]);
-  const [loading, setLoading]   = useState(false);
-  const [newIssue, setNewIssue] = useState({client:"",desc:"",priority:"רגיל"});
-  const [vis, setVis]           = useState(false);
+  const [pass, setPass]           = useState("");
+  const [auth, setAuth]           = useState(false);
+  const [err,  setErr]            = useState("");
+  const [tab,  setTab]            = useState("issues");
+  const [clients, setClients]     = useState([]);
+  const [issues,  setIssues]      = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [newIssue, setNewIssue]   = useState({client:"",desc:"",priority:"רגיל"});
+  const [vis, setVis]             = useState(false);
+  const [dateFilter, setDateFilter] = useState("");
+  const [newPass, setNewPass]     = useState("");
+  const [newPass2, setNewPass2]   = useState("");
+  const [passMsg, setPassMsg]     = useState("");
 
   useEffect(()=>{ setTimeout(()=>setVis(true),10); },[]);
-  const close = () => { setVis(false); setTimeout(onClose,350); };
+  const close = () => { setVis(false); setTimeout(onClose,350); haptic("medium"); };
 
   const login = () => {
-    if(pass===SUPER_ADMIN_PASS){ setAuth(true); loadData(); }
-    else setErr("סיסמה שגויה");
+    if(pass===getSuperPass()){ setAuth(true); loadData(); haptic("success"); }
+    else { setErr("סיסמה שגויה"); haptic("medium"); }
   };
 
   const loadData = async () => {
@@ -415,127 +424,229 @@ function SuperAdminScreen({ onClose }) {
     setLoading(false);
   };
 
+  const updateIssueStatus = async (idx, newStatus) => {
+    haptic("success");
+    const updated = [...issues];
+    updated[idx] = [...updated[idx]];
+    updated[idx][5] = newStatus;
+    setIssues(updated);
+    await mgmtCall("updateMgmtIssueStatus", { rowIndex: idx+2, status: newStatus });
+  };
+
+  const filteredIssues = issues.filter(i => !dateFilter || String(i[2]).slice(0,10)===dateFilter);
+
   const C2 = { blue:"#1565c0", bg:"#f0f7ff", white:"#fff", text:"#1a237e", muted:"#90a4ae", border:"#e3f2fd", green:"#2e7d32", orange:"#e65100", red:"#c62828" };
   const inp2 = {width:"100%",background:"#f5f9ff",border:"2px solid #e3f2fd",borderRadius:12,padding:"10px 14px",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"'Plus Jakarta Sans',sans-serif",color:C2.text};
+  const statusColor = s => s==="טופל"?"#e8f5e9":s==="בטיפול"?"#e3f2fd":s==="הועבר"?"#f3e5f5":"#fff8e1";
+  const statusTextColor = s => s==="טופל"?C2.green:s==="בטיפול"?C2.blue:s==="הועבר"?"#6a1b9a":C2.orange;
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+    <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",flexDirection:"column"}}>
       <div onClick={close} style={{position:"absolute",inset:0,background:`rgba(0,0,0,${vis?0.6:0})`,transition:"background 0.3s",backdropFilter:"blur(6px)"}}/>
-      <div style={{position:"relative",background:"#f0f7ff",borderRadius:"24px 24px 0 0",
+      <div dir="rtl" style={{position:"relative",background:"#f0f7ff",
         transform:vis?"translateY(0)":"translateY(100%)",
         transition:"transform 0.4s cubic-bezier(0.34,1.2,0.64,1)",
-        height:"92vh",display:"flex",flexDirection:"column",fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
+        height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
 
         {/* Header */}
-        <div style={{background:`linear-gradient(135deg,#0d47a1,#1565c0)`,padding:"16px 20px",borderRadius:"24px 24px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-          <div>
-            <div style={{color:"rgba(255,255,255,0.6)",fontSize:11,fontWeight:600,letterSpacing:"0.1em"}}>SUPER ADMIN</div>
-            <div style={{color:"#fff",fontSize:18,fontWeight:900}}>PoolSync PRO — ניהול לקוחות</div>
-          </div>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            {auth&&<div onClick={loadData} style={{background:"rgba(255,255,255,0.15)",borderRadius:10,padding:"6px 12px",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>🔄</div>}
-            <div onClick={close} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:16,cursor:"pointer"}}>✕</div>
+        <div style={{background:`linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)`,padding:"28px 20px 20px",position:"relative",overflow:"hidden",flexShrink:0}}>
+          <div style={{position:"absolute",top:-40,left:-40,width:160,height:160,borderRadius:"50%",background:"rgba(255,255,255,0.05)"}}/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
+            <div>
+              <div style={{color:"rgba(255,255,255,0.55)",fontSize:11,fontWeight:700,letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:4}}>Super Admin</div>
+              <div style={{color:"#fff",fontSize:22,fontWeight:900,letterSpacing:"-0.5px"}}>PoolSync PRO</div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {auth&&(
+                <Press onClick={()=>{loadData();haptic();}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:13,fontWeight:700}}>
+                  🔄
+                </Press>
+              )}
+              <Press onClick={close} style={{width:36,height:36,borderRadius:"50%",background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:16}}>
+                ✕
+              </Press>
+            </div>
           </div>
         </div>
 
         {!auth?(
           <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-            <div style={{background:"#fff",borderRadius:20,padding:28,width:"100%",maxWidth:340,boxShadow:"0 8px 32px rgba(0,0,0,0.1)"}}>
-              <div style={{fontSize:40,textAlign:"center",marginBottom:16}}>🔐</div>
+            <div style={{background:"#fff",borderRadius:24,padding:28,width:"100%",maxWidth:340,boxShadow:"0 20px 60px rgba(0,0,0,0.15)"}}>
+              <div style={{fontSize:48,textAlign:"center",marginBottom:12,filter:"drop-shadow(0 4px 8px rgba(0,0,0,0.15))"}}>🔐</div>
               <div style={{fontWeight:900,fontSize:18,color:C2.text,textAlign:"center",marginBottom:20}}>כניסה מאובטחת</div>
               <input type="password" value={pass} onChange={e=>{setPass(e.target.value);setErr("");}}
-                placeholder="סיסמה סודית" style={inp2} onKeyDown={e=>e.key==="Enter"&&login()}/>
-              {err&&<div style={{color:C2.red,fontSize:13,fontWeight:700,marginTop:8,textAlign:"center"}}>{err}</div>}
-              <div onClick={login} style={{marginTop:16,padding:"13px",borderRadius:12,background:`linear-gradient(135deg,#1565c0,#42a5f5)`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",cursor:"pointer"}}>
+                placeholder="סיסמה סודית" style={{...inp2,marginBottom:err?8:16}}
+                onKeyDown={e=>e.key==="Enter"&&login()}/>
+              {err&&<div style={{background:"#ffebee",borderRadius:10,padding:"8px 14px",marginBottom:12,color:C2.red,fontSize:13,fontWeight:700,textAlign:"center"}}>⚠️ {err}</div>}
+              <Press onClick={login}
+                style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C2.blue},#42a5f5)`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.4)"}}>
                 כניסה →
-              </div>
+              </Press>
             </div>
           </div>
         ):(
           <>
-            <div style={{background:"#fff",padding:"8px 12px",borderBottom:`1px solid ${C2.border}`,display:"flex",gap:6,flexShrink:0}}>
-              {[["clients","👥 לקוחות"],["issues","🔧 תקלות"]].map(([t,lbl])=>(
-                <div key={t} onClick={()=>setTab(t)}
-                  style={{padding:"8px 14px",borderRadius:99,fontSize:12,fontWeight:800,cursor:"pointer",
-                    background:tab===t?`linear-gradient(135deg,#1565c0,#42a5f5)`:"#f0f4f8",
-                    color:tab===t?"#fff":C2.muted}}>
+            {/* Tabs */}
+            <div style={{background:C2.white,padding:"8px 12px",borderBottom:`1px solid ${C2.border}`,display:"flex",gap:6,flexShrink:0,overflowX:"auto",boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
+              {[["issues","🔧 תקלות"],["clients","👥 לקוחות"],["settings","⚙️ הגדרות"]].map(([t,lbl])=>(
+                <Press key={t} onClick={()=>{setTab(t);haptic();}}
+                  style={{padding:"9px 14px",borderRadius:99,fontSize:12,fontWeight:800,flexShrink:0,
+                    background:tab===t?`linear-gradient(135deg,${C2.blue},#42a5f5)`:"#f0f4f8",
+                    color:tab===t?"#fff":C2.muted,
+                    boxShadow:tab===t?"0 4px 12px rgba(21,101,192,0.3)":"none",transition:"all 0.2s"}}>
                   {lbl}
-                </div>
+                </Press>
               ))}
             </div>
-            <div style={{flex:1,overflowY:"auto",padding:"16px"}}>
-              {loading&&<div style={{textAlign:"center",padding:40,color:C2.muted}}>⏳ טוען...</div>}
 
+            <div style={{flex:1,overflowY:"auto",padding:"16px"}}>
+              {loading&&(
+                <div style={{textAlign:"center",padding:60,color:C2.muted}}>
+                  <div style={{fontSize:32,marginBottom:12}}>⏳</div>
+                  <div style={{fontSize:14,fontWeight:700}}>טוען נתונים...</div>
+                </div>
+              )}
+
+              {/* Issues tab */}
+              {tab==="issues"&&!loading&&(
+                <div>
+                  {issues.filter(i=>i[5]==="פתוח"||!i[5]).length>0&&(
+                    <div style={{background:"#fff8e1",border:"1px solid #ffe082",borderRadius:16,padding:"14px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12,boxShadow:"0 2px 8px rgba(230,81,0,0.1)"}}>
+                      <span style={{fontSize:22}}>🔔</span>
+                      <div>
+                        <div style={{fontWeight:800,fontSize:14,color:C2.orange}}>{issues.filter(i=>i[5]==="פתוח"||!i[5]).length} תקלות ממתינות לטיפול</div>
+                        <div style={{fontSize:11,color:"#bf6900",marginTop:2}}>לחץ על סטטוס לעדכון</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{display:"flex",gap:8,marginBottom:16,alignItems:"center"}}>
+                    <input type="date" value={dateFilter} onChange={e=>setDateFilter(e.target.value)}
+                      style={{...inp2,flex:1,fontSize:12}}/>
+                    {dateFilter&&(
+                      <Press onClick={()=>setDateFilter("")}
+                        style={{padding:"10px 14px",borderRadius:10,background:"#ffebee",color:C2.red,fontWeight:700,fontSize:12}}>
+                        ✕
+                      </Press>
+                    )}
+                  </div>
+
+                  {filteredIssues.length===0&&(
+                    <div style={{background:C2.white,borderRadius:16,padding:32,textAlign:"center",color:C2.muted,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+                      <div style={{fontSize:32,marginBottom:8}}>✅</div>
+                      <div style={{fontWeight:700}}>אין תקלות פתוחות</div>
+                    </div>
+                  )}
+
+                  {filteredIssues.map((issue,i)=>{
+                    const priority=issue[4]||"רגיל";
+                    const status=issue[5]||"פתוח";
+                    const priColor=priority==="קריטי"?C2.red:priority==="דחוף"?C2.orange:C2.blue;
+                    const realIdx=issues.indexOf(issue);
+                    return (
+                      <div key={i} style={{background:C2.white,borderRadius:16,padding:16,marginBottom:12,border:`2px solid ${priColor}22`,boxShadow:"0 2px 12px rgba(0,0,0,0.06)"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                          <div style={{fontWeight:900,fontSize:15,color:C2.text}}>{issue[1]}</div>
+                          <span style={{background:priColor+"18",color:priColor,borderRadius:99,padding:"4px 12px",fontSize:11,fontWeight:800,border:`1px solid ${priColor}30`}}>{priority}</span>
+                        </div>
+                        <div style={{fontSize:13,color:"#546e7a",marginBottom:8,lineHeight:1.6}}>{issue[3]}</div>
+                        <div style={{fontSize:11,color:C2.muted,marginBottom:12}}>📅 {issue[2]}</div>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          {["פתוח","בטיפול","הועבר","טופל"].map(s=>(
+                            <Press key={s} onClick={()=>updateIssueStatus(realIdx,s)}
+                              style={{padding:"7px 14px",borderRadius:99,fontSize:12,fontWeight:800,
+                                background:status===s?statusColor(s):"#f0f4f8",
+                                color:status===s?statusTextColor(s):C2.muted,
+                                border:`1px solid ${status===s?statusTextColor(s)+"50":"transparent"}`,
+                                boxShadow:status===s?"0 2px 8px rgba(0,0,0,0.1)":"none",
+                                transition:"all 0.2s"}}>
+                              {s==="פתוח"?"🔴 פתוח":s==="בטיפול"?"🔵 בטיפול":s==="הועבר"?"🟣 הועבר":"🟢 טופל"}
+                            </Press>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Clients tab */}
               {tab==="clients"&&!loading&&(
                 <div>
-                  <div style={{fontSize:12,fontWeight:800,color:C2.muted,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>{clients.length} לקוחות רשומים</div>
-                  {clients.length===0&&<div style={{background:"#fff",borderRadius:14,padding:24,textAlign:"center",color:C2.muted}}>אין לקוחות עדיין</div>}
+                  <div style={{fontSize:12,fontWeight:800,color:C2.muted,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>
+                    {clients.length} לקוחות רשומים
+                  </div>
+                  {clients.length===0&&(
+                    <div style={{background:C2.white,borderRadius:16,padding:32,textAlign:"center",color:C2.muted,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+                      <div style={{fontSize:32,marginBottom:8}}>👥</div>
+                      <div style={{fontWeight:700}}>אין לקוחות עדיין</div>
+                    </div>
+                  )}
                   {clients.map((c,i)=>(
-                    <div key={i} style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,boxShadow:"0 2px 8px rgba(0,0,0,0.05)",border:`1px solid ${C2.border}`}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                    <div key={i} style={{background:C2.white,borderRadius:16,padding:16,marginBottom:10,boxShadow:"0 2px 12px rgba(0,0,0,0.06)",border:`1px solid ${C2.border}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                         <div>
-                          <div style={{fontWeight:800,fontSize:15,color:C2.text}}>{c[1]}</div>
-                          <div style={{fontSize:12,color:C2.muted,marginTop:2}}>{c[2]} · {c[3]}</div>
+                          <div style={{fontWeight:900,fontSize:15,color:C2.text}}>{c[1]}</div>
+                          <div style={{fontSize:12,color:C2.muted,marginTop:3}}>{c[2]} · {c[3]}</div>
                         </div>
-                        <span style={{background:c[5]==="PRO"?"#e3f2fd":"#f3e5f5",color:c[5]==="PRO"?C2.blue:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:11,fontWeight:800}}>{c[5]||"Basic"}</span>
+                        <span style={{background:c[5]==="PRO"?"#e3f2fd":"#f3e5f5",color:c[5]==="PRO"?C2.blue:"#6a1b9a",borderRadius:99,padding:"5px 13px",fontSize:11,fontWeight:800,border:`1px solid ${c[5]==="PRO"?"#90caf9":"#ce93d8"}`}}>{c[5]||"Basic"}</span>
                       </div>
                       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                        {c[6]&&<span style={{background:"#e8f5e9",color:"#2e7d32",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700}}>{c[6]}</span>}
-                        {c[7]&&<a href={`https://docs.google.com/spreadsheets/d/${c[7]}`} target="_blank" rel="noreferrer" style={{background:"#e3f2fd",color:C2.blue,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700,textDecoration:"none"}}>📊 גיליון</a>}
-                        {c[4]&&<a href={`mailto:${c[4]}`} style={{background:"#f5f5f5",color:"#555",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700,textDecoration:"none"}}>✉️ מייל</a>}
-                        {c[3]&&<a href={`tel:${c[3]}`} style={{background:"#f5f5f5",color:"#555",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700,textDecoration:"none"}}>📞</a>}
+                        {c[6]&&<span style={{background:"#e8f5e9",color:C2.green,borderRadius:99,padding:"4px 12px",fontSize:11,fontWeight:700}}>{c[6]}</span>}
+                        {c[7]&&<Press tag="a" onClick={()=>{}} style={{background:"#e3f2fd",color:C2.blue,borderRadius:99,padding:"4px 12px",fontSize:11,fontWeight:700,textDecoration:"none",display:"inline-block"}}><a href={`https://docs.google.com/spreadsheets/d/${c[7]}`} target="_blank" rel="noreferrer" style={{color:C2.blue,textDecoration:"none"}}>📊 גיליון</a></Press>}
+                        {c[4]&&<a href={`mailto:${c[4]}`} style={{background:"#f5f5f5",color:"#555",borderRadius:99,padding:"4px 12px",fontSize:11,fontWeight:700,textDecoration:"none"}}>✉️ מייל</a>}
+                        {c[3]&&<a href={`tel:${c[3]}`} style={{background:"#f5f5f5",color:"#555",borderRadius:99,padding:"4px 12px",fontSize:11,fontWeight:700,textDecoration:"none"}}>📞 חיוג</a>}
                       </div>
-                      {c[14]&&<div style={{marginTop:8,fontSize:11,color:C2.muted,borderTop:`1px solid ${C2.border}`,paddingTop:6}}>📝 {c[14]}</div>}
+                      {(()=>{
+                        const ci=issues.filter(iss=>String(iss[1])===String(c[1]));
+                        if(!ci.length)return null;
+                        return (
+                          <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C2.border}`}}>
+                            <div style={{fontSize:11,fontWeight:700,color:C2.muted,marginBottom:6}}>היסטוריית תקלות ({ci.length})</div>
+                            {ci.map((iss,j)=>(
+                              <div key={j} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,padding:"5px 0",borderBottom:`1px solid ${C2.border}`}}>
+                                <span style={{color:"#546e7a",flex:1,marginLeft:8}}>{iss[3]?.slice(0,35)}{iss[3]?.length>35?"...":""}</span>
+                                <span style={{background:statusColor(iss[5]),color:statusTextColor(iss[5]),borderRadius:99,padding:"2px 10px",fontSize:10,fontWeight:800}}>{iss[5]||"פתוח"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
               )}
 
-              {tab==="issues"&&!loading&&(
+              {/* Settings tab */}
+              {tab==="settings"&&(
                 <div>
-                  <div style={{background:"#fff",borderRadius:14,padding:14,marginBottom:16,border:`1px solid ${C2.border}`}}>
-                    <div style={{fontWeight:800,fontSize:13,color:C2.text,marginBottom:12}}>➕ תקלה חדשה</div>
-                    <input value={newIssue.client} onChange={e=>setNewIssue(n=>({...n,client:e.target.value}))} placeholder="שם לקוח" style={{...inp2,marginBottom:8}}/>
-                    <textarea value={newIssue.desc} onChange={e=>setNewIssue(n=>({...n,desc:e.target.value}))} placeholder="תיאור התקלה..." rows={2} style={{...inp2,resize:"none",marginBottom:8}}/>
-                    <div style={{display:"flex",gap:8,marginBottom:10}}>
-                      {["רגיל","דחוף","קריטי"].map(p=>(
-                        <div key={p} onClick={()=>setNewIssue(n=>({...n,priority:p}))}
-                          style={{flex:1,padding:"8px",borderRadius:10,textAlign:"center",fontSize:12,fontWeight:800,cursor:"pointer",
-                            background:newIssue.priority===p?(p==="קריטי"?C2.red:p==="דחוף"?C2.orange:C2.blue):"#f0f4f8",
-                            color:newIssue.priority===p?"#fff":C2.muted}}>
-                          {p}
-                        </div>
-                      ))}
+                  <div style={{background:C2.white,borderRadius:16,padding:20,boxShadow:"0 2px 12px rgba(0,0,0,0.06)",border:`1px solid ${C2.border}`}}>
+                    <div style={{fontWeight:900,fontSize:16,color:C2.text,marginBottom:20}}>🔑 שינוי סיסמת כניסה</div>
+                    <div style={{marginBottom:12}}>
+                      <label style={{fontSize:11,fontWeight:700,color:C2.muted,display:"block",marginBottom:6}}>סיסמה חדשה</label>
+                      <input type="password" value={newPass} onChange={e=>setNewPass(e.target.value)} style={inp2} placeholder="לפחות 6 תווים"/>
                     </div>
-                    <div onClick={async()=>{
-                      if(!newIssue.client||!newIssue.desc)return;
-                      await mgmtCall("saveMgmtIssue",{issue:[Date.now(),newIssue.client,todayStr(),newIssue.desc,newIssue.priority,"פתוח","",""]});
-                      setNewIssue({client:"",desc:"",priority:"רגיל"});
-                      loadData();
-                    }} style={{padding:"11px",borderRadius:12,background:`linear-gradient(135deg,#1565c0,#42a5f5)`,color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",cursor:"pointer"}}>
-                      שמור תקלה
+                    <div style={{marginBottom:16}}>
+                      <label style={{fontSize:11,fontWeight:700,color:C2.muted,display:"block",marginBottom:6}}>אימות סיסמה</label>
+                      <input type="password" value={newPass2} onChange={e=>setNewPass2(e.target.value)} style={inp2} placeholder="הזן שוב"/>
                     </div>
-                  </div>
-                  {issues.length===0&&<div style={{background:"#fff",borderRadius:14,padding:24,textAlign:"center",color:C2.muted}}>אין תקלות פתוחות</div>}
-                  {issues.map((issue,i)=>{
-                    const priority=issue[4]||"רגיל";
-                    const status=issue[5]||"פתוח";
-                    const priColor=priority==="קריטי"?C2.red:priority==="דחוף"?C2.orange:C2.blue;
-                    return (
-                      <div key={i} style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,border:`2px solid ${priColor}22`}}>
-                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                          <div style={{fontWeight:800,fontSize:14,color:C2.text}}>{issue[1]}</div>
-                          <div style={{display:"flex",gap:5}}>
-                            <span style={{background:priColor+"18",color:priColor,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{priority}</span>
-                            <span style={{background:status==="סגור"?"#e8f5e9":"#fff8e1",color:status==="סגור"?C2.green:C2.orange,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{status}</span>
-                          </div>
-                        </div>
-                        <div style={{fontSize:13,color:"#546e7a",marginBottom:4}}>{issue[3]}</div>
-                        <div style={{fontSize:11,color:C2.muted}}>{issue[2]}</div>
-                        {issue[6]&&<div style={{marginTop:6,fontSize:12,color:C2.green,fontWeight:700}}>✅ {issue[6]}</div>}
+                    {passMsg&&(
+                      <div style={{background:passMsg.includes("✅")?"#e8f5e9":"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:14,color:passMsg.includes("✅")?C2.green:C2.red,fontSize:13,fontWeight:700,textAlign:"center"}}>
+                        {passMsg}
                       </div>
-                    );
-                  })}
+                    )}
+                    <Press onClick={()=>{
+                      if(!newPass||newPass.length<6){setPassMsg("⚠️ סיסמה חייבת להיות לפחות 6 תווים");return;}
+                      if(newPass!==newPass2){setPassMsg("⚠️ הסיסמאות לא תואמות");return;}
+                      setSuperPass(newPass);
+                      setNewPass("");setNewPass2("");
+                      setPassMsg("✅ סיסמה עודכנה בהצלחה!");
+                      haptic("success");
+                      setTimeout(()=>setPassMsg(""),3000);
+                    }} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C2.blue},#42a5f5)`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.35)"}}>
+                      עדכן סיסמה
+                    </Press>
+                  </div>
                 </div>
               )}
             </div>
@@ -545,6 +656,7 @@ function SuperAdminScreen({ onClose }) {
     </div>
   );
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 export default function App() {
