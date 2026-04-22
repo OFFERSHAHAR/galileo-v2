@@ -886,6 +886,7 @@ export default function App() {
   const [adminTab,setAdminTab]       = useState("daily");
   const [taskDate,setTaskDate]       = useState(todayStr());
   const [taskClient,setTaskClient]   = useState("");
+  const [taskClientSearch,setTaskClientSearch] = useState("");
   const [taskOps,setTaskOps]         = useState([]);
   const [taskNote,setTaskNote]       = useState("");
   const [editTaskId,setEditTaskId]   = useState(null);
@@ -1891,10 +1892,33 @@ export default function App() {
                   </div>
                   <div>
                     <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>לקוח</label>
-                    <select value={taskClient} onChange={e=>setTaskClient(e.target.value)} style={sel}>
-                      <option value="">בחר לקוח...</option>
-                      {clients.map(c=><option key={c.name}>{c.name}</option>)}
-                    </select>
+                    {taskClient?(
+                      <div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}>
+                        <span style={{color:C.blue,fontWeight:700}}>🏊 {taskClient.split(" - ")[0]}</span>
+                        <span onClick={()=>{setTaskClient("");setTaskClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span>
+                      </div>
+                    ):(
+                      <div style={{position:"relative"}}>
+                        <input value={taskClientSearch} onChange={e=>setTaskClientSearch(e.target.value)}
+                          placeholder="🔍 חפש לקוח..." style={inp} autoComplete="off"/>
+                        {taskClientSearch&&(
+                          <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:220,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
+                            {clients.filter(c=>c.name.includes(taskClientSearch)).length===0&&(
+                              <div style={{padding:"12px 16px",color:C.muted,fontSize:13}}>לא נמצא</div>
+                            )}
+                            {clients.filter(c=>c.name.toLowerCase().includes(taskClientSearch.toLowerCase())).map(c=>(
+                              <div key={c.name} onClick={()=>{setTaskClient(c.name);setTaskClientSearch("");haptic();}}
+                                style={{padding:"12px 16px",fontSize:14,fontWeight:600,color:C.text,cursor:"pointer",borderBottom:`1px solid ${C.border}`}}
+                                onMouseEnter={e=>e.target.style.background="#f5f9ff"}
+                                onMouseLeave={e=>e.target.style.background=""}>
+                                {c.name.split(" - ")[0]}
+                                {c.address&&<span style={{fontSize:11,color:C.muted,marginRight:6}}>· {c.address}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div style={{marginBottom:10}}>
