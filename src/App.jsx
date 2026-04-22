@@ -387,7 +387,7 @@ function SetupScreen({ onDone, onSuperAdmin }) {
 }
 
 const blank = () => ({
-  reportDate:todayStr(),client:"",chlorine:1.5,ph:7.4,salt:3.5,
+  reportDate:todayStr(),client:"",chlorine:1.5,ph:7.4,salt:3.5,chlora:0,hth:0,
   elModel:"",elSerial:"",elDate:"",
   waterLevel:"תקין",clarity:"תקין",fat:"תקין",flow:"תקין",
   acid:false,phUp:false,saltPkg:false,saltBags:1,
@@ -1160,7 +1160,7 @@ export default function App() {
       ));
     }
 
-    const report={id:Date.now(),reportDate,operator:user?.name||"",client,chlorine,ph,salt,elModel,elSerial,elDate,elNext:elNext||"",supplyLabel,waterLevel,clarity,fat,flow,poolStatus,customStatusText,restrictedUntil,notes,photosCount:photos.length};
+    const report={id:Date.now(),reportDate,operator:user?.name||"",client,chlorine,ph,salt,chlora:form.chlora||0,hth:form.hth||0,elModel,elSerial,elDate,elNext:elNext||"",supplyLabel,waterLevel,clarity,fat,flow,poolStatus,customStatusText,restrictedUntil,notes,photosCount:photos.length};
     setReports(r=>[...r,report]);
     setSyncing(true);
     let saved=false;
@@ -1621,6 +1621,8 @@ export default function App() {
           <SliderField label="כלור" min={0} max={8} value={chlorine} onChange={v=>sf("chlorine",v)} unit=" ppm" warnAbove={3} optimal={1.5} large={user?.username==="or"}/>
           <SliderField label="pH"   min={5} max={9} value={ph}       onChange={v=>sf("ph",v)}       warnAbove={8} warnBelow={6} optimal={7.4} large={user?.username==="or"}/>
           <SliderField label="מלח"  min={0} max={6} value={salt}     onChange={v=>sf("salt",v)}     unit=" g/L" optimal={3.5} large={user?.username==="or"}/>
+          <SliderField label="כלרה" min={0} max={5} step={0.25} value={form.chlora??0} onChange={v=>sf("chlora",v)} unit=" kg" optimal={1} large={user?.username==="or"}/>
+          <SliderField label="HTH"  min={0} max={5} step={0.5}  value={form.hth??0}    onChange={v=>sf("hth",v)}    unit=" kg" optimal={1} large={user?.username==="or"}/>
         </Sec>
 
         {/* Electrode */}
@@ -2171,7 +2173,7 @@ export default function App() {
                       </div>
                       <Badge label={r.poolStatus==="מאוזנת"?"✅ מאוזנת":"⚠️ אחר"} col={r.poolStatus==="מאוזנת"?C.green:C.orange}/>
                     </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:r.notes?10:0}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:6}}>
                       {[["כלור",`${r.chlorine} ppm`,"#e3f2fd","#1565c0"],["pH",r.ph,"#f3e5f5","#6a1b9a"],["מלח",`${r.salt} g/L`,"#e8f5e9","#1b5e20"]].map(([k,v,bg,col])=>(
                         <div key={k} style={{background:bg,borderRadius:10,padding:"8px",textAlign:"center"}}>
                           <div style={{fontSize:10,fontWeight:700,color:"#90a4ae",marginBottom:2}}>{k}</div>
@@ -2179,6 +2181,12 @@ export default function App() {
                         </div>
                       ))}
                     </div>
+                    {(r.chlora>0||r.hth>0)&&(
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:6}}>
+                        {r.chlora>0&&<div style={{background:"#fff3e0",borderRadius:10,padding:"8px",textAlign:"center"}}><div style={{fontSize:10,fontWeight:700,color:"#90a4ae",marginBottom:2}}>כלרה</div><div style={{fontSize:14,fontWeight:900,color:"#e65100"}}>{r.chlora} kg</div></div>}
+                        {r.hth>0&&<div style={{background:"#e8eaf6",borderRadius:10,padding:"8px",textAlign:"center"}}><div style={{fontSize:10,fontWeight:700,color:"#90a4ae",marginBottom:2}}>HTH</div><div style={{fontSize:14,fontWeight:900,color:"#283593"}}>{r.hth} kg</div></div>}
+                      </div>
+                    )}
                     {r.notes&&<div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 12px",fontSize:12,color:C.muted}}>📝 {r.notes}</div>}
                     {r.supplyLabel&&<div style={{marginTop:8,fontSize:11,color:C.blue,fontWeight:700}}>📦 {r.supplyLabel}</div>}
                   </div>
