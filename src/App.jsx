@@ -15,7 +15,20 @@ const DEMO_CLIENTS = [
   { name:"וילה ים - הנמל 18",     phone:"0525555555", address:"רחוב הנמל 18" },
 ];
 
-const CITY     = "אילת";
+const GREETINGS = [
+  "יאללה, יום עבודה מוצלח! 💪",
+  "הבריכות מחכות לך! 🌊",
+  "בוקר טוב, מתחילים! ☀️",
+  "כוח כוח! אתה הטוב ביותר ⚡",
+  "שיהיה יום חלק ויעיל 🏊",
+  "קדימה, הפועלים הטובים ביותר! 🔧",
+  "טיפול מעולה מתחיל עכשיו! ✨",
+  "יום נהדר לפניך! 🌟",
+];
+const getDailyGreeting = (name) => {
+  return GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+};
+const CITY     = "ישראל";
 const wazeUrl  = (a) => `https://waze.com/ul?q=${encodeURIComponent(a+", "+CITY)}&navigate=yes`;
 const todayStr = () => new Date().toISOString().slice(0,10);
 const fmtDate  = s => { if(!s)return""; const[y,m,d]=s.split("-"); return`${d}/${m}/${y}`; };
@@ -31,6 +44,7 @@ function saveCompany(data) {
 }
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
+const APP_VERSION = "v2.4 · 23.04.2026";
 const DEFAULT_SUPER_PASS = "039076914";
 function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
@@ -168,10 +182,20 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
   else if(warnBelow&&value<warnBelow){col=C.orange;txt="⚠️ נמוך";}
   else if(optimal&&Math.abs(value-optimal)<0.3){col=C.blue;txt="✓ אופטימלי";}
   const showStatus = !!(warnAbove||warnBelow||optimal);
-
   const trackH = large ? 28 : 8;
-  const thumbH = large ? 60 : 24;
-  const thumbTop = large ? -16 : -8;
+  const sliderRef = useRef();
+
+  // Fix: prevent page scroll only when actively dragging slider
+  const onTouchStart = (e) => {
+    const touch = e.touches[0];
+    const rect = sliderRef.current?.getBoundingClientRect();
+    if(!rect) return;
+    // Only capture if touch is on the slider track
+    sliderRef.current._dragging = true;
+  };
+  const onTouchEnd = () => {
+    if(sliderRef.current) sliderRef.current._dragging = false;
+  };
 
   return (
     <div style={{...card(),marginBottom:10}}>
@@ -187,10 +211,12 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
           background:`linear-gradient(90deg,${C.blue},${col})`,transition:"width 0.15s"}}/>
         {optimal&&<div style={{position:"absolute",top:-4,left:`${((optimal-min)/(max-min))*100}%`,
           width:large?3:2,height:large?36:16,background:C.blue,borderRadius:2,transform:"translateX(-50%)"}}/>}
-        <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(parseFloat(e.target.value))}
+        <input ref={sliderRef} type="range" min={min} max={max} step={step} value={value}
+          onChange={e=>onChange(parseFloat(e.target.value))}
+          onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
           dir="ltr"
-          style={{position:"absolute",top:thumbTop,left:0,width:"100%",opacity:0,cursor:"pointer",
-            height:thumbH,touchAction:"none",WebkitAppearance:"none"}}/>
+          style={{position:"absolute",top:large?-16:-8,left:0,width:"100%",opacity:0,cursor:"pointer",
+            height:large?60:24,touchAction:"pan-y",WebkitAppearance:"none"}}/>
       </div>
       <div dir="ltr" style={{display:"flex",justifyContent:"space-between",fontSize:large?12:10,color:C.muted}}>
         <span>{min}</span>{optimal&&<span style={{color:C.blue}}>אופטימלי {optimal}</span>}<span>{max}</span>
@@ -326,81 +352,235 @@ function QRScanner({ onResult, onClose }) {
 }
 
 // ─── Setup Screen ─────────────────────────────────────────────────────────
-function SetupScreen({ onDone, onSuperAdmin }) {
-  const [name,   setName]   = useState(getCompany().name||"");
-  const [sheetId, setSheetId] = useState(getCompany().sheetId||"");
-  const [adminEmail, setAdminEmail] = useState(getCompany().adminEmail||"");
-  const [saving, setSaving] = useState(false);
-  const [err,    setErr]    = useState("");
+// ─── License helpers ──────────────────────────────────────────────────────
+function getLicense() {
+  try { return JSON.parse(localStorage.getItem("galileo_license")||"{}"); } catch { return {}; }
+}
+function saveLicense(data) {
+  localStorage.setItem("galileo_license", JSON.stringify(data));
+}
 
-  const save = async () => {
-    if (!name.trim()) { setErr("נא להזין שם חברה"); return; }
-    setSaving(true);
-    saveCompany({ name: name.trim(), sheetId: sheetId.trim(), scriptUrl: FIXED_SCRIPT_URL, adminEmail: adminEmail.trim() });
-    if (sheetId.trim()) localStorage.setItem("galileo_sheet_id", sheetId.trim());
-    setTimeout(() => { setSaving(false); onDone(); }, 600);
+// ─── License Screen ───────────────────────────────────────────────────────
+function LicenseScreen({ onDone, onSuperAdmin }) {
+  const [key, setKey]     = useState(getLicense().key||"");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr]     = useState("");
+
+  const formatKey = (v) => {
+    const clean = v.toUpperCase().replace(/[^A-Z0-9]/g,"");
+    const parts = [clean.slice(0,3),clean.slice(3,7),clean.slice(7,11),clean.slice(11,15)].filter(Boolean);
+    return parts.join("-");
+  };
+
+  const validate = async () => {
+    if(!key.trim()){setErr("נא להזין מפתח רישיון");return;}
+    setLoading(true); setErr("");
+    const res = await mgmtCall("validateLicense",{key:key.trim()});
+    if(res?.valid){
+      saveLicense({key:key.trim(), company:res.company, sheetId:res.sheetId, plan:res.plan, status:res.status, expiry:res.expiry, adminEmail:res.adminEmail||""});
+      saveCompany({name:res.company, sheetId:res.sheetId, scriptUrl:FIXED_SCRIPT_URL, adminEmail:res.adminEmail||""});
+      if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId);
+      setLoading(false);
+      onDone();
+    } else {
+      setErr(res?.reason||"מפתח לא תקין");
+      setLoading(false);
+    }
   };
 
   return (
-    <div dir="rtl" style={{minHeight:"100vh",background:`linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)`,fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+    <div dir="rtl" style={{minHeight:"100vh",background:`linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)`,fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}`}</style>
+
       <div style={{width:"100%",maxWidth:380}}>
-        <div style={{textAlign:"center",marginBottom:32}}>
-          <div style={{fontSize:56,marginBottom:10,filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))"}}>🌊</div>
-          <h1 style={{color:"#fff",fontSize:26,fontWeight:900,margin:"0 0 6px"}}>הגדרת מערכת</h1>
-          <p style={{color:"rgba(255,255,255,0.65)",fontSize:13,margin:0}}>הזן את פרטי החברה שלך</p>
+        <div style={{textAlign:"center",marginBottom:36}}>
+          <div style={{fontSize:64,marginBottom:12,filter:"drop-shadow(0 0 24px rgba(255,255,255,0.3))"}}>🌊</div>
+          <h1 style={{color:"#fff",fontSize:30,fontWeight:900,margin:"0 0 6px",letterSpacing:"-0.5px"}}>PoolSync PRO</h1>
+          <p style={{color:"rgba(255,255,255,0.55)",fontSize:14,margin:0}}>מערכת ניהול בריכות מקצועית</p>
         </div>
 
-        <div style={{background:"#fff",borderRadius:24,padding:24,boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}}>
-          <div style={{marginBottom:14}}>
-            <label style={{fontSize:12,fontWeight:700,color:"#90a4ae",display:"block",marginBottom:6}}>שם החברה *</label>
-            <input value={name} onChange={e=>{setName(e.target.value);setErr("");}} placeholder="לדוגמה: גליליאו בריכות"
-              style={{width:"100%",background:"#f5f9ff",border:"2px solid #e3f2fd",borderRadius:12,padding:"12px 14px",fontSize:14,outline:"none",fontFamily:"'Plus Jakarta Sans',sans-serif",color:"#1a237e",boxSizing:"border-box"}}/>
+        <div style={{background:"rgba(255,255,255,0.1)",backdropFilter:"blur(20px)",borderRadius:24,padding:28,border:"1px solid rgba(255,255,255,0.2)",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+          <div style={{textAlign:"center",marginBottom:24}}>
+            <div style={{fontSize:32,marginBottom:8}}>🔑</div>
+            <h2 style={{color:"#fff",fontSize:18,fontWeight:900,margin:"0 0 6px"}}>הזן מפתח רישיון</h2>
+            <p style={{color:"rgba(255,255,255,0.55)",fontSize:13,margin:0}}>קיבלת מפתח? הזן אותו כאן</p>
           </div>
 
-          <div style={{marginBottom:14}}>
-            <label style={{fontSize:12,fontWeight:700,color:"#90a4ae",display:"block",marginBottom:6}}>Google Sheet ID <span style={{fontWeight:400,opacity:0.7}}>(אופציונלי)</span></label>
-            <input value={sheetId} onChange={e=>setSheetId(e.target.value)} placeholder="1abc123xyz..."
-              style={{width:"100%",background:"#f5f9ff",border:"2px solid #e3f2fd",borderRadius:12,padding:"12px 14px",fontSize:13,outline:"none",fontFamily:"'Plus Jakarta Sans',sans-serif",color:"#1a237e",boxSizing:"border-box"}}/>
-            <p style={{fontSize:11,color:"#90a4ae",marginTop:6,marginBottom:0}}>
-              מתוך כתובת הגיליון: docs.google.com/spreadsheets/d/<b>ID</b>/edit
-            </p>
-          </div>
+          <input value={key} onChange={e=>{setKey(formatKey(e.target.value));setErr("");}}
+            placeholder="PSP-XXXX-XXXX-XXXX" maxLength={19}
+            onKeyDown={e=>e.key==="Enter"&&validate()}
+            style={{width:"100%",background:"rgba(255,255,255,0.15)",border:"2px solid rgba(255,255,255,0.3)",
+              borderRadius:14,padding:"14px 16px",fontSize:18,outline:"none",color:"#fff",
+              fontFamily:"'Courier New',monospace",textAlign:"center",letterSpacing:"0.15em",
+              caretColor:"#fff",backdropFilter:"blur(8px)",boxSizing:"border-box"}}/>
 
-          <div style={{marginBottom:6}}>
-            <label style={{fontSize:12,fontWeight:700,color:"#90a4ae",display:"block",marginBottom:6}}>מייל מנהל לדוחות עם תמונות <span style={{fontWeight:400,opacity:0.7}}>(אופציונלי)</span></label>
-            <input value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} placeholder="admin@gmail.com" type="email"
-              style={{width:"100%",background:"#f5f9ff",border:"2px solid #e3f2fd",borderRadius:12,padding:"12px 14px",fontSize:13,outline:"none",fontFamily:"'Plus Jakarta Sans',sans-serif",color:"#1a237e",boxSizing:"border-box"}}/>
-          </div>
+          {err&&<div style={{background:"rgba(198,40,40,0.3)",borderRadius:10,padding:"10px 14px",marginTop:12,
+            color:"#ffcdd2",fontSize:13,fontWeight:700,textAlign:"center",border:"1px solid rgba(198,40,40,0.4)"}}>
+            {err}
+          </div>}
 
-          {err && <div style={{background:"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:12,color:"#c62828",fontSize:13,fontWeight:700}}>{err}</div>}
-
-          <Press onClick={save}
-            style={{marginTop:16,padding:16,borderRadius:14,background:saving?"#90caf9":"linear-gradient(135deg,#1565c0,#42a5f5)",
+          <Press onClick={validate}
+            style={{marginTop:16,padding:16,borderRadius:14,
+              background:loading?"rgba(255,255,255,0.1)":"linear-gradient(135deg,rgba(255,255,255,0.25),rgba(255,255,255,0.15))",
               color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",
-              boxShadow:saving?"none":"0 6px 20px rgba(21,101,192,0.4)"}}>
-            {saving?"⏳ שומר...":"התחל →"}
+              border:"1px solid rgba(255,255,255,0.3)",
+              boxShadow:loading?"none":"0 6px 20px rgba(0,0,0,0.2)"}}>
+            {loading?"⏳ בודק מפתח...":"אמת מפתח →"}
           </Press>
         </div>
 
-        {/* Gear — Super Admin */}
-        <div onClick={onSuperAdmin}
-          style={{position:"fixed",bottom:16,left:16,fontSize:28,opacity:0.22,padding:10,zIndex:10,WebkitTapHighlightColor:"transparent",cursor:"pointer"}}>
-          ⚙️
-        </div>
+        <p style={{textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.25)",marginTop:16,letterSpacing:"0.05em"}}>
+          PoolSync PRO {APP_VERSION}
+        </p>
+      </div>
+
+      {/* Gear — Super Admin */}
+      <div onClick={onSuperAdmin}
+        style={{position:"fixed",bottom:16,left:16,fontSize:28,opacity:0.22,padding:10,zIndex:10,WebkitTapHighlightColor:"transparent",cursor:"pointer"}}>
+        ⚙️
       </div>
     </div>
   );
 }
 
 const blank = () => ({
-  reportDate:todayStr(),client:"",chlorine:1.5,ph:7.4,salt:3.5,chlora:0,hth:0,
+  reportDate:todayStr(),client:"",chlorine:1.5,ph:7.4,salt:3.5,chlora:0,hth:0,phUp:0,acidLiters:0,
   elModel:"",elSerial:"",elDate:"",
   waterLevel:"תקין",clarity:"תקין",fat:"תקין",flow:"תקין",
   acid:false,phUp:false,saltPkg:false,saltBags:1,
   poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
   notes:"",photos:[],clientLocked:false,
 });
+
+// ─── Generate License Key ──────────────────────────────────────────────────
+function generateLicenseKey() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const seg = (n) => Array.from({length:n},()=>chars[Math.floor(Math.random()*chars.length)]).join("");
+  return `PSP-${seg(4)}-${seg(4)}-${seg(4)}`;
+}
+
+// ─── Licenses Tab Component ────────────────────────────────────────────────
+function LicensesTab({C2, inp2, showMsg}) {
+  const [licenses, setLicenses]   = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [newLic, setNewLic]       = useState({company:"",sheetId:"",plan:"PRO",expiry:"",adminEmail:""});
+  const [generated, setGenerated] = useState("");
+  const [showForm, setShowForm]   = useState(false);
+
+  useEffect(()=>{ loadLicenses(); },[]);
+
+  const loadLicenses = async () => {
+    setLoading(true);
+    const res = await mgmtCall("getLicenses");
+    if(res?.licenses) setLicenses(res.licenses);
+    setLoading(false);
+  };
+
+  const createLicense = async () => {
+    if(!newLic.company||!newLic.sheetId){showMsg("⚠️ מלא שם חברה ו-Sheet ID");return;}
+    const key = generateLicenseKey();
+    await mgmtCall("saveLicense",{license:[key, newLic.company, newLic.sheetId, newLic.plan, "פעיל", newLic.expiry||"", newLic.adminEmail||""]});
+    setGenerated(key);
+    setNewLic({company:"",sheetId:"",plan:"PRO",expiry:"",adminEmail:""});
+    loadLicenses();
+  };
+
+  const updateLicenseStatus = async (rowIndex, status) => {
+    await mgmtCall("updateLicenseStatus",{rowIndex, status});
+    loadLicenses();
+    showMsg(`✅ סטטוס עודכן ל${status}`);
+  };
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:800,color:C2.muted,letterSpacing:"0.1em",textTransform:"uppercase"}}>{licenses.length} רישיונות</div>
+        <Press onClick={()=>{setShowForm(!showForm);setGenerated("");}}
+          style={{padding:"8px 16px",borderRadius:99,background:showForm?"#ffebee":`linear-gradient(135deg,${C2.blue},#42a5f5)`,
+            color:showForm?C2.red:"#fff",fontWeight:800,fontSize:12,boxShadow:showForm?"none":"0 4px 12px rgba(21,101,192,0.3)"}}>
+          {showForm?"✕ ביטול":"🔑 רישיון חדש"}
+        </Press>
+      </div>
+
+      {/* New license form */}
+      {showForm&&(
+        <div style={{background:C2.white,borderRadius:16,padding:16,marginBottom:16,border:`1px solid ${C2.border}`}}>
+          <div style={{fontWeight:800,fontSize:14,color:C2.text,marginBottom:14}}>רישיון חדש</div>
+          {[["company","שם חברה *"],["sheetId","Google Sheet ID *"],["adminEmail","מייל אדמין (לתמונות)"]].map(([k,lbl])=>(
+            <div key={k} style={{marginBottom:10}}>
+              <label style={{fontSize:11,fontWeight:700,color:C2.muted,display:"block",marginBottom:4}}>{lbl}</label>
+              <input value={newLic[k]||""} onChange={e=>setNewLic(p=>({...p,[k]:e.target.value}))} style={inp2} placeholder={lbl}/>
+            </div>
+          ))}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+            <div>
+              <label style={{fontSize:11,fontWeight:700,color:C2.muted,display:"block",marginBottom:4}}>תוכנית</label>
+              <select value={newLic.plan} onChange={e=>setNewLic(p=>({...p,plan:e.target.value}))} style={inp2}>
+                <option>PRO</option><option>Basic</option>
+              </select>
+            </div>
+            <div>
+              <label style={{fontSize:11,fontWeight:700,color:C2.muted,display:"block",marginBottom:4}}>תוקף עד</label>
+              <input type="date" value={newLic.expiry||""} onChange={e=>setNewLic(p=>({...p,expiry:e.target.value}))} style={inp2}/>
+            </div>
+          </div>
+          <Press onClick={createLicense}
+            style={{padding:"12px",borderRadius:12,background:`linear-gradient(135deg,${C2.blue},#42a5f5)`,
+              color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",marginBottom:generated?12:0}}>
+            🔑 צור מפתח רישיון
+          </Press>
+          {generated&&(
+            <div style={{background:"#e8f5e9",borderRadius:12,padding:16,border:"1px solid #c8e6c9",textAlign:"center",marginTop:12}}>
+              <div style={{fontSize:11,fontWeight:700,color:C2.green,marginBottom:8}}>✅ שלח ללקוח:</div>
+              <div style={{fontFamily:"monospace",fontSize:20,fontWeight:900,color:C2.text,letterSpacing:"0.1em",marginBottom:10}}>{generated}</div>
+              <Press onClick={()=>{ navigator.clipboard?.writeText(generated); showMsg("📋 הועתק!"); }}
+                style={{background:C2.green,color:"#fff",borderRadius:99,padding:"8px 20px",fontSize:13,fontWeight:700,display:"inline-block"}}>
+                📋 העתק מפתח
+              </Press>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Licenses list */}
+      {loading&&<div style={{textAlign:"center",padding:32,color:C2.muted}}>⏳ טוען...</div>}
+      {!loading&&licenses.length===0&&<div style={{background:C2.white,borderRadius:16,padding:32,textAlign:"center",color:C2.muted}}><div style={{fontSize:32,marginBottom:8}}>🔑</div><div style={{fontWeight:700}}>אין רישיונות עדיין</div></div>}
+      {licenses.map((lic,i)=>{
+        const [key,company,sheetId,plan,status,expiry] = lic;
+        return (
+          <div key={i} style={{background:C2.white,borderRadius:16,padding:16,marginBottom:10,
+            border:`1px solid ${status==="מושהה"?C2.red+"33":C2.border}`,
+            boxShadow:"0 2px 12px rgba(0,0,0,0.06)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+              <div>
+                <div style={{fontWeight:900,fontSize:15,color:C2.text}}>{company}</div>
+                <div style={{fontFamily:"monospace",fontSize:11,color:C2.muted,marginTop:3}}>{key}</div>
+              </div>
+              <div style={{display:"flex",gap:5}}>
+                <span style={{background:plan==="PRO"?"#e3f2fd":"#f3e5f5",color:plan==="PRO"?C2.blue:"#6a1b9a",borderRadius:99,padding:"4px 10px",fontSize:11,fontWeight:800}}>{plan}</span>
+              </div>
+            </div>
+            <div style={{fontSize:11,color:C2.muted,marginBottom:10}}>📅 תוקף: {expiry||"—"}</div>
+            <div style={{display:"flex",gap:6}}>
+              {["פעיל","מושהה"].map(s=>(
+                <Press key={s} onClick={()=>updateLicenseStatus(i+2,s)}
+                  style={{padding:"6px 14px",borderRadius:99,fontSize:12,fontWeight:800,
+                    background:(status||"פעיל")===s?(s==="פעיל"?"#e8f5e9":"#ffebee"):"#f0f4f8",
+                    color:(status||"פעיל")===s?(s==="פעיל"?C2.green:C2.red):C2.muted}}>
+                  {s==="פעיל"?"✅ פעיל":"⛔ מושהה"}
+                </Press>
+              ))}
+              <Press onClick={()=>{ navigator.clipboard?.writeText(key); showMsg("📋 מפתח הועתק!"); }}
+                style={{padding:"6px 14px",borderRadius:99,fontSize:12,fontWeight:800,background:"#e3f2fd",color:C2.blue}}>
+                📋 העתק
+              </Press>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // ─── Super Admin Screen ───────────────────────────────────────────────────
 function SuperAdminScreen({ onClose }) {
@@ -581,7 +761,7 @@ function SuperAdminScreen({ onClose }) {
           <>
             {/* Tabs */}
             <div style={{background:C2.white,padding:"8px 12px",borderBottom:`1px solid ${C2.border}`,display:"flex",gap:6,flexShrink:0,overflowX:"auto",boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
-              {[["issues",`🔧 תקלות${pendingCount>0?` (${pendingCount})`:""}`,],["clients","👥 לקוחות"],["stats","📊 סטטיסטיקות"],["settings","⚙️ הגדרות"]].map(([t,lbl])=>(
+              {[["issues",`🔧 תקלות${pendingCount>0?` (${pendingCount})`:""}`,],["clients","👥 לקוחות"],["licenses","🔑 רישיונות"],["stats","📊 סטטיסטיקות"],["settings","⚙️ הגדרות"]].map(([t,lbl])=>(
                 <Press key={t} onClick={()=>{setTab(t);haptic();}}
                   style={{padding:"9px 14px",borderRadius:99,fontSize:12,fontWeight:800,flexShrink:0,whiteSpace:"nowrap",
                     background:tab===t?`linear-gradient(135deg,${C2.blue},#42a5f5)`:"#f0f4f8",
@@ -762,6 +942,11 @@ function SuperAdminScreen({ onClose }) {
                 </div>
               )}
 
+              {/* ── רישיונות ── */}
+              {tab==="licenses"&&!loading&&(
+                <LicensesTab C2={C2} inp2={inp2} showMsg={showMsg}/>
+              )}
+
               {/* ── סטטיסטיקות ── */}
               {tab==="stats"&&!loading&&(
                 <div>
@@ -848,10 +1033,8 @@ function SuperAdminScreen({ onClose }) {
 export default function App() {
   const company = getCompany();
   const [showSetup, setShowSetup] = useState(()=>{
-    const c = getCompany();
-    // אם יש שם חברה — לא מציגים setup
-    if(c.name) return false;
-    // אם יש cache עם נתונים — כנראה כבר הוגדר
+    const lic = getLicense();
+    if(lic.key && lic.sheetId) return false;
     try {
       const cached = localStorage.getItem("galileo_cache");
       if(cached && JSON.parse(cached)?.users?.length) return false;
@@ -862,6 +1045,7 @@ export default function App() {
   const [user,setUser]               = useState(()=>{
     try { return JSON.parse(localStorage.getItem("galileo_user")||"null"); } catch { return null; }
   });
+  const [greeting, setGreeting]      = useState(()=>getDailyGreeting(""));
   const [loginUser,setLoginUser]     = useState("");
   const [loginPass,setLoginPass]     = useState("");
   const [loginErr,setLoginErr]       = useState("");
@@ -906,6 +1090,15 @@ export default function App() {
   const [showReportIssue,setShowReportIssue] = useState(false);
   const [issueDesc,setIssueDesc]         = useState("");
   const [issuePriority,setIssuePriority] = useState("רגיל");
+  const [showGateCode,setShowGateCode]   = useState({});
+  const [operatorIssues,setOperatorIssues] = useState([]);
+  const [showOperatorIssue,setShowOperatorIssue] = useState(false);
+  const [opIssueClient,setOpIssueClient] = useState("");
+  const [opIssueDesc,setOpIssueDesc]     = useState("");
+  const [opIssuePriority,setOpIssuePriority] = useState("רגיל");
+  const [clientSearch,setClientSearch]   = useState("");
+  const [editingReport,setEditingReport] = useState(null);
+  const [supplySearch,setSupplySearch]   = useState({date:"",type:""}); // {clientName: bool}
   const [newClient,setNewClient]     = useState({name:"",phone:"",address:""});
   const [reportFilter,setReportFilter] = useState("");
   const [reportDateFilter,setReportDateFilter] = useState("");
@@ -921,6 +1114,7 @@ export default function App() {
 
   const clientPhone   = (n) => (clients.find(c=>c.name===n)||{}).phone||"";
   const clientAddress = (n) => (clients.find(c=>c.name===n)||{}).address||"";
+  const clientGateCode = (n) => (clients.find(c=>c.name===n)||{}).gateCode||"";
   const operatorUsers = allUsers.filter(u=>u.role==="operator");
   const opNames       = operatorUsers.map(u=>u.name);
 
@@ -974,7 +1168,7 @@ export default function App() {
     toastTimer.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2500);
   };
 
-  // ── Load cache on start ───────────────────────────────────────────────────
+  // ── Load cache on start + validate license ───────────────────────────────
   useEffect(()=>{
     try {
       const cached = localStorage.getItem("galileo_cache");
@@ -988,7 +1182,29 @@ export default function App() {
         setSheetId("connected");
       }
     } catch {}
-    // Refresh in background
+
+    // בדיקת רישיון בכל פתיחת אפליקציה
+    const checkLicense = async () => {
+      const lic = getLicense();
+      if(!lic.key) return;
+      try {
+        const res = await mgmtCall("validateLicense",{key:lic.key});
+        if(res?.valid){
+          // עדכן פרטים עדכניים
+          saveLicense({...lic, plan:res.plan, status:res.status, expiry:res.expiry});
+          saveCompany({name:res.company, sheetId:res.sheetId, scriptUrl:FIXED_SCRIPT_URL, adminEmail:res.adminEmail||""});
+          setClientPlan({plan:res.plan, status:res.status});
+          if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId);
+        } else {
+          // מנוי לא תקין — נעילה
+          localStorage.removeItem("galileo_user");
+          localStorage.removeItem("galileo_license");
+          setUser(null);
+          setShowSetup(true);
+        }
+      } catch {}
+    };
+    checkLicense();
     connectSheets(true);
   },[]);
 
@@ -1075,6 +1291,7 @@ export default function App() {
 
     if(found){
       setUser(found);
+      setGreeting(getDailyGreeting(found.name||""));
       localStorage.setItem("galileo_user", JSON.stringify(found));
       setScreen(found.role==="admin"?"admin":"daily");
       haptic("medium");
@@ -1152,8 +1369,9 @@ export default function App() {
   // ── Report submit ─────────────────────────────────────────────────────────
   const buildWA = (r) => {
     const name=r.client?.split(" - ")[0]||"לקוח יקר";
+    const company = getCompany().name || "גליליאו";
     const statusLine=r.poolStatus==="אחר"?`⚠️ *נדרשת תשומת לב:*\n${r.customStatusText}${r.restrictedUntil?`\nהבריכה לא זמינה עד ${fmtDate(r.restrictedUntil)}`:""}` :"✅ הבריכה מאוזנת ומוכנה לשימוש מלא";
-    return `🏊 *צוות גליליאו טיפל בבריכתכם!*\n\nשלום ${name} 👋\n\n${user?.name} סיים את הטיפול המסור בבריכה שלכם היום 💙\n\n${statusLine}${r.notes?`\n\n📝 ${r.notes}`:""}\n\nתמיד כאן בשבילכם 🌊\n_צוות גליליאו_`;
+    return `*טיפול בריכה הושלם!*\n\nשלום ${name},\n\n${user?.name} סיים את הטיפול בבריכה שלכם היום.\n\n${statusLine}${r.notes?`\n\n📝 ${r.notes}`:""}\n\nתמיד כאן בשבילכם,\n_צוות ${company}_`;
   };
 
   const handleSubmit = async () => {
@@ -1179,7 +1397,7 @@ export default function App() {
       ));
     }
 
-    const report={id:Date.now(),reportDate,operator:user?.name||"",client,chlorine,ph,salt,chlora:form.chlora||0,hth:form.hth||0,elModel,elSerial,elDate,elNext:elNext||"",supplyLabel,waterLevel,clarity,fat,flow,poolStatus,customStatusText,restrictedUntil,notes,photosCount:photos.length};
+    const report={id:Date.now(),reportDate,operator:user?.name||"",client,chlorine,ph,salt,chlora:form.chlora||0,hth:form.hth||0,phUp:form.phUp||0,acidLiters:form.acidLiters||0,elModel,elSerial,elDate,elNext:elNext||"",supplyLabel,waterLevel,clarity,fat,flow,poolStatus,customStatusText,restrictedUntil,notes,photosCount:photos.length};
     setReports(r=>[...r,report]);
     setSyncing(true);
     let saved=false;
@@ -1205,7 +1423,7 @@ export default function App() {
   // ── Setup screen ──────────────────────────────────────────────────────────
   if (showSetup) return (
     <>
-      <SetupScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||"גליליאו"); setShowSetup(false); }} onSuperAdmin={()=>setShowSuperAdmin(true)}/>
+      <LicenseScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||"גליליאו"); setShowSetup(false); }} onSuperAdmin={()=>setShowSuperAdmin(true)}/>
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
     </>
   );
@@ -1225,6 +1443,16 @@ export default function App() {
           <div style={{fontSize:60,marginBottom:12,filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))",cursor:"pointer",userSelect:"none"}}>🌊</div>
           <h1 style={{color:"#fff",fontSize:28,fontWeight:900,margin:"0 0 6px",letterSpacing:"-0.5px"}}>{companyName}</h1>
           <p style={{color:"rgba(255,255,255,0.6)",fontSize:14,margin:0}}>מערכת ניהול בריכות</p>
+          {clientPlan.plan&&(
+            <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12}}>
+              <span style={{background:"rgba(255,255,255,0.2)",borderRadius:99,padding:"4px 14px",fontSize:12,fontWeight:800,color:"#fff"}}>
+                {clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}
+              </span>
+              <span style={{background:clientPlan.status==="פעיל"?"rgba(46,125,50,0.5)":"rgba(198,40,40,0.5)",borderRadius:99,padding:"4px 14px",fontSize:12,fontWeight:800,color:"#fff"}}>
+                {clientPlan.status==="פעיל"?"✅ פעיל":"⛔ "+clientPlan.status}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Card */}
@@ -1247,10 +1475,10 @@ export default function App() {
               boxShadow:loginLoading?"none":"0 6px 20px rgba(21,101,192,0.4)"}}>
             {loginLoading?"⏳ מתחבר...":"כניסה →"}
           </Press>
-          <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:16,marginBottom:0}}>
-            demo: admin/1234 · avi/1234
-          </p>
         </div>
+        <p style={{textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.35)",marginTop:16,marginBottom:0,letterSpacing:"0.05em"}}>
+          PoolSync PRO {APP_VERSION}
+        </p>
       </div>
     </div>
   );
@@ -1274,7 +1502,7 @@ export default function App() {
             <div>
               <p style={{color:"rgba(255,255,255,0.65)",fontSize:12,fontWeight:600,margin:"0 0 4px"}}>{fmtDate(dailyDate)} 🌊</p>
               <h1 style={{color:"#fff",fontSize:24,fontWeight:900,margin:0,lineHeight:1.1}}>שלום, {user?.name}! {user?.icon}</h1>
-              <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,margin:"4px 0 0"}}>{user?.welcomeMessage}</p>
+              <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,margin:"4px 0 0"}}>{user?.welcomeMessage || greeting}</p>
               {clientPlan.plan&&(
                 <div style={{display:"flex",gap:6,marginTop:8}}>
                   <span style={{background:"rgba(255,255,255,0.2)",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,color:"#fff"}}>
@@ -1371,34 +1599,63 @@ export default function App() {
           </Press>
 
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <h2 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:0}}>משימות היום</h2>
+            <h2 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:0}}>סידור יומי</h2>
             <input type="date" value={dailyDate} onChange={e=>setDailyDate(e.target.value)}
               style={{fontSize:12,fontWeight:700,color:C.blue,border:"none",background:"transparent",outline:"none",cursor:"pointer"}}/>
           </div>
 
-          {dayTasks.length===0&&(
+          {/* Client search for operator */}
+          <div style={{marginBottom:12}}>
+            <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)}
+              placeholder="🔍 חפש לקוח..." style={{...inp,fontSize:13}}/>
+          </div>
+
+          {dayTasks.length===0&&!clientSearch&&(
             <div style={{...card({textAlign:"center"}),padding:32}}>
               <div style={{fontSize:40,marginBottom:8}}>📭</div>
-              <div style={{fontWeight:700,color:C.muted,fontSize:14}}>אין משימות לתאריך זה</div>
+              <div style={{fontWeight:700,color:C.muted,fontSize:14}}>אין לקוחות לתאריך זה</div>
             </div>
           )}
 
-          {dayTasks.map((t,i)=>{
+          {(clientSearch
+            ? clients.filter(c=>c.name.toLowerCase().includes(clientSearch.toLowerCase())).map(c=>({id:`manual-${c.name}`,client:c.name,operators:[user?.name],date:dailyDate,status:"pending",changeLog:[],_manual:true}))
+            : dayTasks
+          ).map((t,i)=>{
             const done = todayReported.includes(t.client);
             const supply = clientSupply(t.client);
             const lastLog = t.changeLog?.[t.changeLog.length-1];
             const needsAck = lastLog?.needsAck && !(lastLog?.ackedBy||[]).includes(user?.name);
             const logIdx = t.changeLog?t.changeLog.length-1:-1;
+            const poolType = clientGateCode ? (clients.find(c=>c.name===t.client)||{}).poolType||"מלח" : "מלח";
+            const poolIcon = poolType==="כלור"?"🧪":poolType==="גלישה"?"🌊":poolType==="סקימר"?"🔵":"🧂";
             return (
               <div key={t.id} style={{...card({marginBottom:12,opacity:done?0.65:1,
                 border:`2px solid ${needsAck?"#ff9800":done?"#c8e6c9":C.border}`,
                 transition:"all 0.3s"})}}>
+                {/* Profile header row */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                   <div style={{flex:1}}>
-                    <div style={{fontWeight:900,fontSize:16,color:C.text,marginBottom:3,textDecoration:done?"line-through":"none"}}>{t.client.split(" - ")[0]}</div>
-                    {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted}}>📍 {clientAddress(t.client)}</div>}
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                      <div style={{width:40,height:40,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{poolIcon}</div>
+                      <div>
+                        <div style={{fontWeight:900,fontSize:16,color:C.text,textDecoration:done?"line-through":"none"}}>{t.client.split(" - ")[0]}</div>
+                        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginTop:2}}>
+                          <span style={{fontSize:10,fontWeight:700,background:poolType==="כלור"?"#e3f2fd":poolType==="גלישה"?"#e0f7fa":poolType==="סקימר"?"#e8eaf6":"#e8f5e9",color:poolType==="כלור"?C.blue:poolType==="גלישה"?"#006064":poolType==="סקימר"?"#3949ab":C.green,borderRadius:99,padding:"2px 8px"}}>{poolType}</span>
+                          {clientAddress(t.client)&&<span style={{fontSize:11,color:C.muted}}>📍 {clientAddress(t.client)}</span>}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <Badge label={done?"✓ בוצע":"⏳ ממתין"} col={done?C.green:C.orange}/>
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+                    <Badge label={done?"✓ בוצע":"⏳ ממתין"} col={done?C.green:C.orange}/>
+                    {/* Report button */}
+                    {!done&&(
+                      <Press onClick={()=>{setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}}
+                        style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>
+                        📝 דוח
+                      </Press>
+                    )}
+                  </div>
                 </div>
 
                 {/* Admin alert */}
@@ -1422,6 +1679,10 @@ export default function App() {
                         <span style={{fontSize:12,fontWeight:700,color:C.blue}}>📊 מדידה אחרונה:</span>
                         <span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>Cl: {lr.chlorine}</span>
                         <span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph}</span>
+                        {lr.chlora>0&&<span style={{fontSize:12,fontWeight:800,color:"#e65100"}}>TAB: {lr.chlora}</span>}
+                        {lr.hth>0&&<span style={{fontSize:12,fontWeight:800,color:"#283593"}}>HTH: {lr.hth} cups</span>}
+                        {lr.phUp>0&&<span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH+: {lr.phUp} כוסות</span>}
+                        {lr.acidLiters>0&&<span style={{fontSize:12,fontWeight:800,color:C.red}}>חומצה: {lr.acidLiters}L</span>}
                         <span style={{fontSize:10,color:C.muted,marginRight:"auto"}}>{lr.date}</span>
                       </div>
                       {(lr.elModel||lr.elDate)&&(
@@ -1467,34 +1728,45 @@ export default function App() {
                   );
                 })()}
 
+                {/* Gate code */}
+                {clientGateCode(t.client)&&(
+                  <Press onClick={()=>{setShowGateCode(g=>({...g,[t.client]:!g[t.client]}));haptic();}}
+                    style={{display:"inline-flex",alignItems:"center",gap:6,marginBottom:8,padding:"6px 14px",
+                      background:showGateCode[t.client]?"#fff3e0":"#f0f4f8",
+                      borderRadius:99,border:`1px solid ${showGateCode[t.client]?"#ffb74d":C.border}`}}>
+                    <span style={{fontSize:12}}>🔑</span>
+                    <span style={{fontSize:12,fontWeight:800,color:showGateCode[t.client]?C.orange:C.muted}}>
+                      {showGateCode[t.client]?clientGateCode(t.client):"הצג קוד שער"}
+                    </span>
+                  </Press>
+                )}
+
                 {/* Action buttons */}
                 {!done&&(
-                  <div style={{display:"grid",gridTemplateColumns:"1fr auto auto",gap:8}}>
-                    <Press onClick={()=>{setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}}
-                      style={{padding:"11px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,
-                        color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",
-                        boxShadow:"0 4px 14px rgba(21,101,192,0.3)"}}>
-                      📝 פתח דוח
-                    </Press>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                     {clientAddress(t.client)&&(
                       <a href={wazeUrl(clientAddress(t.client))} target="_blank" rel="noreferrer"
-                        style={{padding:"11px 14px",borderRadius:12,background:"#e8f5e9",color:C.green,fontWeight:800,fontSize:13,textDecoration:"none",textAlign:"center",border:"2px solid #c8e6c9",display:"flex",alignItems:"center",gap:4}}>
-                        🗺️
+                        style={{padding:"10px 14px",borderRadius:12,background:"#e8f5e9",color:C.green,fontWeight:800,fontSize:13,textDecoration:"none",textAlign:"center",border:"2px solid #c8e6c9",display:"flex",alignItems:"center",gap:4}}>
+                        🗺️ נווט
                       </a>
                     )}
                     {clientPhone(t.client)&&(
                       <a href={`tel:${clientPhone(t.client)}`}
-                        style={{padding:"11px 14px",borderRadius:12,background:"#f3e5f5",color:"#6a1b9a",fontWeight:800,fontSize:13,textDecoration:"none",textAlign:"center",border:"2px solid #e1bee7",display:"flex",alignItems:"center",gap:4}}>
+                        style={{padding:"10px 14px",borderRadius:12,background:"#f3e5f5",color:"#6a1b9a",fontWeight:800,fontSize:13,textDecoration:"none",textAlign:"center",border:"2px solid #e1bee7",display:"flex",alignItems:"center",gap:4}}>
                         📞
                       </a>
                     )}
+                    <Press onClick={()=>{setOpIssueClient(t.client);setShowOperatorIssue(true);haptic();}}
+                      style={{padding:"10px 14px",borderRadius:12,background:"#fff8e1",color:C.orange,fontWeight:800,fontSize:13,border:"2px solid #ffe082"}}>
+                      🔧 תקלה
+                    </Press>
                   </div>
                 )}
               </div>
             );
           })}
 
-          {done===dayTasks.length&&dayTasks.length>0&&(
+          {done===dayTasks.length&&dayTasks.length>0&&!clientSearch&&(
             <div style={{...card({textAlign:"center",background:"linear-gradient(135deg,#e8f5e9,#f1f8e9)"}),padding:28,border:"2px solid #c8e6c9"}}>
               <div style={{fontSize:44,marginBottom:8}}>🎉</div>
               <div style={{fontWeight:900,fontSize:18,color:C.green,marginBottom:4}}>סיימת הכל!</div>
@@ -1571,6 +1843,44 @@ export default function App() {
                 </div>
               ));
             })()}
+          </BottomSheet>
+        )}
+
+        {/* Operator Issue Report */}
+        {showOperatorIssue&&(
+          <BottomSheet title="🔧 דווח על תקלה" onClose={()=>setShowOperatorIssue(false)}>
+            <div>
+              <div style={{marginBottom:12}}>
+                <label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>לקוח</label>
+                <div style={{...inp,color:C.blue,fontWeight:700}}>{opIssueClient}</div>
+              </div>
+              <div style={{marginBottom:12}}>
+                <label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תיאור התקלה</label>
+                <textarea value={opIssueDesc} onChange={e=>setOpIssueDesc(e.target.value)}
+                  rows={3} placeholder="תאר את הבעיה..." style={{...inp,resize:"none"}}/>
+              </div>
+              <div style={{marginBottom:16}}>
+                <label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:8}}>דחיפות</label>
+                <div style={{display:"flex",gap:8}}>
+                  {["רגיל","דחוף","קריטי"].map(p=>(
+                    <Press key={p} onClick={()=>setOpIssuePriority(p)}
+                      style={{flex:1,padding:"10px",borderRadius:10,textAlign:"center",fontSize:13,fontWeight:800,
+                        background:opIssuePriority===p?(p==="קריטי"?C.red:p==="דחוף"?C.orange:C.blue):"#f0f4f8",
+                        color:opIssuePriority===p?"#fff":C.muted}}>
+                      {p}
+                    </Press>
+                  ))}
+                </div>
+              </div>
+              <Press onClick={async()=>{
+                if(!opIssueDesc.trim()){showToast("⚠️ נא לתאר את התקלה");return;}
+                await sheetCall("saveOperatorIssue",{operator:user?.name,client:opIssueClient,desc:opIssueDesc,priority:opIssuePriority,date:todayStr()});
+                setOpIssueDesc("");setOpIssuePriority("רגיל");setShowOperatorIssue(false);
+                showToast("✅ תקלה דווחה לאדמין");haptic("success");
+              }} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 4px 14px rgba(21,101,192,0.3)"}}>
+                שלח דיווח →
+              </Press>
+            </div>
           </BottomSheet>
         )}
 
@@ -1709,9 +2019,16 @@ export default function App() {
           <SliderField label="מלח"  min={0} max={6} value={salt}     onChange={v=>sf("salt",v)}     unit=" g/L" optimal={3.5} large={String(user?.username||"").toLowerCase()==="or"}/>
           <SliderField label="טבליות כלור (TAB)" min={0} max={5} step={0.25} value={form.chlora??0} onChange={v=>sf("chlora",v)} unit="" large={String(user?.username||"").toLowerCase()==="or"}/>
           <SliderField label="HTH"  min={0} max={5} step={0.5}  value={form.hth??0}    onChange={v=>sf("hth",v)}    unit=" cups" large={String(user?.username||"").toLowerCase()==="or"}/>
+          <SliderField label="מעלה חומציות pH" min={0} max={5} step={0.5} value={form.phUp??0} onChange={v=>sf("phUp",v)} unit=" כוסות" large={String(user?.username||"").toLowerCase()==="or"}/>
+          <SliderField label="חומצת מלח" min={0} max={5} step={0.5} value={form.acidLiters??0} onChange={v=>sf("acidLiters",v)} unit=" L" large={String(user?.username||"").toLowerCase()==="or"}/>
         </Sec>
 
-        {/* Electrode */}
+        {/* Electrode — only for salt pools */}
+        {(()=>{
+          const poolType = (clients.find(c=>c.name===client)||{}).poolType||"";
+          const isSalt = !poolType || poolType==="מלח" || poolType==="גלישה" || poolType==="סקימר";
+          if(!isSalt) return null;
+          return (
         <Sec icon="⚡" title="אלקטרודה">
           <div style={{...card()}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
@@ -1737,6 +2054,8 @@ export default function App() {
             })()}
           </div>
         </Sec>
+          );
+        })()}
 
         {/* Status checks */}
         <Sec icon="🔍" title="בדיקות מצב">
@@ -1879,7 +2198,7 @@ export default function App() {
           </div>
         )}
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,width:"100%",maxWidth:340}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,width:"100%",maxWidth:340,marginBottom:10}}>
           <Press onClick={()=>{setForm(blank());setScreen("form");haptic();}}
             style={{padding:14,borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.35)"}}>
             + דוח חדש
@@ -1889,6 +2208,19 @@ export default function App() {
             🏠 לוח יומי
           </Press>
         </div>
+        {reports.length>0&&(
+          <Press onClick={()=>{
+            const last=reports[reports.length-1];
+            setForm({...blank(),...last,clientLocked:true,reportDate:last.reportDate,client:last.client});
+            setEditingReport(last.id);
+            setReports(r=>r.slice(0,-1));
+            setScreen("form");
+            haptic("medium");
+            showToast("✏️ ערוך והגש מחדש");
+          }} style={{padding:12,borderRadius:12,border:`2px solid ${C.orange}`,background:"#fff8e1",color:C.orange,fontWeight:800,fontSize:13,textAlign:"center",width:"100%",maxWidth:340}}>
+            ✏️ ערוך דוח אחרון
+          </Press>
+        )}
       </div>
     );
   }
@@ -1935,7 +2267,7 @@ export default function App() {
 
         {/* Tabs */}
         <div style={{background:C.white,padding:"8px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",gap:6,overflowX:"auto",position:"sticky",top:0,zIndex:50,boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
-          {[["daily","📋 חלוקת עבודה"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["qr","📷 QR"],["clients","👥 לקוחות"],["reports","📄 דוחות"],["users","👤 משתמשים"]].map(([t,lbl])=>(
+          {[["daily","📋 חלוקת עבודה"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["qr","📷 QR"],["clients","👥 לקוחות"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"],["users","👤 משתמשים"]].map(([t,lbl])=>(
             <Press key={t} onClick={()=>{setAdminTab(t);haptic();}}
               style={{padding:"9px 14px",borderRadius:99,border:"none",fontSize:12,fontWeight:800,flexShrink:0,
                 background:adminTab===t?`linear-gradient(135deg,${C.blue},${C.lightBlue})`:"#f0f4f8",
@@ -2305,13 +2637,33 @@ export default function App() {
                 לקוחות קיימים — {clients.length}
               </h3>
               {clients.map((c,i)=>(
-                <div key={i} style={{...card({marginBottom:10,display:"flex",alignItems:"center",gap:12})}}>
-                  <div style={{width:40,height:40,borderRadius:12,background:"#e3f2fd",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>🏊</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontWeight:800,fontSize:14,color:C.text}}>{c.name.split(" - ")[0]}</div>
-                    <div style={{fontSize:12,color:C.muted,marginTop:2}}>{c.phone} · {c.address}</div>
+                <div key={i} style={{...card({marginBottom:10})}}>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <div style={{width:40,height:40,borderRadius:12,background:"#e3f2fd",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
+                      {(c.poolType==="כלור")?"🧪":(c.poolType==="גלישה")?"🌊":(c.poolType==="סקימר")?"🔵":"🧂"}
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:800,fontSize:14,color:C.text}}>{c.name.split(" - ")[0]}</div>
+                      <div style={{fontSize:12,color:C.muted,marginTop:2}}>{c.phone} · {c.address}</div>
+                    </div>
+                    {c.phone&&<a href={`tel:${c.phone}`} style={{color:C.blue,fontSize:18,textDecoration:"none"}}>📞</a>}
                   </div>
-                  {c.phone&&<a href={`tel:${c.phone}`} style={{color:C.blue,fontSize:18,textDecoration:"none"}}>📞</a>}
+                  {/* Pool type selector */}
+                  <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+                    {["מלח","כלור","גלישה","סקימר"].map(pt=>(
+                      <Press key={pt} onClick={async()=>{
+                        const updated=clients.map(x=>x.name===c.name?{...x,poolType:pt}:x);
+                        setClients(updated);
+                        await sheetCall("saveClientPoolType",{clientName:c.name,poolType:pt});
+                        showToast(`✅ ${c.name.split(" - ")[0]} — ${pt}`);
+                        haptic();
+                      }} style={{padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:800,
+                        background:(c.poolType||"מלח")===pt?C.blue:"#f0f4f8",
+                        color:(c.poolType||"מלח")===pt?"#fff":C.muted}}>
+                        {pt}
+                      </Press>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
@@ -2390,6 +2742,119 @@ export default function App() {
                     )}
                     {r.notes&&<div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 12px",fontSize:12,color:C.muted}}>📝 {r.notes}</div>}
                     {r.supplyLabel&&<div style={{marginTop:8,fontSize:11,color:C.blue,fontWeight:700}}>📦 {r.supplyLabel}</div>}
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
+
+          {/* ── TAB: operator issues ── */}
+          {adminTab==="opissues"&&(
+            <div>
+              <Press onClick={async()=>{
+                const res=await sheetCall("getOperatorIssues");
+                if(res?.issues) setOperatorIssues(res.issues);
+                showToast(`✅ ${res?.issues?.length||0} תקלות`);
+              }} style={{...card({marginBottom:14,background:"#e3f2fd",display:"flex",alignItems:"center",gap:10}),padding:"12px 16px"}}>
+                <span style={{fontSize:16}}>🔄</span>
+                <span style={{fontWeight:700,fontSize:13,color:C.blue}}>טען תקלות מפעיל</span>
+              </Press>
+              {operatorIssues.length===0&&<div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>לחץ טען לראות תקלות</div>}
+              {operatorIssues.map((iss,i)=>{
+                const [id,operator,client,desc,priority,status,response,date]=iss;
+                const priColor=priority==="קריטי"?C.red:priority==="דחוף"?C.orange:C.blue;
+                return (
+                  <div key={i} style={{...card({marginBottom:12,border:`2px solid ${priColor}22`})}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                      <div>
+                        <div style={{fontWeight:800,fontSize:14,color:C.text}}>{client?.split(" - ")[0]}</div>
+                        <div style={{fontSize:12,color:C.muted}}>👤 {operator} · 📅 {date}</div>
+                      </div>
+                      <div style={{display:"flex",gap:5}}>
+                        <span style={{background:priColor+"18",color:priColor,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{priority}</span>
+                        <span style={{background:status==="טופל"?"#e8f5e9":"#fff8e1",color:status==="טופל"?C.green:C.orange,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{status}</span>
+                      </div>
+                    </div>
+                    <div style={{fontSize:13,color:"#546e7a",marginBottom:10,lineHeight:1.5}}>{desc}</div>
+                    {response&&<div style={{background:"#e8f5e9",borderRadius:8,padding:"8px 12px",fontSize:12,color:C.green,fontWeight:700,marginBottom:8}}>✅ תגובת אדמין: {response}</div>}
+                    <div style={{display:"flex",gap:8}}>
+                      {["בטיפול","טופל"].map(s=>(
+                        <Press key={s} onClick={async()=>{
+                          const updated=[...operatorIssues];
+                          updated[i]=[...iss]; updated[i][5]=s;
+                          setOperatorIssues(updated);
+                          await sheetCall("updateOperatorIssue",{rowIndex:i+1,status:s});
+                          showToast(`✅ עודכן ל-${s}`);haptic("success");
+                        }} style={{padding:"7px 14px",borderRadius:99,fontSize:12,fontWeight:800,
+                          background:status===s?"#e8f5e9":"#f0f4f8",color:status===s?C.green:C.muted}}>
+                          {s}
+                        </Press>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── TAB: supply ── */}
+          {adminTab==="supply"&&(
+            <div>
+              <div style={{...card({marginBottom:14})}}>
+                <div style={{fontWeight:800,fontSize:13,color:C.text,marginBottom:12}}>🔍 חיפוש חומרים שסופקו</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תאריך</label>
+                    <input type="date" value={supplySearch.date} onChange={e=>setSupplySearch(s=>({...s,date:e.target.value}))} style={inp}/>
+                  </div>
+                  <div>
+                    <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>סוג חומר</label>
+                    <select value={supplySearch.type} onChange={e=>setSupplySearch(s=>({...s,type:e.target.value}))} style={sel}>
+                      <option value="">הכל</option>
+                      <option>כלור TAB</option>
+                      <option>HTH</option>
+                      <option>מעלה pH</option>
+                      <option>חומצת מלח</option>
+                      <option>מלח</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              {(()=>{
+                const allRep=[...sheetReports,...reports];
+                const seen=new Set();
+                const filtered=allRep.filter(r=>{
+                  if(seen.has(r.id))return false; seen.add(r.id);
+                  if(supplySearch.date&&r.reportDate!==supplySearch.date)return false;
+                  const hasSupply=r.chlora>0||r.hth>0||r.phUp>0||r.acidLiters>0||r.supplyLabel;
+                  if(!hasSupply)return false;
+                  if(supplySearch.type){
+                    const t=supplySearch.type;
+                    if(t==="כלור TAB"&&!(r.chlora>0))return false;
+                    if(t==="HTH"&&!(r.hth>0))return false;
+                    if(t==="מעלה pH"&&!(r.phUp>0))return false;
+                    if(t==="חומצת מלח"&&!(r.acidLiters>0))return false;
+                    if(t==="מלח"&&!r.supplyLabel?.includes("מלח"))return false;
+                  }
+                  return true;
+                }).sort((a,b)=>b.reportDate?.localeCompare(a.reportDate));
+
+                if(filtered.length===0)return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תוצאות — לחץ "טען מגיליון" בטאב דוחות</div>;
+                return filtered.map((r,i)=>(
+                  <div key={i} style={{...card({marginBottom:10})}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                      <div>
+                        <div style={{fontWeight:800,fontSize:14,color:C.text}}>{r.client?.split(" - ")[0]}</div>
+                        <div style={{fontSize:12,color:C.muted}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      {r.chlora>0&&<span style={{background:"#fff3e0",color:C.orange,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>TAB: {r.chlora}</span>}
+                      {r.hth>0&&<span style={{background:"#e8eaf6",color:"#283593",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>HTH: {r.hth} cups</span>}
+                      {r.phUp>0&&<span style={{background:"#f3e5f5",color:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>pH+: {r.phUp} כוסות</span>}
+                      {r.acidLiters>0&&<span style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>חומצה: {r.acidLiters}L</span>}
+                      {r.supplyLabel&&<span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>{r.supplyLabel}</span>}
+                    </div>
                   </div>
                 ));
               })()}
