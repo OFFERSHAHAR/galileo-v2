@@ -1624,7 +1624,7 @@
               <div>
                 <p style={{color:"rgba(255,255,255,0.65)",fontSize:12,fontWeight:600,margin:"0 0 4px"}}>{fmtDate(dailyDate)} 🌊</p>
                 <h1 style={{color:"#fff",fontSize:24,fontWeight:900,margin:0,lineHeight:1.1}}>שלום, {user?.name}! {user?.icon}</h1>
-                <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,margin:"4px 0 0"}}>{user?.welcomeMessage || greeting}</p>
+                <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,margin:"4px 0 0"}}> {greeting || user?.welcomeMessage || greeting}</p>
                 {user?.welcomeImage&&(
                   <img src={user.welcomeImage} alt="greeting" style={{width:"100%",maxWidth:280,marginTop:12,borderRadius:12,border:"2px solid rgba(255,255,255,0.2)"}}/>
                 )}
