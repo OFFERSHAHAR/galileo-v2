@@ -1,19 +1,8 @@
   import { useState, useRef, useEffect, useCallback } from "react";
   
   // ─── Demo data ─────────────────────────────────────────────────────────────
-  const DEMO_USERS = [
-    { username:"admin", password:"1234", role:"admin",    name:"מנהל גליליאו", icon:"👔", welcomeMessage:"ברוך הבא למרכז הניהול", phone:"0501234567" },
-    { username:"avi",   password:"1234", role:"operator", name:"אבי כהן",       icon:"🏊", welcomeMessage:"יאללה לעבודה אבי! 💪",  phone:"0521234567" },
-    { username:"yossi", password:"1234", role:"operator", name:"יוסי לוי",      icon:"🌊", welcomeMessage:"יום טוב יוסי!",          phone:"0531234567" },
-    { username:"moti",  password:"1234", role:"operator", name:"מוטי גולן",     icon:"⚡", welcomeMessage:"בוקר טוב מוטי!",          phone:"0541234567" },
-  ];
-  const DEMO_CLIENTS = [
-    { name:"משפחת כהן - הגפן 12",   phone:"0521111111", address:"רחוב הגפן 12" },
-    { name:"משפחת לוי - הזית 5",    phone:"0522222222", address:"רחוב הזית 5" },
-    { name:"מלון כרמי",              phone:"0523333333", address:"רחוב האלמוגים 1" },
-    { name:"משפחת גולן - הגעתון 3", phone:"0524444444", address:"רחוב הגעתון 3" },
-    { name:"וילה ים - הנמל 18",     phone:"0525555555", address:"רחוב הנמל 18" },
-  ];
+const DEMO_USERS = [];
+const DEMO_CLIENTS = [];
   
 const GREETINGS = [
   "יאללה, יום עבודה מוצלח! 💪",
@@ -502,7 +491,7 @@ const getDailyGreeting = (username) => {
         
         window.OneSignal.push(function(){
           window.OneSignal.init({
-            appId: "YOUR_ONESIGNAL_APP_ID", // החלף עם App ID שלך
+            appId: "dc1af269-2502-41a4-89d5-a3aa8d5be956", // החלף עם App ID שלך
             allowLocalhostAsSecureOrigin: true,
             notifyButton: { enable: false }, // Button disabled - only in index.html
             welcomeNotification: { title: "שלום ל-PoolSync PRO", message: "ברוך הבא!" },
@@ -1087,7 +1076,24 @@ const getDailyGreeting = (username) => {
   
   
   // ══════════════════════════════════════════════════════════════════════════════
-  export default function App() {
+function CollapsibleSlider({key:_, label, min, max, step, unit, warnAbove, warnBelow, optimal, val, fn, large, expandKey, form, sf}) {
+  const isOpen = form[expandKey];
+  const hasValue = val > 0;
+  return (
+    <div style={{...card({marginBottom:8})}}>
+      <Press onClick={()=>sf(expandKey,!isOpen)}
+        style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontWeight:700,fontSize:14,color:C.text}}>{label}</span>
+          {hasValue&&!isOpen&&<span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"2px 10px",fontSize:12,fontWeight:800}}>{val}{unit}</span>}
+        </div>
+        <span style={{fontSize:16,color:C.blue,transform:isOpen?"rotate(180deg)":"none",transition:"0.2s"}}>▾</span>
+      </Press>
+      {isOpen&&<SliderField label={label} min={min} max={max} step={step} value={val} onChange={fn} unit={unit} warnAbove={warnAbove} warnBelow={warnBelow} optimal={optimal} large={large}/>}
+    </div>
+  );
+}
+export default function App() {
     const company = getCompany();
     const [showSetup, setShowSetup] = useState(()=>{
       const lic = getLicense();
@@ -1830,7 +1836,11 @@ const getDailyGreeting = (username) => {
                       <Badge label={done?"✓ בוצע":"⏳ ממתין"} col={done?C.green:C.orange}/>
                       {/* Report button */}
                       {!done&&(
-                        <Press onClick={()=>{setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}}
+<Press onClick={()=>{setAdminTab("daily");haptic();}}
+  style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>
+  📋
+</Press>
+                  <Press onClick={()=>{setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}}
                           style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>
                           📝 דוח
                         </Press>
@@ -2207,17 +2217,17 @@ const getDailyGreeting = (username) => {
               <span style={{fontWeight:800,fontSize:14,color:C.text}}>📊 מדידות</span>
               <span style={{fontSize:18,color:C.blue,transform:form._expandMeasurements?"rotate(180deg)":"none",transition:"0.2s"}}>▾</span>
             </Press>
-            {form._expandMeasurements&&(
-              <div style={{paddingTop:12}}>
-                <SliderField label="כלור" min={0} max={8} value={chlorine} onChange={v=>sf("chlorine",v)} unit=" ppm" warnAbove={3} optimal={1.5} large={String(user?.username||"").toLowerCase()==="or"}/>
-                <SliderField label="pH"   min={5} max={9} value={ph}       onChange={v=>sf("ph",v)}       warnAbove={8} warnBelow={6} optimal={7.4} large={String(user?.username||"").toLowerCase()==="or"}/>
-                <SliderField label="מלח"  min={0} max={6} value={salt}     onChange={v=>sf("salt",v)}     unit=" g/L" optimal={3.5} large={String(user?.username||"").toLowerCase()==="or"}/>
-                <SliderField label="טבליות כלור (TAB)" min={0} max={5} step={0.25} value={form.chlora??0} onChange={v=>sf("chlora",v)} unit="" large={String(user?.username||"").toLowerCase()==="or"}/>
-                <SliderField label="HTH"  min={0} max={5} step={0.5}  value={form.hth??0}    onChange={v=>sf("hth",v)}    unit=" cups" large={String(user?.username||"").toLowerCase()==="or"}/>
-                <SliderField label="מעלה חומציות pH" min={0} max={5} step={0.5} value={form.phUp??0} onChange={v=>sf("phUp",v)} unit=" כוסות" large={String(user?.username||"").toLowerCase()==="or"}/>
-                <SliderField label="חומצת מלח" min={0} max={5} step={0.5} value={form.acidLiters??0} onChange={v=>sf("acidLiters",v)} unit=" L" large={String(user?.username||"").toLowerCase()==="or"}/>
-              </div>
-            )}
+            {[
+  {key:"chlorine", label:"כלור", min:0, max:8, step:0.1, unit:" ppm", warnAbove:3, optimal:1.5, val:chlorine, fn:v=>sf("chlorine",v)},
+  {key:"ph", label:"pH", min:5, max:9, step:0.1, unit:"", warnAbove:8, warnBelow:6, optimal:7.4, val:ph, fn:v=>sf("ph",v)},
+  {key:"salt", label:"מלח", min:0, max:6, step:0.1, unit:" g/L", optimal:3.5, val:salt, fn:v=>sf("salt",v)},
+  {key:"chlora", label:"טבליות כלור (TAB)", min:0, max:5, step:0.25, unit:"", val:form.chlora??0, fn:v=>sf("chlora",v)},
+  {key:"hth", label:"HTH", min:0, max:5, step:0.5, unit:" cups", val:form.hth??0, fn:v=>sf("hth",v)},
+  {key:"phUp", label:"מעלה חומציות pH", min:0, max:5, step:0.5, unit:" כוסות", val:form.phUp??0, fn:v=>sf("phUp",v)},
+  {key:"acidLiters", label:"חומצת מלח", min:0, max:5, step:0.5, unit:" L", val:form.acidLiters??0, fn:v=>sf("acidLiters",v)},
+].map(s=>(
+  <CollapsibleSlider key={s.key} {...s} large={String(user?.username||"").toLowerCase()==="or"} expandKey={`_exp_${s.key}`} form={form} sf={sf}/>
+))}
           </div>
   
           {/* Electrode — only for salt pools */}
