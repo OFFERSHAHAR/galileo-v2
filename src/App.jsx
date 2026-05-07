@@ -30,12 +30,14 @@
     "אתה החומר של האלופים! 🏆",
      "איפה גו 🏆",
   ];
-  const getDailyGreeting = (name, users) => {
-  if (users) {
-    const u = users.find(x => x.name === name || x.username === name);
-    if (u && u.welcomeMessage) return u.welcomeMessage;
-  }
-  return GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+const GREETINGS_BY_USER = {
+  "or": ["איפה גו? 🏆","קום תעבוד כבר! 😂","הבריכות בוכות עליך! 🌊"],
+  "C": ["יאללה פרנקו! 💪","בוקר טוב גאון! ☀️","הכי טוב בעסק! 🏊"],
+};
+const getDailyGreeting = (username) => {
+  const list = GREETINGS_BY_USER[username] || GREETINGS;
+  return list[Math.floor(Math.random() * list.length)];
+
 };
   const CITY     = "ישראל";
   const wazeUrl  = (a) => `https://waze.com/ul?q=${encodeURIComponent(a+", "+CITY)}&navigate=yes`;
@@ -1404,7 +1406,7 @@
   
       if(found){
         setUser(found);
-    setGreeting(getDailyGreeting(found.name||"", usersToCheck));
+    setGreeting(getDailyGreeting(found.username||""));
         localStorage.setItem("galileo_user", JSON.stringify(found));
         setScreen(found.role==="admin"?"admin":"daily");
         haptic("medium");
