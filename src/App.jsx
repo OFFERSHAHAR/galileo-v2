@@ -31,10 +31,21 @@
      "איפה גו 🏆",
   ];
 const GREETINGS_BY_USER = {
- "or": ["איפה גו? 🏆","קום תעבוד כבר! 😂","הבריכות בוכות עליך! 🌊"],
+  "or": [
+    `איפה גו? 🏆`,
+    `קום תעבוד כבר! 😂`,
+    `הבריכות בוכות עליך! 🌊`,
+  ],
+  "C": [
+    `יאללה פרנקו! 💪`,
+    `בוקר טוב גאון! ☀️`,
+    `הכי טוב בעסק! 🏊`,
+  ],
+};
 const getDailyGreeting = (username) => {
   const list = GREETINGS_BY_USER[username] || GREETINGS;
   return list[Math.floor(Math.random() * list.length)];
+};
 
 };
   const CITY     = "ישראל";
