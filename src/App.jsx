@@ -714,7 +714,7 @@ export default function App() {
   const [screen,setScreen] = useState(()=>{ try { const u = JSON.parse(localStorage.getItem("galileo_user")||"null"); return u ? (u.role==="admin"?"admin":"daily") : "login"; } catch { return "login"; } });
   const [syncing,setSyncing] = useState(false);
   const [form,setForm] = useState(blank());
-  const [adminTab,setAdminTab] = useState("daily");
+  const [adminTab,setAdminTab] = useState("progress");
   const [taskDate,setTaskDate] = useState(todayStr());
   const [taskClient,setTaskClient] = useState("");
   const [taskClientSearch,setTaskClientSearch] = useState("");
@@ -1186,39 +1186,7 @@ export default function App() {
             </div>
           </BottomSheet>
         )}
-        {showQR&&(
-          <QRScanner onClose={()=>setShowQR(false)} onResult={(scannedUrl)=>{
-            setShowQR(false);
-            const byUrl = clients.find(c=>c.qrUrl&&scannedUrl.includes(c.qrUrl));
-            const byName = clients.find(c=>scannedUrl.includes(c.name.split(" - ")[0]));
-            const matched = byUrl || byName;
-            const matchTask = matched && myTasks(dailyDate).find(t=>t.client===matched.name||t.client.includes(matched.name.split(" - ")[0]));
-            if(matchTask){ haptic("success"); setForm({...blank(),client:matchTask.client,reportDate:dailyDate,clientLocked:true}); setScreen("form"); showToast(`✅ נפתח דוח עבור ${matchTask.client.split(" - ")[0]}`); }
-            else if(matched){ haptic("medium"); setForm({...blank(),client:matched.name,reportDate:dailyDate,clientLocked:true}); setScreen("form"); showToast(`📝 נפתח דוח עבור ${matched.name.split(" - ")[0]}`); }
-            else showToast("⚠️ לקוח לא זוהה");
-          }}/>
-        )}
-        {showConv&&(
-          <BottomSheet title="💬 פתח שיחה" onClose={()=>setShowConv(false)}>
-            <div style={{marginBottom:16}}>
-              <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:12}}>בחר עם מי לדבר:</div>
-              {allUsers.filter(u=>u.role==="admin").map(u=>(
-                <a key={u.username} href={`https://wa.me/972${u.phone?.replace(/^0/,"")}?text=${encodeURIComponent(`שלום ${u.name}, כאן ${user?.name}`)}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:`1px solid ${C.border}`,textDecoration:"none"}}>
-                  <span style={{fontSize:28}}>{u.icon}</span>
-                  <div style={{flex:1}}><div style={{fontWeight:800,fontSize:15,color:C.text}}>{u.name}</div><div style={{fontSize:12,color:C.muted}}>מנהל</div></div>
-                  <span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"6px 14px",fontSize:12,fontWeight:800}}>💬 WhatsApp</span>
-                </a>
-              ))}
-              {operatorUsers.filter(u=>u.name!==user?.name).map(u=>(
-                <a key={u.username} href={`https://wa.me/972${u.phone?.replace(/^0/,"")}?text=${encodeURIComponent(`שלום ${u.name}, כאן ${user?.name}`)}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:`1px solid ${C.border}`,textDecoration:"none"}}>
-                  <span style={{fontSize:28}}>{u.icon}</span>
-                  <div style={{flex:1}}><div style={{fontWeight:800,fontSize:15,color:C.text}}>{u.name}</div><div style={{fontSize:12,color:C.muted}}>מפעיל</div></div>
-                  <span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"6px 14px",fontSize:12,fontWeight:800}}>💬 WhatsApp</span>
-                </a>
-              ))}
-            </div>
-          </BottomSheet>
-        )}
+        {/* QR ושיחה מוסתרים זמנית */}
         <Toast msg={toast.msg} visible={toast.visible}/>
       </div>
     );
@@ -1402,7 +1370,7 @@ export default function App() {
               )}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <Press onClick={()=>{setAdminTab("daily");haptic();}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📋</Press>
+              <Press onClick={()=>{setAdminTab("daily");window.scrollTo(0,0);haptic();}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📋</Press>
               <Press onClick={()=>{setForm({...blank()});setScreen("form");haptic("medium");}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📝 דוח</Press>
               <Press onClick={handleLogout} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>יציאה</Press>
             </div>
