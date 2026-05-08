@@ -835,18 +835,93 @@ export default function App() {
 
   const handleLogin = async () => {
     setLoginErr(""); setLoginLoading(true);
-    let usersToCheck = [...allUsers];
-    try { const uRes = await sheetCall("getUsers"); if (uRes?.users?.length) { usersToCheck = uRes.users; setAllUsers(uRes.users); try { const cached = localStorage.getItem("galileo_cache"); const cacheData = cached ? JSON.parse(cached) : {}; localStorage.setItem("galileo_cache", JSON.stringify({...cacheData, users:uRes.users})); } catch {} } } catch {}
-    try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const mgmtClients = mgmtRes?.clients||[]; const myRecord = mgmtClients.find(c => String(c[7])===String(company.sheetId)); if(myRecord && myRecord[6]==="מושהה") { setLoginErr("⛔ המנוי שלך מושהה. לפרטים צור קשר עם מנהל המערכת."); setLoginLoading(false); haptic("medium"); return; } } } catch {}
-    const found = usersToCheck.find(u=> String(u.username||"").toLowerCase().trim() === loginUser.toLowerCase().trim() && String(u.password||"").trim() === loginPass.trim());
-    if(found){
+
+    const inputUser = loginUser.toLowerCase().trim();
+    const inputPass = loginPass.trim();
+
+    if (!inputUser || !inputPass) {
+      setLoginErr("נא להזין שם משתמש וסיסמה");
+      setLoginLoading(false);
+      return;
+    }
+
+    let usersToCheck = [];
+
+    // 1. מנסה להביא משתמשים ישירות מ-Sheets
+    try {
+      const uRes = await sheetCall("getUsers");
+      if (Array.isArray(uRes?.users) && uRes.users.length > 0) {
+        usersToCheck = uRes.users;
+        setAllUsers(uRes.users);
+        try {
+          const cached = localStorage.getItem("galileo_cache");
+          const cacheData = cached ? JSON.parse(cached) : {};
+          localStorage.setItem("galileo_cache", JSON.stringify({...cacheData, users:uRes.users, cachedAt:Date.now()}));
+        } catch(e) {}
+      }
+    } catch(e) {}
+
+    // 2. אם Sheets לא החזיר — state
+    if (!usersToCheck.length && Array.isArray(allUsers) && allUsers.length > 0) {
+      usersToCheck = allUsers;
+    }
+
+    // 3. אם עדיין אין — cache
+    if (!usersToCheck.length) {
+      try {
+        const cached = localStorage.getItem("galileo_cache");
+        const cacheData = cached ? JSON.parse(cached) : {};
+        if (Array.isArray(cacheData.users) && cacheData.users.length > 0) {
+          usersToCheck = cacheData.users;
+          setAllUsers(cacheData.users);
+        }
+      } catch(e) {}
+    }
+
+    // 4. אין בכלל משתמשים
+    if (!usersToCheck.length) {
+      setLoginErr("לא נטענו משתמשים. בדוק Google Sheets / Apps Script.");
+      setLoginLoading(false);
+      haptic("medium");
+      return;
+    }
+
+    // 5. בדיקת מנוי מושהה
+    try {
+      const company = getCompany();
+      if (company.sheetId) {
+        const mgmtRes = await mgmtCall("getMgmtClients");
+        const mgmtClients = mgmtRes?.clients || [];
+        const myRecord = mgmtClients.find(c => String(c[7]) === String(company.sheetId));
+        if (myRecord && myRecord[6] === "מושהה") {
+          setLoginErr("⛔ המנוי שלך מושהה. לפרטים צור קשר עם מנהל המערכת.");
+          setLoginLoading(false);
+          haptic("medium");
+          return;
+        }
+      }
+    } catch(e) {}
+
+    // 6. מצא משתמש
+    const found = usersToCheck.find(u =>
+      String(u.username || "").toLowerCase().trim() === inputUser &&
+      String(u.password || "").trim() === inputPass
+    );
+
+    if (found) {
       setUser(found);
-      setGreeting(getDailyGreeting(found.username||""));
-      if(window.OneSignal) { window.OneSignal.push(function(){ window.OneSignal.setExternalUserId(found.username); }); }
+      setGreeting(getDailyGreeting(found.username || ""));
+      if (window.OneSignal) {
+        try { window.OneSignal.push(function(){ window.OneSignal.setExternalUserId(found.username); }); } catch(e) {}
+      }
       localStorage.setItem("galileo_user", JSON.stringify(found));
-      setScreen(found.role==="admin"?"admin":"daily");
-      haptic("medium"); connectSheets(true);
-    } else { setLoginErr("שם משתמש או סיסמה שגויים"); }
+      setScreen(found.role === "admin" ? "admin" : "daily");
+      haptic("medium");
+      connectSheets(true);
+    } else {
+      setLoginErr("שם משתמש או סיסמה שגויים");
+      haptic("medium");
+    }
     setLoginLoading(false);
   };
 
