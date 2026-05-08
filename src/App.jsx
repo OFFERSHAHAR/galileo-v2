@@ -912,7 +912,15 @@ export default function App() {
       setUser(found);
       setGreeting(getDailyGreeting(found.username || ""));
       if (window.OneSignal) {
-        try { window.OneSignal.push(function(){ window.OneSignal.setExternalUserId(found.username); }); } catch(e) {}
+        try {
+          window.OneSignal.push(function(){
+            if(typeof window.OneSignal.setExternalUserId === "function") {
+              window.OneSignal.setExternalUserId(found.username);
+            } else if(window.OneSignal.login) {
+              window.OneSignal.login(found.username);
+            }
+          });
+        } catch(e) {}
       }
       localStorage.setItem("galileo_user", JSON.stringify(found));
       setScreen(found.role === "admin" ? "admin" : "daily");
