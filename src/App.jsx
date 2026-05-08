@@ -1139,13 +1139,32 @@ export default function App() {
           )}
         </div>
         <div style={{position:"fixed",bottom:0,right:0,left:0,background:C.white,borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"space-around",padding:"10px 0 20px",boxShadow:"0 -4px 20px rgba(0,0,0,0.06)"}}>
-          {[["🏠","בית"],["📋","משימות"],["📅","עתידי"]].map(([ic,lb],i)=>(
-            <Press key={lb} onClick={()=>{ setNavTab(i); haptic(); }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 10px",borderRadius:12,background:navTab===i?"#e3f2fd":"transparent"}}>
+          {[["🏠","בית",0],["📋","משימות",1],["📅","עתידי",2]].map(([ic,lb,idx])=>(
+            <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 10px",borderRadius:12,background:navTab===idx?"#e3f2fd":"transparent"}}>
               <span style={{fontSize:22}}>{ic}</span>
-              <span style={{fontSize:10,fontWeight:800,color:navTab===i?C.blue:C.muted}}>{lb}</span>
+              <span style={{fontSize:10,fontWeight:800,color:navTab===idx?C.blue:C.muted}}>{lb}</span>
             </Press>
           ))}
         </div>
+        {navTab===1&&(
+          <BottomSheet title="📋 משימות היום" onClose={()=>setNavTab(0)}>
+            {(()=>{
+              const todayTasks = myTasks(dailyDate);
+              if(todayTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות להיום</div></div>;
+              return todayTasks.map(t=>(
+                <div key={t.id} style={{...card({marginBottom:10})}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <div style={{fontWeight:800,fontSize:15,color:C.text}}>{t.client.split(" - ")[0]}</div>
+                    <Badge label={t.status==="done"?"✓ בוצע":"⏳ ממתין"} col={t.status==="done"?C.green:C.orange}/>
+                  </div>
+                  {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
+                  {(t.changeLog?.[t.changeLog.length-1]?.note)&&<div style={{background:"#fff8e1",borderRadius:8,padding:"6px 10px",fontSize:12,color:C.orange,fontWeight:600,marginBottom:8}}>📝 {t.changeLog[t.changeLog.length-1].note}</div>}
+                  {t.status!=="done"&&<Press onClick={()=>{setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setNavTab(0);setScreen("form");haptic();}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>📝 פתח דוח</Press>}
+                </div>
+              ));
+            })()}
+          </BottomSheet>
+        )}
         {navTab===2&&(
           <BottomSheet title="📅 משימות עתידיות" onClose={()=>setNavTab(0)}>
             {(()=>{
