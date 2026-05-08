@@ -833,6 +833,42 @@ export default function App() {
     } catch {}
   };
 
+  const _doLogin = (found) => {
+    setUser(found);
+    setGreeting(getDailyGreeting(found.username||""));
+    if (window.OneSignal) {
+      try {
+        window.OneSignal.push(function(){
+          if(typeof window.OneSignal.setExternalUserId === "function") {
+            window.OneSignal.setExternalUserId(found.username);
+          } else if(window.OneSignal.login) {
+            window.OneSignal.login(found.username);
+          }
+        });
+      } catch(e) {}
+    }
+    localStorage.setItem("galileo_user", JSON.stringify(found));
+    setScreen(found.role === "admin" ? "admin" : "daily");
+    haptic("medium");
+    connectSheets(true);
+    // בדיקת מנוי מושהה ברקע — לא חוסם כניסה
+    setTimeout(async () => {
+      try {
+        const company = getCompany();
+        if (company.sheetId) {
+          const mgmtRes = await mgmtCall("getMgmtClients");
+          const myRecord = (mgmtRes?.clients||[]).find(c => String(c[7])===String(company.sheetId));
+          if (myRecord && myRecord[6]==="מושהה") {
+            setUser(null);
+            localStorage.removeItem("galileo_user");
+            setScreen("login");
+            setLoginErr("⛔ המנוי שלך מושהה. לפרטים צור קשר עם מנהל המערכת.");
+          }
+        }
+      } catch(e) {}
+    }, 0);
+  };
+
   const handleLogin = async () => {
     setLoginErr(""); setLoginLoading(true);
 
@@ -845,87 +881,60 @@ export default function App() {
       return;
     }
 
-    let usersToCheck = [];
+    // cache-first — כניסה מיידית אם המשתמש קיים ב-cache
+    try {
+      const cacheData = JSON.parse(localStorage.getItem("galileo_cache")||"{}");
+      if (Array.isArray(cacheData.users) && cacheData.users.length > 0) {
+        const found = cacheData.users.find(u =>
+          String(u.username||"").toLowerCase().trim() === inputUser &&
+          String(u.password||"").trim() === inputPass
+        );
+        if (found) {
+          _doLogin(found);
+          setLoginLoading(false);
+          // רענן Sheets ברקע
+          sheetCall("getUsers").then(uRes => {
+            if (Array.isArray(uRes?.users) && uRes.users.length > 0) {
+              setAllUsers(uRes.users);
+              try {
+                const c = JSON.parse(localStorage.getItem("galileo_cache")||"{}");
+                localStorage.setItem("galileo_cache", JSON.stringify({...c, users:uRes.users, cachedAt:Date.now()}));
+              } catch(e) {}
+            }
+          }).catch(()=>{});
+          return;
+        }
+      }
+    } catch(e) {}
 
-    // 1. מנסה להביא משתמשים ישירות מ-Sheets
+    // אין cache — שלוף מ-Sheets
+    let usersToCheck = [];
     try {
       const uRes = await sheetCall("getUsers");
       if (Array.isArray(uRes?.users) && uRes.users.length > 0) {
         usersToCheck = uRes.users;
         setAllUsers(uRes.users);
         try {
-          const cached = localStorage.getItem("galileo_cache");
-          const cacheData = cached ? JSON.parse(cached) : {};
-          localStorage.setItem("galileo_cache", JSON.stringify({...cacheData, users:uRes.users, cachedAt:Date.now()}));
+          const c = JSON.parse(localStorage.getItem("galileo_cache")||"{}");
+          localStorage.setItem("galileo_cache", JSON.stringify({...c, users:uRes.users, cachedAt:Date.now()}));
         } catch(e) {}
       }
     } catch(e) {}
 
-    // 2. אם Sheets לא החזיר — state
-    if (!usersToCheck.length && Array.isArray(allUsers) && allUsers.length > 0) {
-      usersToCheck = allUsers;
-    }
-
-    // 3. אם עדיין אין — cache
     if (!usersToCheck.length) {
-      try {
-        const cached = localStorage.getItem("galileo_cache");
-        const cacheData = cached ? JSON.parse(cached) : {};
-        if (Array.isArray(cacheData.users) && cacheData.users.length > 0) {
-          usersToCheck = cacheData.users;
-          setAllUsers(cacheData.users);
-        }
-      } catch(e) {}
-    }
-
-    // 4. אין בכלל משתמשים
-    if (!usersToCheck.length) {
-      setLoginErr("לא נטענו משתמשים. בדוק Google Sheets / Apps Script.");
+      setLoginErr("לא נטענו משתמשים. בדוק Google Sheets.");
       setLoginLoading(false);
       haptic("medium");
       return;
     }
 
-    // 5. בדיקת מנוי מושהה
-    try {
-      const company = getCompany();
-      if (company.sheetId) {
-        const mgmtRes = await mgmtCall("getMgmtClients");
-        const mgmtClients = mgmtRes?.clients || [];
-        const myRecord = mgmtClients.find(c => String(c[7]) === String(company.sheetId));
-        if (myRecord && myRecord[6] === "מושהה") {
-          setLoginErr("⛔ המנוי שלך מושהה. לפרטים צור קשר עם מנהל המערכת.");
-          setLoginLoading(false);
-          haptic("medium");
-          return;
-        }
-      }
-    } catch(e) {}
-
-    // 6. מצא משתמש
     const found = usersToCheck.find(u =>
-      String(u.username || "").toLowerCase().trim() === inputUser &&
-      String(u.password || "").trim() === inputPass
+      String(u.username||"").toLowerCase().trim() === inputUser &&
+      String(u.password||"").trim() === inputPass
     );
 
     if (found) {
-      setUser(found);
-      setGreeting(getDailyGreeting(found.username || ""));
-      if (window.OneSignal) {
-        try {
-          window.OneSignal.push(function(){
-            if(typeof window.OneSignal.setExternalUserId === "function") {
-              window.OneSignal.setExternalUserId(found.username);
-            } else if(window.OneSignal.login) {
-              window.OneSignal.login(found.username);
-            }
-          });
-        } catch(e) {}
-      }
-      localStorage.setItem("galileo_user", JSON.stringify(found));
-      setScreen(found.role === "admin" ? "admin" : "daily");
-      haptic("medium");
-      connectSheets(true);
+      _doLogin(found);
     } else {
       setLoginErr("שם משתמש או סיסמה שגויים");
       haptic("medium");
