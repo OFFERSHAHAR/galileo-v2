@@ -55,7 +55,7 @@ const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKr
 const APP_VERSION = "v2.6 · 08.05.2026";
 const DEFAULT_SUPER_PASS = "039076914";
 const ONESIGNAL_APP_ID = "dc1af269-2502-41a4-89d5-a3aa8d5be956";
-const ONESIGNAL_REST_KEY = "os_v2_app_3qnpe2jfaja2jcovuovi2w7jk3dfkti3pvne22u44ekzdbxgmc4n4m5cuit7o7cnd2qeezrvzacyipmrqjkoifqjpxzcp3xw5v44aeq";
+const ONESIGNAL_REST_KEY = import.meta.env.VITE_ONESIGNAL_REST_KEY || "";
 
 function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
@@ -81,23 +81,28 @@ async function sheetCall(action, payload={}) {
 }
 
 async function sendOneSignalToUser(title, message, externalUserId) {
+  if (!ONESIGNAL_REST_KEY) { console.warn("OneSignal: REST KEY missing"); return; }
   try {
     const payload = {
       app_id: ONESIGNAL_APP_ID,
       contents: {"en": message},
       headings: {"en": title},
+      target_channel: "push",
     };
     if (externalUserId) {
-      payload.include_external_user_ids = [externalUserId];
+      payload.include_aliases = { external_id: [externalUserId] };
     } else {
       payload.included_segments = ["All"];
     }
-    await fetch("https://onesignal.com/api/v1/notifications", {
+    const res = await fetch("https://onesignal.com/api/v1/notifications", {
       method: "POST",
       headers: {"Content-Type":"application/json","Authorization":"Bearer "+ONESIGNAL_REST_KEY},
       body: JSON.stringify(payload),
     });
-  } catch(e) { console.log("OneSignal error:", e); }
+    const data = await res.json();
+    if (data.errors) console.warn("OneSignal API error:", data.errors);
+    else console.log("OneSignal sent:", data.id, "recipients:", data.recipients);
+  } catch(e) { console.warn("OneSignal fetch error:", e); }
 }
 
 const haptic = (t="light") => navigator.vibrate?.({light:30,medium:50,success:[30,50,30]}[t]||30);
@@ -386,22 +391,22 @@ function LicensesTab({C2, inp2, showMsg}) {
   useEffect(()=>{ loadLicenses(); initOneSignal(); },[]);
 
   const initOneSignal = () => {
-    if(typeof window!=="undefined"&&!window.OneSignalLoaded){
-      const script = document.createElement("script");
-      script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
-      script.async = true;
-      document.head.appendChild(script);
-      window.OneSignal = window.OneSignal || [];
-      window.OneSignalLoaded = true;
-      window.OneSignal.push(function(){
-        window.OneSignal.init({
-          appId: ONESIGNAL_APP_ID,
-          allowLocalhostAsSecureOrigin: true,
-          notifyButton: { enable: false },
-          welcomeNotification: { title: "שלום ל-POOLMANG", message: "ברוך הבא!" },
-        });
-      });
-    }
+    if(typeof window==="undefined" || window.OneSignalLoaded) return;
+    window.OneSignalLoaded = true;
+    window.OneSignal = window.OneSignal || [];
+    const script = document.createElement("script");
+    script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
+    script.defer = true;
+    script.onload = () => {
+      window.OneSignal.init({
+        appId: ONESIGNAL_APP_ID,
+        allowLocalhostAsSecureOrigin: true,
+        notifyButton: { enable: false },
+      }).then(() => {
+        console.log("OneSignal ready");
+      }).catch(e => console.warn("OneSignal init error:", e));
+    };
+    document.head.appendChild(script);
   };
 
   const loadLicenses = async () => { setLoading(true); const res = await mgmtCall("getLicenses"); if(res?.licenses) setLicenses(res.licenses); setLoading(false); };
@@ -795,7 +800,7 @@ export default function App() {
   });
 
   const sendNotification = async (title, message) => {
-    if(window.OneSignal){ try { window.OneSignal.push(function(){ window.OneSignal.sendSelfNotification(title, {body: message, icon: "🏊", tag: "poolsync"}); }); } catch(e) {} }
+    await sendOneSignalToUser(title, message, user?.username || null);
   };
 
   useEffect(()=>{
@@ -838,13 +843,15 @@ export default function App() {
     setGreeting(getDailyGreeting(found.username||""));
     if (window.OneSignal) {
       try {
-        window.OneSignal.push(function(){
-          if(typeof window.OneSignal.setExternalUserId === "function") {
-            window.OneSignal.setExternalUserId(found.username);
-          } else if(window.OneSignal.login) {
-            window.OneSignal.login(found.username);
-          }
-        });
+        if(typeof window.OneSignal.login === "function") {
+          window.OneSignal.login(found.username);
+        } else {
+          window.OneSignal.push(function(){
+            if(typeof window.OneSignal.setExternalUserId === "function") {
+              window.OneSignal.setExternalUserId(found.username);
+            }
+          });
+        }
       } catch(e) {}
     }
     localStorage.setItem("galileo_user", JSON.stringify(found));
