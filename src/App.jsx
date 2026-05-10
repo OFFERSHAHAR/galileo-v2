@@ -721,7 +721,9 @@ const [pending, setPending] = useState(() => {
   } catch {
     return [];
   }
-  useEffect(() => {
+});
+
+useEffect(() => {
   localStorage.setItem(
     "galileo_pending_reports",
     JSON.stringify(pending)
