@@ -741,7 +741,6 @@ const [screen,setScreen] = useState(() => {
     return "login";
   }
 });
-    try { const u = JSON.parse(localStorage.getItem("galileo_user")||"null"); return u ? (u.role==="admin"?"admin":"daily") : "login"; } catch { return "login"; } });
   const [syncing,setSyncing] = useState(false);
   const [form,setForm] = useState(blank());
   const [adminTab,setAdminTab] = useState("progress");
