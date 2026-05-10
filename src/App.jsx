@@ -729,7 +729,7 @@ useEffect(() => {
     "galileo_pending_reports",
     JSON.stringify(pending)
   );
- [pending]);
+}, [pending]);
 
 
 
@@ -1052,13 +1052,39 @@ const report = {
     setReports(r=>[...r,report]); setPending(p => [...p, report]);
     setSyncing(true); let saved=false;
     const adminEmail = getCompany().adminEmail||"";
-    if(sheetId){ const res=await sheetCall("saveReport",{report, photos:photosBase64, adminEmail, clientAddress:clientAddress(client), clientPhone:clientPhone(client)}).catch(()=>null); saved=res?.success===true; if(saved) await sendNotification(`✅ דוח בוצע: ${client}`, `מדידות: כלור ${report.chlorine}, pH ${report.ph}`); }
-    if(!saved) setDismissed(false);}
+       if (sheetId) {
+      const res = await sheetCall("saveReport", {
+        report,
+        photos: photosBase64,
+        adminEmail,
+        clientAddress: clientAddress(client),
+        clientPhone: clientPhone(client),
+      }).catch(() => null);
+
+      saved = res?.success === true;
+
+      if (saved) {
+        await sendNotification(
+          `✅ דוח בוצע: ${client}`,
+          `מדידות: כלור ${report.chlorine}, pH ${report.ph}`
+        );
+      }
+    }
+
+    if (!saved) setDismissed(false);
+
     setSyncing(false);
-    const phone=clientPhone(client); const waMsg=buildWA(report);
-    const waUrl=phone?`https://wa.me/972${phone.replace(/^0/,"")}?text=${encodeURIComponent(waMsg)}`:`https://wa.me/?text=${encodeURIComponent(waMsg)}`;
-    window.open(waUrl,"_blank"); setScreen("done");
+
+    const phone = clientPhone(client);
+    const waMsg = buildWA(report);
+    const waUrl = phone
+      ? `https://wa.me/972${phone.replace(/^0/, "")}?text=${encodeURIComponent(waMsg)}`
+      : `https://wa.me/?text=${encodeURIComponent(waMsg)}`;
+
+    window.open(waUrl, "_blank");
+    setScreen("done");
   };
+
 
   const clientSupply = (name) => supplyDB[name]||null;
   const largeSlider = String(user?.username||"").toLowerCase()==="or";
@@ -1781,4 +1807,5 @@ const report = {
 
   if(showSuperAdmin) return <SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>;
   return null;
+}
 
