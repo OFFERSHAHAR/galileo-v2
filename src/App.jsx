@@ -731,8 +731,7 @@ useEffect(() => {
   );
 }, [pending]);
 
-const [screen,setScreen] = useState(() => {
-});
+
 
 const [screen,setScreen] = useState(() => {
   try {
