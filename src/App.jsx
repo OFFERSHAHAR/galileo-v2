@@ -729,7 +729,7 @@ useEffect(() => {
     "galileo_pending_reports",
     JSON.stringify(pending)
   );
-}, [pending]);
+ [pending]);
 
 
 
