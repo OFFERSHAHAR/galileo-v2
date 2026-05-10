@@ -732,6 +732,9 @@ useEffect(() => {
 }, [pending]);
 
 const [screen,setScreen] = useState(() => {
+});
+
+const [screen,setScreen] = useState(() => {
   try {
     const u = JSON.parse(localStorage.getItem("galileo_user") || "null");
     return u ? (u.role === "admin" ? "admin" : "daily") : "login";
