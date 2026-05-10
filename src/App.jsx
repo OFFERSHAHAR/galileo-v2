@@ -715,8 +715,19 @@ export default function App() {
   const [supplyDB,setSupplyDB] = useState({});
   const [lastReadings,setLastReadings] = useState({});
   const [reports,setReports] = useState([]);
-  const [pending,setPending] = useState([]);
-  const [screen,setScreen] = useState(()=>{ try { const u = JSON.parse(localStorage.getItem("galileo_user")||"null"); return u ? (u.role==="admin"?"admin":"daily") : "login"; } catch { return "login"; } });
+const [pending, setPending] = useState(() => {
+  try {
+    return JSON.parse(localStorage.getItem("galileo_pending_reports") || "[]");
+  } catch {
+    return [];
+  }
+  useEffect(() => {
+  localStorage.setItem(
+    "galileo_pending_reports",
+    JSON.stringify(pending)
+  );
+}, [pending]);
+});  const [screen,setScreen] = useState(()=>{ try { const u = JSON.parse(localStorage.getItem("galileo_user")||"null"); return u ? (u.role==="admin"?"admin":"daily") : "login"; } catch { return "login"; } });
   const [syncing,setSyncing] = useState(false);
   const [form,setForm] = useState(blank());
   const [adminTab,setAdminTab] = useState("progress");
@@ -998,11 +1009,38 @@ export default function App() {
     const match=tasks.find(t=>t.date===reportDate&&t.client===client&&t.operators.includes(user?.name)&&t.status!=="done"); if(match)markDone(match.id);
     let photosBase64 = [];
     if(photos.length>0){ photosBase64 = await Promise.all(photos.map(url=> fetch(url).then(r=>r.blob()).then(blob=>new Promise(res=>{ const reader=new FileReader(); reader.onload=e=>res(e.target.result.split(",")[1]); reader.readAsDataURL(blob); })) )); }
-    const report={id:Date.now(),reportDate,operator:user?.name||"",client,chlorine,ph,salt,chlora:form.chlora>0?form.chlora:undefined,hth:form.hth>0?form.hth:undefined,phUp:form.phUp>0?form.phUp:undefined,acidLiters:form.acidLiters>0?form.acidLiters:undefined,elModel,elSerial,elDate,elNext:elNext||"",supplyLabel,waterLevel,clarity,fat,flow,poolStatus,customStatusText,restrictedUntil,notes,photosCount:photos.length};
-    setReports(r=>[...r,report]); setSyncing(true); let saved=false;
+const report = {
+  id: crypto.randomUUID(),
+  reportDate,
+  operator:user?.name||"",
+  client,
+  chlorine,
+  ph,
+  salt,
+  chlora:form.chlora>0?form.chlora:undefined,
+  hth:form.hth>0?form.hth:undefined,
+  phUp:form.phUp>0?form.phUp:undefined,
+  acidLiters:form.acidLiters>0?form.acidLiters:undefined,
+  elModel,
+  elSerial,
+  elDate,
+  elNext:elNext||"",
+  supplyLabel,
+  waterLevel,
+  clarity,
+  fat,
+  flow,
+  poolStatus,
+  customStatusText,
+  restrictedUntil,
+  notes,
+  photosCount:photos.length
+};
+    setReports(r=>[...r,report]); setPending(p => [...p, report]);
+    setSyncing(true); let saved=false;
     const adminEmail = getCompany().adminEmail||"";
     if(sheetId){ const res=await sheetCall("saveReport",{report, photos:photosBase64, adminEmail, clientAddress:clientAddress(client), clientPhone:clientPhone(client)}).catch(()=>null); saved=res?.success===true; if(saved) await sendNotification(`✅ דוח בוצע: ${client}`, `מדידות: כלור ${report.chlorine}, pH ${report.ph}`); }
-    if(!saved){setPending(p=>[...p,report]);setDismissed(false);}
+    if(!saved) setDismissed(false);}
     setSyncing(false);
     const phone=clientPhone(client); const waMsg=buildWA(report);
     const waUrl=phone?`https://wa.me/972${phone.replace(/^0/,"")}?text=${encodeURIComponent(waMsg)}`:`https://wa.me/?text=${encodeURIComponent(waMsg)}`;
