@@ -714,7 +714,8 @@ export default function App() {
   const [tasks,setTasks] = useState([]);
   const [supplyDB,setSupplyDB] = useState({});
   const [lastReadings,setLastReadings] = useState({});
-  const [reports,setReports] = useState([]);
+const [reports,setReports] = useState([]);
+
 const [pending, setPending] = useState(() => {
   try {
     return JSON.parse(localStorage.getItem("galileo_pending_reports") || "[]");
@@ -729,7 +730,15 @@ useEffect(() => {
     JSON.stringify(pending)
   );
 }, [pending]);
-  const [screen,setScreen] = useState(() => { 
+
+const [screen,setScreen] = useState(() => {
+  try {
+    const u = JSON.parse(localStorage.getItem("galileo_user") || "null");
+    return u ? (u.role === "admin" ? "admin" : "daily") : "login";
+  } catch {
+    return "login";
+  }
+});
     try { const u = JSON.parse(localStorage.getItem("galileo_user")||"null"); return u ? (u.role==="admin"?"admin":"daily") : "login"; } catch { return "login"; } });
   const [syncing,setSyncing] = useState(false);
   const [form,setForm] = useState(blank());
