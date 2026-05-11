@@ -245,6 +245,45 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
   const showStatus = !!(warnAbove||warnBelow||optimal);
   const trackH = large ? 28 : 8;
   const sliderRef = useRef();
+  const trackRef = useRef();
+  const dragRef = useRef({active:false,sliding:false,startX:0,startY:0,pointerId:null});
+  const snap = (n) => Math.round(n / step) * step;
+  const clamp = (n) => Math.min(max, Math.max(min, n));
+  const setValueFromPointer = (clientX) => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect?.width) return;
+    const raw = min + ((clientX - rect.left) / rect.width) * (max - min);
+    const next = clamp(snap(raw));
+    onChange(Number(next.toFixed(3)));
+  };
+  const startSlide = (e) => {
+    dragRef.current = {active:true,sliding:e.pointerType==="mouse",startX:e.clientX,startY:e.clientY,pointerId:e.pointerId};
+    if (e.pointerType === "mouse") {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      setValueFromPointer(e.clientX);
+    }
+  };
+  const moveSlide = (e) => {
+    const drag = dragRef.current;
+    if (!drag.active) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!drag.sliding) {
+      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
+        dragRef.current = {active:false,sliding:false,startX:0,startY:0,pointerId:null};
+        return;
+      }
+      if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.35) return;
+      drag.sliding = true;
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    }
+    e.preventDefault();
+    setValueFromPointer(e.clientX);
+  };
+  const endSlide = (e) => {
+    e.currentTarget.releasePointerCapture?.(dragRef.current.pointerId);
+    dragRef.current = {active:false,sliding:false,startX:0,startY:0,pointerId:null};
+  };
   return (
     <div style={{marginBottom:6}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -254,13 +293,13 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
           <span style={{color:showStatus?col:C.blue,fontSize:large?28:22,fontWeight:900,minWidth:large?70:50,textAlign:"right"}}>{value}{unit}</span>
         </div>
       </div>
-      <div dir="ltr" style={{position:"relative",height:trackH,borderRadius:99,background:C.border,marginBottom:6}}>
+      <div ref={trackRef} dir="ltr" onPointerDown={startSlide} onPointerMove={moveSlide} onPointerUp={endSlide} onPointerCancel={endSlide} onPointerLeave={endSlide} style={{position:"relative",height:trackH,borderRadius:99,background:C.border,marginBottom:6,touchAction:"pan-y"}}>
         <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${pct}%`,borderRadius:99,background:`linear-gradient(90deg,${C.blue},${col})`,transition:"width 0.15s"}}/>
         {optimal&&<div style={{position:"absolute",top:-4,left:`${((optimal-min)/(max-min))*100}%`,width:large?3:2,height:large?36:16,background:C.blue,borderRadius:2,transform:"translateX(-50%)"}}/>}
         <input ref={sliderRef} type="range" min={min} max={max} step={step} value={value}
           onChange={e=>onChange(parseFloat(e.target.value))}
           dir="ltr"
-          style={{position:"absolute",top:large?-16:-8,left:0,width:"100%",opacity:0,cursor:"pointer",height:large?60:24,touchAction:"pan-y",WebkitAppearance:"none"}}/>
+          style={{position:"absolute",top:large?-16:-8,left:0,width:"100%",opacity:0,cursor:"pointer",height:large?60:24,touchAction:"pan-y",pointerEvents:"none",WebkitAppearance:"none"}}/>
       </div>
       <div dir="ltr" style={{display:"flex",justifyContent:"space-between",fontSize:large?12:10,color:C.muted}}>
         <span>{min}</span>{optimal&&<span style={{color:C.blue}}>אופטימלי {optimal}</span>}<span>{max}</span>
@@ -838,6 +877,7 @@ const [screen,setScreen] = useState(() => {
   const [supplySearch,setSupplySearch] = useState({date:"",type:""});
   const [freeClients,setFreeClients] = useState([]);
   const [newClient,setNewClient] = useState({name:"",phone:"",address:""});
+  const [adminClientSearch,setAdminClientSearch] = useState("");
   const [reportFilter,setReportFilter] = useState("");
   const [reportDateFilter,setReportDateFilter] = useState("");
   const [sheetReports,setSheetReports] = useState([]);
@@ -910,6 +950,91 @@ const [screen,setScreen] = useState(() => {
     }
     return sentCount;
   };
+
+  const sendNotificationToOperators = async (operatorNames, title, message) => {
+    const names = [...new Set((operatorNames || []).filter(Boolean).map(normalizeName))];
+    const targets = allUsers.filter(u =>
+      u.role === "operator" &&
+      u.username &&
+      names.includes(normalizeName(u.name))
+    );
+
+    if (!targets.length) {
+      console.warn("OneSignal: no operator users found for task notification", operatorNames);
+      return 0;
+    }
+
+    let sentCount = 0;
+    for (const op of targets) {
+      const sent = await sendOneSignalToUser(title, message, op.username);
+      if (sent) sentCount++;
+    }
+    return sentCount;
+  };
+
+  const enablePushForCurrentUser = async () => {
+    if (!user?.username) {
+      showToast("⚠️ אין משתמש מחובר");
+      return;
+    }
+
+    if (isActionLoading("push")) return;
+    setAction("push", "loading");
+
+    const ready = await initOneSignal();
+    if (!ready || !window.OneSignalDeferred) {
+      setAction("push", "error", 2200);
+      showToast("⚠️ לא ניתן להפעיל התראות");
+      return;
+    }
+
+    window.OneSignalDeferred.push(async function(OneSignal) {
+      try {
+        if (OneSignal.Notifications?.requestPermission) {
+          const permission = await OneSignal.Notifications.requestPermission();
+          if (permission === false) {
+            setAction("push", "error", 2200);
+            showToast("⚠️ הרשאת התראות לא אושרה");
+            return;
+          }
+        }
+
+        await OneSignal.login(user.username);
+        setAction("push", "success", 1800);
+        showToast("✅ התראות הופעלו למשתמש שלך");
+      } catch (e) {
+        console.warn("Push enable error:", e);
+        setAction("push", "error", 2200);
+        showToast("⚠️ שגיאה בהפעלת התראות");
+      }
+    });
+  };
+
+  const PushSetupCard = ({compact=false}) => (
+    <Press
+      onClick={enablePushForCurrentUser}
+      style={{
+        ...card({
+          marginBottom: compact ? 10 : 12,
+          background: "#e3f2fd",
+          border: `1px solid ${C.lightBlue}`,
+          display: "flex",
+          alignItems: "center",
+          gap: 10
+        }),
+        padding: compact ? "10px 14px" : "12px 16px"
+      }}
+    >
+      <span style={{fontSize:18}}>🔔</span>
+      <div style={{flex:1}}>
+        <div style={{fontWeight:800,fontSize:13,color:C.blue}}>הפעל התראות אישיות</div>
+        <div style={{fontSize:11,color:C.muted}}>נדרש לקבלת משימות ועדכונים לפי משתמש</div>
+      </div>
+      <span style={{fontSize:12,fontWeight:800,color:C.blue}}>
+        {actionLabel("push",{idle:"הפעל",loading:"⏳",success:"✅",error:"נסה שוב"})}
+      </span>
+    </Press>
+  );
 
   useEffect(()=>{
     if(!user) return;
@@ -1069,12 +1194,17 @@ const [screen,setScreen] = useState(() => {
     const newTasks=isEdit?tasks.map(t=>t.id===editTaskId?{...t,...cleanTask,changeLog:[...(t.changeLog||[]),logEntry]}:t):[...tasks,{id:Date.now(),...cleanTask,status:"pending",changeLog:[logEntry]}];
     setTasks(newTasks); setEditTaskId(null); setTaskClient(""); setTaskClients([]); setTaskOps([]); setTaskNote("");
     if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
+    if(isEdit) await sendNotificationToOperators(cleanTask.operators, "📋 משימה עודכנה", `${cleanTask.client?.split(" - ")[0] || ""} — ${fmtDate(cleanTask.date)}`);
     showToast(isEdit?"✏️ משימה עודכנה":"✅ משימה נוספה");
   };
 
   const updateTask = async (id,changes,logNote,isAdmin=false) => {
     const newTasks=tasks.map(t=>{ if(t.id!==id)return t; const entry={at:nowStr(),note:logNote,by:user?.name,...(isAdmin?{needsAck:true,ackedBy:[]}:{})}; return{...t,...changes,changeLog:[...(t.changeLog||[]),entry]}; });
     setTasks(newTasks); if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
+    if(isAdmin) {
+      const changedTask = newTasks.find(t=>t.id===id);
+      await sendNotificationToOperators(changedTask?.operators || [], "📋 משימה עודכנה", `${changedTask?.client?.split(" - ")[0] || ""} — ${logNote}`);
+    }
   };
 
   const ackChange = async (taskId,logIdx) => {
@@ -1082,7 +1212,7 @@ const [screen,setScreen] = useState(() => {
     setTasks(newTasks); if(sheetId) await sheetCall("saveTasks",{tasks:newTasks}); showToast("✓ קיבלת אישור נשלח");
   };
 
-  const removeOp=(id,n)=>updateTask(id,{operators:tasks.find(t=>t.id===id)?.operators.filter(o=>o!==n)||[]},`הוסר ${n} מהמשימה`,true);
+  const removeOp=async(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t)return;await updateTask(id,{operators:t.operators.filter(o=>o!==n)},`הוסר ${n} מהמשימה`,true);await sendNotificationToOperators([n], "📋 הוסרת ממשימה", `${t.client?.split(" - ")[0] || ""} — ${fmtDate(t.date)}`);};
   const addOp=(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t||t.operators.includes(n))return;updateTask(id,{operators:[...t.operators,n]},`נוסף ${n} למשימה`,true);};
   const markDone=(id)=>updateTask(id,{status:"done"},"דוח הוגש — בוצעה",false);
 
@@ -1294,6 +1424,7 @@ const report = {
           </div>
         </div>
         <div style={{margin:"-20px 16px 0",position:"relative",zIndex:10}}>
+          <PushSetupCard/>
           <div style={{...card({marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}),padding:"14px 18px"}}>
             <div>
               <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4}}>שעון עבודה</div>
@@ -1699,12 +1830,28 @@ const report = {
           ))}
         </div>
         <div style={{padding:"20px 16px 0"}}>
+          <PushSetupCard compact/>
           {adminTab==="adminreport"&&(
             <div>
               <div style={{...card({marginBottom:16,background:"#e3f2fd",border:`1px solid #90caf9`}),padding:"12px 16px",display:"flex",gap:10}}><span style={{fontSize:18}}>ℹ️</span><span style={{fontSize:12,color:C.blue,fontWeight:600}}>מלא דוח טיפול ידני — לכל לקוח</span></div>
               <div style={{marginBottom:14}}>
                 <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>בחר לקוח</label>
-                {form.client?(<div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}><span style={{color:C.blue,fontWeight:700}}>🏊 {form.client.split(" - ")[0]}</span><span onClick={()=>sf("client","")} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span></div>):(<select value={form.client} onChange={e=>sf("client",e.target.value)} style={sel}><option value="">בחר לקוח...</option>{clients.map(c=><option key={c.name}>{c.name}</option>)}</select>)}
+                {form.client?(<div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}><span style={{color:C.blue,fontWeight:700}}>🏊 {form.client.split(" - ")[0]}</span><span onClick={()=>{sf("client","");setAdminClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span></div>):(
+                  <div style={{position:"relative"}}>
+                    <input value={adminClientSearch} onChange={e=>setAdminClientSearch(e.target.value)} placeholder="🔍 חפש לקוח לפי שם או כתובת..." style={inp} autoComplete="off"/>
+                    {adminClientSearch&&(
+                      <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:260,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
+                        {clients.filter(c=>`${c.name||""} ${c.address||""} ${c.phone||""}`.toLowerCase().includes(adminClientSearch.toLowerCase())).map(c=>(
+                          <Press key={c.name} onClick={()=>{sf("client",c.name);setAdminClientSearch("");haptic();}} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
+                            <div style={{width:32,height:32,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>🏊</div>
+                            <div><div style={{fontWeight:700,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div>{c.address&&<div style={{fontSize:11,color:C.muted}}>{c.address}</div>}</div>
+                          </Press>
+                        ))}
+                        {clients.filter(c=>`${c.name||""} ${c.address||""} ${c.phone||""}`.toLowerCase().includes(adminClientSearch.toLowerCase())).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>לא נמצא לקוח</div>}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <Press onClick={()=>{ if(!form.client){showToast("⚠️ בחר לקוח");return;} sf("clientLocked",true); setScreen("form"); haptic("medium"); }} disabled={!form.client} style={{padding:"14px",borderRadius:14,background:form.client?`linear-gradient(135deg,${C.blue},${C.lightBlue})`:"#90caf9",color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:form.client?"0 4px 14px rgba(21,101,192,0.3)":"none",marginBottom:8}}>📝 פתח דוח לאדמין</Press>
             </div>
@@ -1806,7 +1953,7 @@ const report = {
                     <div style={{display:"flex",gap:8}}>
                       <select defaultValue="" onChange={e=>{if(e.target.value){addOp(t.id,e.target.value);e.target.value="";}}} style={{...sel,flex:1,fontSize:12,padding:"7px 10px"}}><option value="">+ הוסף מפעיל</option>{opNames.filter(n=>!t.operators.includes(n)).map(n=><option key={n}>{n}</option>)}</select>
                       <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}} style={{padding:"7px 14px",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:12,fontWeight:700}}>✏️</Press>
-                      <Press onClick={async()=>{ if(!window.confirm("למחוק?"))return; const n=tasks.filter(x=>x.id!==t.id); setTasks(n); if(sheetId)await sheetCall("saveTasks",{tasks:n}); showToast("🗑️ משימה נמחקה"); }} style={{padding:"7px 14px",borderRadius:10,background:"#ffebee",color:C.red,fontSize:12,fontWeight:700}}>🗑️</Press>
+                      <Press onClick={async()=>{ if(!window.confirm("למחוק?"))return; const deletedTask=t; const n=tasks.filter(x=>x.id!==t.id); setTasks(n); if(sheetId)await sheetCall("saveTasks",{tasks:n}); await sendNotificationToOperators(deletedTask.operators||[], "🗑️ משימה נמחקה", `${deletedTask.client?.split(" - ")[0] || ""} — ${fmtDate(deletedTask.date)}`); showToast("🗑️ משימה נמחקה"); }} style={{padding:"7px 14px",borderRadius:10,background:"#ffebee",color:C.red,fontSize:12,fontWeight:700}}>🗑️</Press>
                     </div>
                     {lastLog&&(
                       <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>
