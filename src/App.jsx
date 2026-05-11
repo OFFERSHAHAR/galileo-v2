@@ -1890,13 +1890,15 @@ const report = {
               </Press>
             ))}
           </div>
-          {poolStatus==="אחר"&&(
-            <div style={{...card()}}>
-              <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder="תאר את הבעיה..." style={{...inp,resize:"none",marginBottom:10}}/>
-              <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>הגבלת שימוש עד</label>
-              <input type="date" value={restrictedUntil} onChange={e=>sf("restrictedUntil",e.target.value)} style={inp}/>
-            </div>
-          )}
+          <div style={{...card()}}>
+            <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder={poolStatus==="אחר"?"תאר את הבעיה...":"הערה קצרה על מצב הבריכה (אופציונלי)..."} style={{...inp,resize:"none",marginBottom:poolStatus==="אחר"?10:0}}/>
+            {poolStatus==="אחר"&&(
+              <>
+                <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>הגבלת שימוש עד</label>
+                <input type="date" value={restrictedUntil} onChange={e=>sf("restrictedUntil",e.target.value)} style={inp}/>
+              </>
+            )}
+          </div>
         </Sec>
 
         <Sec icon="📦" title="ציוד לטיפול הבא">
