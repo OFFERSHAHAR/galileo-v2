@@ -61,6 +61,12 @@ const ONESIGNAL_REST_KEY = import.meta.env.VITE_ONESIGNAL_REST_KEY || "";
 function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
 const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
+const PUSH_SCRIPT_ACTIONS = [
+  "sendOneSignalToUser",
+  "sendPushNotification",
+  "sendNotification",
+  "sendPush",
+];
 
 async function mgmtCall(action, payload={}) {
   try {
@@ -81,9 +87,35 @@ async function sheetCall(action, payload={}) {
   } catch { return null; }
 }
 
+async function sendPushViaScript(title, message, externalUserId) {
+  const payload = {title, message, externalUserId, username: externalUserId};
+
+  for (const action of PUSH_SCRIPT_ACTIONS) {
+    const res = await sheetCall(action, payload);
+    if (res?.success === true || res?.sent === true || res?.ok === true) {
+      console.log("OneSignal sent via script:", action, res);
+      return true;
+    }
+
+    if (res?.error || res?.errors) {
+      console.warn("OneSignal script error:", action, res.error || res.errors);
+    }
+  }
+
+  return false;
+}
+
 async function sendOneSignalToUser(title, message, externalUserId) {
-  if (!ONESIGNAL_REST_KEY) { console.warn("OneSignal: REST KEY missing"); return false; }
   if (!externalUserId) { console.warn("OneSignal: external user id missing; targeted push not sent"); return false; }
+
+  const sentByScript = await sendPushViaScript(title, message, externalUserId);
+  if (sentByScript) return true;
+
+  if (!ONESIGNAL_REST_KEY) {
+    console.warn("OneSignal: REST KEY missing and script push failed");
+    return false;
+  }
+
   try {
     const payload = {
       app_id: ONESIGNAL_APP_ID,
@@ -99,6 +131,7 @@ async function sendOneSignalToUser(title, message, externalUserId) {
     });
     const data = await res.json();
     if (data.errors) { console.warn("OneSignal API error:", data.errors); return false; }
+    if (!data.recipients || data.recipients < 1) { console.warn("OneSignal sent to 0 recipients:", data); return false; }
     console.log("OneSignal sent:", data.id, "recipients:", data.recipients);
     return true;
   } catch(e) { console.warn("OneSignal fetch error:", e); return false; }
