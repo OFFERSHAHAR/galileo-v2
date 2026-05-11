@@ -25,7 +25,7 @@ const GREETINGS_BY_USER = {
     "הבריכות בוכות עליך! 🌊",
     "היה לך קשה בבוקר ?! 💪",
   ],
-  "C": [
+  "c": [
     "יאללה פרנקו! 💪",
     "בוקר טוב גאון! ☀️",
     "הכי טוב בעסק! 🏊",
@@ -33,7 +33,8 @@ const GREETINGS_BY_USER = {
 };
 
 const getDailyGreeting = (username) => {
-  const list = GREETINGS_BY_USER[username] || GREETINGS;
+  const key = String(username || "").trim().toLowerCase();
+  const list = GREETINGS_BY_USER[key] || GREETINGS;
   return list[Math.floor(Math.random() * list.length)];
 };
 
@@ -81,7 +82,8 @@ async function sheetCall(action, payload={}) {
 }
 
 async function sendOneSignalToUser(title, message, externalUserId) {
-  if (!ONESIGNAL_REST_KEY) { console.warn("OneSignal: REST KEY missing"); return; }
+  if (!ONESIGNAL_REST_KEY) { console.warn("OneSignal: REST KEY missing"); return false; }
+  if (!externalUserId) { console.warn("OneSignal: external user id missing; targeted push not sent"); return false; }
   try {
     const payload = {
       app_id: ONESIGNAL_APP_ID,
@@ -89,20 +91,72 @@ async function sendOneSignalToUser(title, message, externalUserId) {
       headings: {"en": title},
       target_channel: "push",
     };
-    if (externalUserId) {
-      payload.include_aliases = { external_id: [externalUserId] };
-    } else {
-      payload.included_segments = ["All"];
-    }
+    payload.include_aliases = { external_id: [externalUserId] };
     const res = await fetch("https://onesignal.com/api/v1/notifications", {
       method: "POST",
       headers: {"Content-Type":"application/json","Authorization":"Bearer "+ONESIGNAL_REST_KEY},
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-    if (data.errors) console.warn("OneSignal API error:", data.errors);
-    else console.log("OneSignal sent:", data.id, "recipients:", data.recipients);
-  } catch(e) { console.warn("OneSignal fetch error:", e); }
+    if (data.errors) { console.warn("OneSignal API error:", data.errors); return false; }
+    console.log("OneSignal sent:", data.id, "recipients:", data.recipients);
+    return true;
+  } catch(e) { console.warn("OneSignal fetch error:", e); return false; }
+}
+
+function initOneSignal() {
+  if (typeof window === "undefined") return Promise.resolve(false);
+  if (window.OneSignalReadyPromise) return window.OneSignalReadyPromise;
+
+  window.OneSignalReadyPromise = new Promise((resolve) => {
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async function(OneSignal) {
+      try {
+        if (!window.OneSignalInitialized) {
+          await OneSignal.init({
+            appId: ONESIGNAL_APP_ID,
+            allowLocalhostAsSecureOrigin: true,
+            notifyButton: { enable: false },
+          });
+          window.OneSignalInitialized = true;
+          console.log("OneSignal ready");
+        }
+        resolve(true);
+      } catch (e) {
+        console.warn("OneSignal init error:", e);
+        resolve(false);
+      }
+    });
+
+    if (window.OneSignalLoaded) return;
+    window.OneSignalLoaded = true;
+    const script = document.createElement("script");
+    script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
+    script.defer = true;
+    script.onerror = () => resolve(false);
+    document.head.appendChild(script);
+  });
+
+  return window.OneSignalReadyPromise;
+}
+
+async function loginOneSignalUser(username) {
+  if (!username) return false;
+  const ready = await initOneSignal();
+  if (!ready || !window.OneSignalDeferred) return false;
+
+  return new Promise((resolve) => {
+    window.OneSignalDeferred.push(async function(OneSignal) {
+      try {
+        await OneSignal.login(username);
+        console.log("OneSignal external_id:", username);
+        resolve(true);
+      } catch (e) {
+        console.warn("OneSignal login error:", e);
+        resolve(false);
+      }
+    });
+  });
 }
 
 const haptic = (t="light") => navigator.vibrate?.({light:30,medium:50,success:[30,50,30]}[t]||30);
@@ -388,7 +442,7 @@ function LicensesTab({C2, inp2, showMsg}) {
   const [generated, setGenerated] = useState("");
   const [showForm, setShowForm] = useState(false);
 
-  useEffect(()=>{ loadLicenses(); initOneSignal(); },[]);
+  useEffect(()=>{ loadLicenses(); },[]);
 
   const initOneSignal = () => {
     if(typeof window==="undefined" || window.OneSignalLoaded) return;
@@ -702,7 +756,14 @@ export default function App() {
   });
   const [companyName, setCompanyName] = useState(company.name||"POOLMANG");
   const [user,setUser] = useState(()=>{ try { return JSON.parse(localStorage.getItem("galileo_user")||"null"); } catch { return null; } });
-  const [greeting, setGreeting] = useState(()=>getDailyGreeting(""));
+  const [greeting, setGreeting] = useState(()=>{
+    try {
+      const savedUser = JSON.parse(localStorage.getItem("galileo_user")||"null");
+      return getDailyGreeting(savedUser?.username || "");
+    } catch {
+      return getDailyGreeting("");
+    }
+  });
   const [loginUser,setLoginUser] = useState("");
   const [loginPass,setLoginPass] = useState("");
   const [loginErr,setLoginErr] = useState("");
@@ -742,6 +803,7 @@ const [screen,setScreen] = useState(() => {
   }
 });
   const [syncing,setSyncing] = useState(false);
+  const [actionStatus, setActionStatus] = useState({});
   const [form,setForm] = useState(blank());
   const [adminTab,setAdminTab] = useState("progress");
   const [taskDate,setTaskDate] = useState(todayStr());
@@ -783,6 +845,17 @@ const [screen,setScreen] = useState(() => {
   const fileRef = useRef();
   const toastTimer = useRef();
 
+  const setAction = (key, status, resetMs = 0) => {
+    setActionStatus(prev => ({...prev, [key]: status}));
+    if (resetMs) {
+      setTimeout(() => {
+        setActionStatus(prev => prev[key] === status ? {...prev, [key]: "idle"} : prev);
+      }, resetMs);
+    }
+  };
+  const isActionLoading = (key) => actionStatus[key] === "loading";
+  const actionLabel = (key, labels) => labels[actionStatus[key] || "idle"] || labels.idle;
+
   const sf = (k,v) => setForm(f=>({...f,[k]:v}));
   const {reportDate,client,chlorine,ph,salt,elModel,elSerial,elDate,waterLevel,clarity,fat,flow,acid,phUpSupply,saltPkg,saltBags,poolStatus,customStatusText,restrictedUntil,notes,photos} = form;
   const clientPhone = (n) => (clients.find(c=>c.name===n)||{}).phone||"";
@@ -823,12 +896,24 @@ const [screen,setScreen] = useState(() => {
     return dateMatch && nameMatch;
   });
 
-  const sendNotification = async (title, message) => {
-    await sendOneSignalToUser(title, message, user?.username || null);
+  const sendNotificationToAdmins = async (title, message) => {
+    const adminUsers = allUsers.filter(u => u.role === "admin" && u.username);
+    if (!adminUsers.length) {
+      console.warn("OneSignal: no admin users found for report notification");
+      return 0;
+    }
+
+    let sentCount = 0;
+    for (const admin of adminUsers) {
+      const sent = await sendOneSignalToUser(title, message, admin.username);
+      if (sent) sentCount++;
+    }
+    return sentCount;
   };
 
   useEffect(()=>{
     if(!user) return;
+    setGreeting(getDailyGreeting(user.username || ""));
     const refresh = async() => { const tR = await sheetCall("getTasks"); if(Array.isArray(tR?.tasks) && tR.tasks.length>0) { setTasks(tR.tasks); try { const cached = localStorage.getItem("galileo_cache"); const c = cached ? JSON.parse(cached) : {}; localStorage.setItem("galileo_cache", JSON.stringify({...c, tasks:tR.tasks})); } catch {} } };
     const interval = setInterval(refresh, 10000);
     window.addEventListener("focus", refresh);
@@ -840,6 +925,15 @@ const [screen,setScreen] = useState(() => {
   const handleLogout = () => { localStorage.removeItem("galileo_user"); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
 
   const showToast = (msg) => { clearTimeout(toastTimer.current); setToast({msg,visible:true}); toastTimer.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2500); };
+
+  useEffect(() => {
+    initOneSignal().then(() => {
+      const savedUser = user || (() => {
+        try { return JSON.parse(localStorage.getItem("galileo_user") || "null"); } catch { return null; }
+      })();
+      if (savedUser?.username) loginOneSignalUser(savedUser.username);
+    });
+  }, []);
 
   useEffect(()=>{
     try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) setAllUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); } } catch {}
@@ -865,19 +959,7 @@ const [screen,setScreen] = useState(() => {
   const _doLogin = (found) => {
     setUser(found);
     setGreeting(getDailyGreeting(found.username||""));
-    if (window.OneSignal) {
-      try {
-        if(typeof window.OneSignal.login === "function") {
-          window.OneSignal.login(found.username);
-        } else {
-          window.OneSignal.push(function(){
-            if(typeof window.OneSignal.setExternalUserId === "function") {
-              window.OneSignal.setExternalUserId(found.username);
-            }
-          });
-        }
-      } catch(e) {}
-    }
+    loginOneSignalUser(found.username);
     localStorage.setItem("galileo_user", JSON.stringify(found));
     setScreen(found.role === "admin" ? "admin" : "daily");
     haptic("medium");
@@ -902,6 +984,7 @@ const [screen,setScreen] = useState(() => {
 
   const handleLogin = async () => {
     setLoginErr(""); setLoginLoading(true);
+    setAction("login", "loading");
 
     const inputUser = loginUser.toLowerCase().trim();
     const inputPass = loginPass.trim();
@@ -909,6 +992,7 @@ const [screen,setScreen] = useState(() => {
     if (!inputUser || !inputPass) {
       setLoginErr("נא להזין שם משתמש וסיסמה");
       setLoginLoading(false);
+      setAction("login", "error", 2000);
       return;
     }
 
@@ -921,6 +1005,7 @@ const [screen,setScreen] = useState(() => {
           String(u.password||"").trim() === inputPass
         );
         if (found) {
+          setAction("login", "success", 1200);
           _doLogin(found);
           setLoginLoading(false);
           // רענן Sheets ברקע
@@ -955,6 +1040,7 @@ const [screen,setScreen] = useState(() => {
     if (!usersToCheck.length) {
       setLoginErr("לא נטענו משתמשים. בדוק Google Sheets.");
       setLoginLoading(false);
+      setAction("login", "error", 2200);
       haptic("medium");
       return;
     }
@@ -965,9 +1051,11 @@ const [screen,setScreen] = useState(() => {
     );
 
     if (found) {
+      setAction("login", "success", 1200);
       _doLogin(found);
     } else {
       setLoginErr("שם משתמש או סיסמה שגויים");
+      setAction("login", "error", 2200);
       haptic("medium");
     }
     setLoginLoading(false);
@@ -985,7 +1073,7 @@ const [screen,setScreen] = useState(() => {
   };
 
   const updateTask = async (id,changes,logNote,isAdmin=false) => {
-    const newTasks=tasks.map(t=>{ if(t.id!==id)return t; const entry={at:nowStr(),note:logNote,by:user?.name,...(isAdmin?{needsAck:true,ackedBy:{}}:{})}; return{...t,...changes,changeLog:[...(t.changeLog||[]),entry]}; });
+    const newTasks=tasks.map(t=>{ if(t.id!==id)return t; const entry={at:nowStr(),note:logNote,by:user?.name,...(isAdmin?{needsAck:true,ackedBy:[]}:{})}; return{...t,...changes,changeLog:[...(t.changeLog||[]),entry]}; });
     setTasks(newTasks); if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
   };
 
@@ -1016,6 +1104,9 @@ const [screen,setScreen] = useState(() => {
   };
 
   const handleSubmit = async () => {
+    if (!client || syncing || isActionLoading("submitReport")) return;
+    setAction("submitReport", "loading");
+    setSyncing(true);
     const elNext=calcNext(elDate);
     const supplyLabel=[acid&&"חומצת מלח",phUpSupply&&"מעלה pH",saltPkg&&`מלח ×${saltBags}`].filter(Boolean).join(", ");
     if(client&&(acid||phUpSupply||saltPkg)){ const newDB={...supplyDB,[client]:{acid,phUpSupply,saltPkg,saltBags,updatedAt:fmtDate(reportDate)}}; setSupplyDB(newDB); if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt]);await sheetCall("saveSupplyDB",{rows});} }
@@ -1049,8 +1140,8 @@ const report = {
   notes,
   photosCount:photos.length
 };
-    setReports(r=>[...r,report]); setPending(p => [...p, report]);
-    setSyncing(true); let saved=false;
+    setReports(r=>[...r,report]);
+    let saved=false;
     const adminEmail = getCompany().adminEmail||"";
        if (sheetId) {
       const res = await sheetCall("saveReport", {
@@ -1063,15 +1154,23 @@ const report = {
 
       saved = res?.success === true;
 
-      if (saved) {
-        await sendNotification(
+      if (saved && user?.role !== "admin") {
+        await sendNotificationToAdmins(
           `✅ דוח בוצע: ${client}`,
-          `מדידות: כלור ${report.chlorine}, pH ${report.ph}`
+          `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
         );
       }
     }
 
-    if (!saved) setDismissed(false);
+    if (!saved) {
+      setPending(p => [...p, report]);
+      setDismissed(false);
+      setAction("submitReport", "local", 2200);
+      showToast("⚠️ הדוח נשמר מקומית");
+    } else {
+      setAction("submitReport", "success", 1200);
+      showToast("✅ הדוח נשלח");
+    }
 
     setSyncing(false);
 
@@ -1083,6 +1182,29 @@ const report = {
 
     window.open(waUrl, "_blank");
     setScreen("done");
+  };
+
+  const syncPendingReports = async () => {
+    if (!pending.length || syncing || isActionLoading("syncPending")) return;
+    setAction("syncPending", "loading");
+    setSyncing(true);
+
+    let ok = true;
+    for (const r of pending) {
+      const res = await sheetCall("saveReport",{report:r}).catch(()=>null);
+      if(!res?.success) ok=false;
+    }
+
+    if(ok){
+      setPending([]);
+      setAction("syncPending", "success", 1600);
+      showToast("✅ כל הדוחות נשלחו!");
+    } else {
+      setAction("syncPending", "error", 2200);
+      showToast("⚠️ חלק מהדוחות עדיין ממתינים");
+    }
+
+    setSyncing(false);
   };
 
 
@@ -1128,7 +1250,7 @@ const report = {
           <div style={{marginBottom:loginErr?12:20}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>סיסמה</label><input type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} placeholder="הכנס סיסמה" style={inp} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
           {loginErr&&<div style={{background:"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:16,color:C.red,fontSize:13,fontWeight:700,textAlign:"center"}}>⚠️ {loginErr}</div>}
           <Press onClick={handleLogin} style={{padding:16,borderRadius:14,background:loginLoading?"#90caf9":`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:loginLoading?"none":"0 6px 20px rgba(21,101,192,0.4)"}}>
-            {loginLoading?"⏳ מתחבר...":"כניסה →"}
+            {actionLabel("login",{idle:"כניסה →",loading:"⏳ מתחבר...",success:"✅ התחברת",error:"⚠️ נסה שוב"})}
           </Press>
         </div>
         <p style={{textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.35)",marginTop:16,marginBottom:0,letterSpacing:"0.05em"}}>POOLMANG.BY.OR2026 {APP_VERSION}</p>
@@ -1188,7 +1310,7 @@ const report = {
             <div style={{...card({background:"#fff8e1",border:"1px solid #ffe082",marginBottom:12,display:"flex",alignItems:"center",gap:10}),padding:"12px 16px"}}>
               <span style={{fontSize:18}}>⚠️</span>
               <div style={{flex:1}}><div style={{fontWeight:800,fontSize:13,color:C.orange}}>{pending.length} דוחות ממתינים לשליחה</div><div style={{fontSize:11,color:C.muted}}>שמורים מקומית — לחץ לשליחה</div></div>
-              <Press onClick={async()=>{ setSyncing(true); let ok=true; for(const r of pending){const res=await sheetCall("saveReport",{report:r}).catch(()=>null);if(!res?.success)ok=false;} if(ok){setPending([]);showToast("✅ כל הדוחות נשלחו!");} setSyncing(false); }} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>{syncing?"...":"שלח"}</Press>
+              <Press onClick={syncPendingReports} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
               <Press onClick={()=>setDismissed(true)} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
             </div>
           )}
@@ -1508,10 +1630,10 @@ const report = {
         {pending.length>0&&(
           <div style={{...card({background:"#fff8e1",border:`1px solid #ffe082`}),marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontSize:13,fontWeight:700,color:C.orange}}>⚠️ {pending.length} דוחות ממתינים לשליחה</span>
-            <Press onClick={async()=>{setSyncing(true);let ok=true;for(const r of pending){const res=await sheetCall("saveReport",{report:r}).catch(()=>null);if(!res?.success)ok=false;}if(ok){setPending([]);showToast("✅ כל הדוחות נשלחו!");}setSyncing(false);}} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{syncing?"...":"שלח הכל"}</Press>
+            <Press onClick={syncPendingReports} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח הכל",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
           </div>
         )}
-        <Press onClick={handleSubmit} disabled={!client||syncing} style={{padding:"18px",borderRadius:16,background:syncing||!client?"#90caf9":`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 8px 24px rgba(21,101,192,0.4)",marginBottom:8}}>{syncing?"⏳ שומר...":"שלח דוח ⚡"}</Press>
+        <Press onClick={handleSubmit} disabled={!client||syncing||isActionLoading("submitReport")} style={{padding:"18px",borderRadius:16,background:actionStatus.submitReport==="success"?C.green:actionStatus.submitReport==="local"?C.orange:syncing||!client?"#90caf9":`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 8px 24px rgba(21,101,192,0.4)",marginBottom:8}}>{actionLabel("submitReport",{idle:"שלח דוח ⚡",loading:"⏳ שולח דוח...",success:"✅ נשלח",local:"⚠️ נשמר מקומית",error:"⚠️ שגיאה"})}</Press>
         <Press onClick={()=>setScreen("daily")} style={{padding:"14px",borderRadius:14,border:`2px solid ${C.border}`,background:C.white,color:C.muted,fontWeight:700,fontSize:14,textAlign:"center"}}>← ביטול</Press>
       </div>
       <Toast msg={toast.msg} visible={toast.visible}/>
@@ -1642,24 +1764,30 @@ const report = {
                 </div>
                 <div style={{marginBottom:12}}><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>הערה (תופיע אצל המפעיל)</label><input value={taskNote} onChange={e=>setTaskNote(e.target.value)} placeholder="הערה אופציונלית..." style={inp}/></div>
                 <Press onClick={async()=>{
+                  if(isActionLoading("saveTasks")) return;
+                  setAction("saveTasks", "loading");
                   if(editTaskId){
                     await saveTask({date:taskDate,client:taskClient,operators:taskOps});
+                    setAction("saveTasks", "success", 1500);
                   } else {
-                    if(!taskClients.length||!taskOps.length) return;
+                    if(!taskClients.length||!taskOps.length) { setAction("saveTasks", "idle"); return; }
                     const newTasksBatch = taskClients.map(tc=>({id:Date.now()+Math.floor(Math.random()*100000),date:taskDate.slice(0,10),client:tc.name,operators:[...taskOps],status:"pending",changeLog:[{at:nowStr(),note:tc.note||taskNote||"📋 משימה חדשה הוקצתה לך",by:user?.name,needsAck:true,ackedBy:[]}]}));
                     const newTasks = [...tasks, ...newTasksBatch];
                     setTasks(newTasks); setTaskClients([]); setTaskClientSearch(""); setTaskOps([]); setTaskNote("");
                     if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
                     // Send notification to each operator
+                    let sentCount = 0;
                     for(const opName of taskOps) {
-                      const opUser = allUsers.find(u=>u.name===opName);
+                      const opUser = allUsers.find(u=>normalizeName(u.name)===normalizeName(opName));
                       const clientList = taskClients.map(c=>c.name.split(" - ")[0]).join(", ");
-                      await sendOneSignalToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(taskDate)}`, opUser?.username);
+                      const sent = await sendOneSignalToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(taskDate)}`, opUser?.username);
+                      if(sent) sentCount++;
                     }
-                    showToast(`✅ ${newTasksBatch.length} משימות נוצרו`); haptic("success");
+                    setAction("saveTasks", sentCount===taskOps.length ? "success" : "warning", 2200);
+                    showToast(sentCount===taskOps.length ? `✅ ${newTasksBatch.length} משימות נוצרו ונשלחו` : `✅ ${newTasksBatch.length} משימות נוצרו · ⚠️ ${sentCount}/${taskOps.length} התראות נשלחו`); haptic("success");
                   }
-                }} disabled={editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length)} style={{padding:"13px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:`0 4px 14px rgba(21,101,192,0.3)`,opacity:(editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length))?0.5:1}}>
-                  {editTaskId?"💾 שמור שינויים":taskClients.length>1?`➕ צור ${taskClients.length} משימות`:"➕ הוסף משימה"}
+                }} disabled={isActionLoading("saveTasks")||(editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length))} style={{padding:"13px",borderRadius:14,background:actionStatus.saveTasks==="success"?C.green:actionStatus.saveTasks==="warning"?C.orange:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:`0 4px 14px rgba(21,101,192,0.3)`,opacity:(editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length))?0.5:1}}>
+                  {actionStatus.saveTasks==="loading"?"⏳ שומר ושולח...":actionStatus.saveTasks==="success"?"✅ נשמר ונשלח":actionStatus.saveTasks==="warning"?"⚠️ נשמר, בדוק התראות":editTaskId?"💾 שמור שינויים":taskClients.length>1?`➕ צור ${taskClients.length} משימות`:"➕ הוסף משימה"}
                 </Press>
               </div>
               <h3 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:"0 0 12px"}}>משימות — {fmtDate(taskDate)}</h3>
@@ -1808,4 +1936,3 @@ const report = {
   if(showSuperAdmin) return <SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>;
   return null;
 }
-
