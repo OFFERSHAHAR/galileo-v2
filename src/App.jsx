@@ -2131,16 +2131,24 @@ const report = {
                     const newTasks = [...tasks, ...newTasksBatch];
                     setTasks(newTasks); setTaskClients([]); setTaskClientSearch(""); setTaskOps([]); setTaskNote("");
                     if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
-                    // Send notification to each operator
-                    let sentCount = 0;
-                    for(const opName of taskOps) {
-                      const opUser = allUsers.find(u=>normalizeName(u.name)===normalizeName(opName));
-                      const clientList = taskClients.map(c=>c.name.split(" - ")[0]).join(", ");
-                      const sent = await sendOneSignalToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(taskDate)}`, opUser?.username);
-                      if(sent) sentCount++;
-                    }
-                    setAction("saveTasks", sentCount===taskOps.length ? "success" : "warning", 2200);
-                    showToast(sentCount===taskOps.length ? `✅ ${newTasksBatch.length} משימות נוצרו ונשלחו` : `✅ ${newTasksBatch.length} משימות נוצרו · ⚠️ ${sentCount}/${taskOps.length} התראות נשלחו`); haptic("success");
+                    setAction("saveTasks", "success", 1500);
+                    showToast(`✅ ${newTasksBatch.length} משימות נוצרו`);
+                    haptic("success");
+
+                    const notifyOps = [...taskOps];
+                    const notifyClients = [...taskClients];
+                    const notifyDate = taskDate;
+                    setTimeout(async () => {
+                      let sentCount = 0;
+                      const clientList = notifyClients.map(c=>c.name.split(" - ")[0]).join(", ");
+                      for(const opName of notifyOps) {
+                        const opUser = allUsers.find(u=>normalizeName(u.name)===normalizeName(opName));
+                        const sent = await sendOneSignalToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(notifyDate)}`, opUser?.username);
+                        if(sent) sentCount++;
+                      }
+                      if (sentCount === notifyOps.length) showToast(`✅ ההתראות נשלחו`);
+                      else showToast(`⚠️ ${sentCount}/${notifyOps.length} התראות נשלחו`);
+                    }, 0);
                   }
                 }} disabled={isActionLoading("saveTasks")||(editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length))} style={{padding:"13px",borderRadius:14,background:actionStatus.saveTasks==="success"?C.green:actionStatus.saveTasks==="warning"?C.orange:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:`0 4px 14px rgba(21,101,192,0.3)`,opacity:(editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length))?0.5:1}}>
                   {actionStatus.saveTasks==="loading"?"⏳ שומר ושולח...":actionStatus.saveTasks==="success"?"✅ נשמר ונשלח":actionStatus.saveTasks==="warning"?"⚠️ נשמר, בדוק התראות":editTaskId?"💾 שמור שינויים":taskClients.length>1?`➕ צור ${taskClients.length} משימות`:"➕ הוסף משימה"}
