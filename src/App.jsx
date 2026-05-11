@@ -63,9 +63,16 @@ function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
 const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
 const PUSH_SCRIPT_ACTIONS = [
   "sendOneSignalToUser",
+  "sendOneSignal",
+  "sendOneSignalNotification",
   "sendPushNotification",
+  "sendPushToUser",
   "sendNotification",
+  "sendNotificationToUser",
+  "sendUserNotification",
   "sendPush",
+  "pushToUser",
+  "notifyUser",
 ];
 
 async function mgmtCall(action, payload={}) {
@@ -87,18 +94,75 @@ async function sheetCall(action, payload={}) {
   } catch { return null; }
 }
 
+async function postScriptAction(scriptUrl, action, payload={}) {
+  try {
+    const company = getCompany();
+    const sheetId = company.sheetId || localStorage.getItem("galileo_sheet_id") || "";
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    const r = await fetch(scriptUrl, {
+      method: "POST",
+      headers: {"Content-Type":"text/plain"},
+      body: JSON.stringify({action, sheetId, ...payload}),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    const text = await r.text();
+    try { return JSON.parse(text); }
+    catch {
+      const clean = text.trim().toLowerCase();
+      if (["ok","sent","success","true"].includes(clean)) return {success:true, raw:text};
+      return {success:false, raw:text};
+    }
+  } catch(e) {
+    console.warn("Script action failed:", action, e);
+    return null;
+  }
+}
+
+function pushScriptResponseOk(res) {
+  if (!res) return false;
+  if (res.success === true || res.sent === true || res.ok === true) return true;
+  if (Number(res.recipients || res.recipientCount || res.sentCount || 0) > 0) return true;
+  if (res.id || res.notificationId) return true;
+  if (typeof res.raw === "string" && /ok|sent|success/i.test(res.raw)) return true;
+  return false;
+}
+
 async function sendPushViaScript(title, message, externalUserId) {
-  const payload = {title, message, externalUserId, username: externalUserId};
+  const payload = {
+    title,
+    heading: title,
+    headings: {"en": title, "he": title},
+    message,
+    body: message,
+    text: message,
+    content: message,
+    contents: {"en": message, "he": message},
+    externalUserId,
+    externalId: externalUserId,
+    external_id: externalUserId,
+    userId: externalUserId,
+    username: externalUserId,
+    recipient: externalUserId,
+    to: externalUserId,
+    targetUser: externalUserId,
+    include_aliases: {external_id: [externalUserId]},
+  };
+  const urls = [...new Set([getScriptUrl(), FIXED_SCRIPT_URL].filter(Boolean))];
 
   for (const action of PUSH_SCRIPT_ACTIONS) {
-    const res = await sheetCall(action, payload);
-    if (res?.success === true || res?.sent === true || res?.ok === true) {
-      console.log("OneSignal sent via script:", action, res);
-      return true;
-    }
+    for (const url of urls) {
+      const res = await postScriptAction(url, action, payload);
+      if (pushScriptResponseOk(res)) {
+        console.log("OneSignal sent via script:", action, res);
+        return true;
+      }
 
-    if (res?.error || res?.errors) {
-      console.warn("OneSignal script error:", action, res.error || res.errors);
+      if (res?.error || res?.errors) {
+        console.warn("OneSignal script error:", action, res.error || res.errors);
+      }
     }
   }
 
@@ -2140,13 +2204,20 @@ const report = {
                     const notifyDate = taskDate;
                     setTimeout(async () => {
                       let sentCount = 0;
+                      let missingCount = 0;
                       const clientList = notifyClients.map(c=>c.name.split(" - ")[0]).join(", ");
                       for(const opName of notifyOps) {
                         const opUser = allUsers.find(u=>normalizeName(u.name)===normalizeName(opName));
+                        if (!opUser?.username) {
+                          console.warn("OneSignal: operator user not found or missing username", opName, opUser);
+                          missingCount++;
+                          continue;
+                        }
                         const sent = await sendOneSignalToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(notifyDate)}`, opUser?.username);
                         if(sent) sentCount++;
                       }
                       if (sentCount === notifyOps.length) showToast(`✅ ההתראות נשלחו`);
+                      else if (missingCount) showToast(`⚠️ חסר שם משתמש ל-${missingCount} מפעילים`);
                       else showToast(`⚠️ ${sentCount}/${notifyOps.length} התראות נשלחו`);
                     }, 0);
                   }
