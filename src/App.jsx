@@ -1499,6 +1499,23 @@ const report = {
     setSyncing(false);
   };
 
+  const openManualReport = async () => {
+    if (isActionLoading("openManualReport")) return;
+    setAction("openManualReport", "loading");
+    haptic("medium");
+
+    try {
+      if(freeClients.length===0){
+        const res = await sheetCall("getFreeClients");
+        if(res?.clients?.length) setFreeClients(res.clients);
+      }
+      setForm(blank());
+      setScreen("form");
+    } finally {
+      setAction("openManualReport", "idle");
+    }
+  };
+
 
   const clientSupply = (name) => supplyDB[name]||null;
   const largeSlider = String(user?.username||"").toLowerCase()==="or";
@@ -1610,9 +1627,9 @@ const report = {
               <Press onClick={()=>setDismissed(true)} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
             </div>
           )}
-          <Press onClick={async()=>{ haptic("medium"); if(freeClients.length===0){const res = await sheetCall("getFreeClients"); if(res?.clients?.length) setFreeClients(res.clients);} setForm(blank()); setScreen("form"); }} style={{...card({marginBottom:16,display:"flex",alignItems:"center",gap:12,border:`2px dashed ${C.lightBlue}`,background:"#f5f9ff"}),padding:"14px 18px"}}>
+          <Press onClick={openManualReport} disabled={isActionLoading("openManualReport")} style={{...card({marginBottom:16,display:"flex",alignItems:"center",gap:12,border:`2px dashed ${C.lightBlue}`,background:isActionLoading("openManualReport")?"#e3f2fd":"#f5f9ff",opacity:isActionLoading("openManualReport")?0.75:1}),padding:"14px 18px"}}>
             <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📝</div>
-            <div><div style={{fontWeight:800,fontSize:15,color:C.blue}}>+ פתח דוח חדש</div><div style={{fontSize:12,color:C.muted}}>דוח ידני — לקוח מכל הרשימה</div></div>
+            <div><div style={{fontWeight:800,fontSize:15,color:C.blue}}>{isActionLoading("openManualReport")?"⏳ פותח דוח...":"+ פתח דוח חדש"}</div><div style={{fontSize:12,color:C.muted}}>דוח ידני — לקוח מכל הרשימה</div></div>
           </Press>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
             <div>
