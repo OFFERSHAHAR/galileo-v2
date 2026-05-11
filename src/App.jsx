@@ -106,11 +106,18 @@ async function sendOneSignalToUser(title, message, externalUserId) {
 
 function initOneSignal() {
   if (typeof window === "undefined") return Promise.resolve(false);
+  if (window.OneSignalInitialized) return Promise.resolve(true);
   if (window.OneSignalReadyPromise) return window.OneSignalReadyPromise;
 
   window.OneSignalReadyPromise = new Promise((resolve) => {
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    window.OneSignalDeferred.push(async function(OneSignal) {
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+
+    const init = async (OneSignal) => {
       try {
         if (!window.OneSignalInitialized) {
           await OneSignal.init({
@@ -121,41 +128,60 @@ function initOneSignal() {
           window.OneSignalInitialized = true;
           console.log("OneSignal ready");
         }
-        resolve(true);
+        finish(true);
       } catch (e) {
         console.warn("OneSignal init error:", e);
-        resolve(false);
+        finish(false);
       }
-    });
+    };
 
-    if (window.OneSignalLoaded) return;
-    window.OneSignalLoaded = true;
-    const script = document.createElement("script");
-    script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
-    script.defer = true;
-    script.onerror = () => resolve(false);
-    document.head.appendChild(script);
+    if (window.OneSignal?.init) {
+      init(window.OneSignal);
+      return;
+    }
+
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(init);
+
+    if (!window.OneSignalLoaded) {
+      window.OneSignalLoaded = true;
+      const script = document.createElement("script");
+      script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
+      script.defer = true;
+      script.onerror = () => finish(false);
+      document.head.appendChild(script);
+    }
+
+    setTimeout(() => finish(!!window.OneSignalInitialized), 8000);
   });
 
   return window.OneSignalReadyPromise;
 }
 
-async function loginOneSignalUser(username) {
-  if (!username) return false;
+async function runOneSignal(callback) {
   const ready = await initOneSignal();
-  if (!ready || !window.OneSignalDeferred) return false;
+  if (!ready) return false;
 
+  if (window.OneSignal?.login || window.OneSignal?.Notifications) {
+    try { return await callback(window.OneSignal); }
+    catch (e) { console.warn("OneSignal action error:", e); return false; }
+  }
+
+  if (!window.OneSignalDeferred) return false;
   return new Promise((resolve) => {
     window.OneSignalDeferred.push(async function(OneSignal) {
-      try {
-        await OneSignal.login(username);
-        console.log("OneSignal external_id:", username);
-        resolve(true);
-      } catch (e) {
-        console.warn("OneSignal login error:", e);
-        resolve(false);
-      }
+      try { resolve(await callback(OneSignal)); }
+      catch (e) { console.warn("OneSignal deferred action error:", e); resolve(false); }
     });
+  });
+}
+
+async function loginOneSignalUser(username) {
+  if (!username) return false;
+  return runOneSignal(async (OneSignal) => {
+    await OneSignal.login(username);
+    console.log("OneSignal external_id:", username);
+    return true;
   });
 }
 
@@ -981,33 +1007,34 @@ const [screen,setScreen] = useState(() => {
     if (isActionLoading("push")) return;
     setAction("push", "loading");
 
-    const ready = await initOneSignal();
-    if (!ready || !window.OneSignalDeferred) {
+    if (!window.isSecureContext && !["localhost","127.0.0.1"].includes(window.location.hostname)) {
       setAction("push", "error", 2200);
-      showToast("⚠️ לא ניתן להפעיל התראות");
+      showToast("⚠️ התראות דורשות HTTPS");
       return;
     }
 
-    window.OneSignalDeferred.push(async function(OneSignal) {
-      try {
+    const ok = await runOneSignal(async (OneSignal) => {
         if (OneSignal.Notifications?.requestPermission) {
           const permission = await OneSignal.Notifications.requestPermission();
           if (permission === false) {
-            setAction("push", "error", 2200);
-            showToast("⚠️ הרשאת התראות לא אושרה");
-            return;
+            return "denied";
           }
         }
 
         await OneSignal.login(user.username);
-        setAction("push", "success", 1800);
-        showToast("✅ התראות הופעלו למשתמש שלך");
-      } catch (e) {
-        console.warn("Push enable error:", e);
-        setAction("push", "error", 2200);
-        showToast("⚠️ שגיאה בהפעלת התראות");
-      }
+        return true;
     });
+
+    if (ok === true) {
+      setAction("push", "success", 1800);
+      showToast("✅ התראות הופעלו למשתמש שלך");
+    } else if (ok === "denied") {
+      setAction("push", "error", 2200);
+      showToast("⚠️ הרשאת התראות לא אושרה");
+    } else {
+      setAction("push", "error", 2200);
+      showToast("⚠️ לא ניתן להפעיל התראות");
+    }
   };
 
   const PushSetupCard = ({compact=false}) => (
