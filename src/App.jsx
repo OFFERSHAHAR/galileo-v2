@@ -875,6 +875,7 @@ const [screen,setScreen] = useState(() => {
 });
   const [syncing,setSyncing] = useState(false);
   const [actionStatus, setActionStatus] = useState({});
+  const [pushCardOpen, setPushCardOpen] = useState(true);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isStandalone, setIsStandalone] = useState(()=>{
     if (typeof window === "undefined") return false;
@@ -1042,6 +1043,7 @@ const [screen,setScreen] = useState(() => {
 
     if (ok === true) {
       setAction("push", "success", 1800);
+      setPushCardOpen(false);
       showToast("✅ התראות הופעלו למשתמש שלך");
     } else if (ok === "denied") {
       setAction("push", "error", 2200);
@@ -1078,6 +1080,7 @@ const [screen,setScreen] = useState(() => {
     if (ok) {
       setAction("pushReset", "success", 1800);
       setAction("push", "success", 1800);
+      setPushCardOpen(false);
       showToast("✅ ההתראות אופסו וחוברו מחדש");
     } else {
       setAction("pushReset", "error", 2500);
@@ -1087,20 +1090,29 @@ const [screen,setScreen] = useState(() => {
 
   const PushSetupCard = ({compact=false}) => (
     <div style={{...card({marginBottom: compact ? 10 : 12,background: "#e3f2fd",border: `1px solid ${C.lightBlue}`}),padding: compact ? "10px 14px" : "12px 16px"}}>
-      <Press onClick={enablePushForCurrentUser} style={{display: "flex",alignItems: "center",gap: 10}}>
+      <Press onClick={()=>setPushCardOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:10}}>
         <span style={{fontSize:18}}>🔔</span>
         <div style={{flex:1}}>
-          <div style={{fontWeight:800,fontSize:13,color:C.blue}}>הפעל התראות אישיות</div>
-          <div style={{fontSize:11,color:C.muted}}>נדרש לקבלת משימות ועדכונים לפי משתמש</div>
+          <div style={{fontWeight:800,fontSize:13,color:C.blue}}>התראות אישיות</div>
+          {pushCardOpen&&<div style={{fontSize:11,color:C.muted}}>נדרש לקבלת משימות ועדכונים לפי משתמש</div>}
         </div>
-        <span style={{fontSize:12,fontWeight:800,color:C.blue}}>
+        <span style={{fontSize:12,fontWeight:800,color:C.blue,display:"inline-flex",alignItems:"center",gap:8}}>
           {actionLabel("push",{idle:"הפעל",loading:"⏳",success:"✅",error:"נסה שוב"})}
+          <span style={{fontSize:14,display:"inline-block",transform:pushCardOpen?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▾</span>
         </span>
       </Press>
-      <Press onClick={resetPushForCurrentUser} style={{marginTop:8,display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#fff",border:`1px solid ${C.border}`,color:C.muted,fontSize:11,fontWeight:800}}>
-        <span>↻</span>
-        <span>{actionLabel("pushReset",{idle:"איפוס התראות",loading:"מאפס...",success:"אופס",error:"נסה שוב"})}</span>
-      </Press>
+      {pushCardOpen&&(
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+          <Press onClick={enablePushForCurrentUser} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,background:C.blue,color:"#fff",fontSize:12,fontWeight:800}}>
+            <span>🔔</span>
+            <span>{actionLabel("push",{idle:"הפעל",loading:"מפעיל...",success:"הופעל",error:"נסה שוב"})}</span>
+          </Press>
+          <Press onClick={resetPushForCurrentUser} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,background:"#fff",border:`1px solid ${C.border}`,color:C.muted,fontSize:12,fontWeight:800}}>
+            <span>↻</span>
+            <span>{actionLabel("pushReset",{idle:"איפוס התראות",loading:"מאפס...",success:"אופס",error:"נסה שוב"})}</span>
+          </Press>
+        </div>
+      )}
     </div>
   );
 
