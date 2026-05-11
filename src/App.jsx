@@ -1534,7 +1534,6 @@ const report = {
                   </div>
                 )}
                 {(()=>{const lr=lastReadings[t.client];if(!lr)return null;
-                  const elDaysLeft = lr.elDate ? Math.ceil((new Date(calcNext(lr.elDate,30))-new Date())/864e5) : null;
                   return (
                     <div style={{marginBottom:10}}>
                       <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
@@ -1547,14 +1546,6 @@ const report = {
                         {lr.acidLiters>0&&<span style={{fontSize:12,fontWeight:800,color:C.red}}>חומצה: {lr.acidLiters}L</span>}
                         <span style={{fontSize:10,color:C.muted,marginRight:"auto"}}>{lr.date}</span>
                       </div>
-                      {(lr.elModel||lr.elDate)&&(
-                        <div style={{background:elDaysLeft!==null&&elDaysLeft<0?"#ffebee":elDaysLeft!==null&&elDaysLeft<7?"#fff8e1":"#f3e5f5",borderRadius:10,padding:"8px 12px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                          <span style={{fontSize:12,fontWeight:700,color:"#6a1b9a"}}>⚡ אלקטרודה:</span>
-                          {lr.elModel&&<span style={{fontSize:11,color:C.text,fontWeight:700}}>{lr.elModel}</span>}
-                          {lr.elSerial&&<span style={{fontSize:11,color:C.muted}}>#{lr.elSerial}</span>}
-                          {lr.elDate&&<span style={{fontSize:11,color:elDaysLeft!==null&&elDaysLeft<0?C.red:elDaysLeft!==null&&elDaysLeft<7?C.orange:"#6a1b9a",fontWeight:700}}>{elDaysLeft!==null&&elDaysLeft<0?`⚠️ באיחור ${Math.abs(elDaysLeft)} י׳`:elDaysLeft!==null&&elDaysLeft<7?`⏰ ${elDaysLeft} ימים לבדיקה`:`✅ ${fmtDate(lr.elDate)}`}</span>}
-                        </div>
-                      )}
                     </div>
                   );
                 })()}
@@ -1706,7 +1697,7 @@ const report = {
           ))}
         </Sec>
 
-        {(()=>{
+        {user?.role==="admin"&&(()=>{
           const poolType = (clients.find(c=>c.name===client)||{}).poolType||"";
           const isSalt = !poolType || poolType==="מלח" || poolType==="גלישה" || poolType==="סקימר";
           if(!isSalt) return null;
