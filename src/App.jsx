@@ -497,7 +497,7 @@ const blank = () => ({
   reportDate:todayStr(),client:"",chlorine:1.5,ph:7.4,salt:3.5,chlora:0,hth:0,phUp:0,acidLiters:0,
   elModel:"",elSerial:"",elDate:"",waterLevel:"תקין",clarity:"תקין",fat:"תקין",flow:"תקין",
   acid:false,phUpSupply:false,saltPkg:false,saltBags:1,poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
-  notes:"",photos:[],clientLocked:false,
+  notes:"",photos:[],clientLocked:false,adminReport:false,
 });
 
 function generateLicenseKey() {
@@ -875,6 +875,11 @@ const [screen,setScreen] = useState(() => {
 });
   const [syncing,setSyncing] = useState(false);
   const [actionStatus, setActionStatus] = useState({});
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isStandalone, setIsStandalone] = useState(()=>{
+    if (typeof window === "undefined") return false;
+    return window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator?.standalone === true;
+  });
   const [form,setForm] = useState(blank());
   const [adminTab,setAdminTab] = useState("progress");
   const [taskDate,setTaskDate] = useState(todayStr());
@@ -1050,30 +1055,53 @@ const [screen,setScreen] = useState(() => {
     }
   };
 
+  const resetPushForCurrentUser = async () => {
+    if (!user?.username || isActionLoading("pushReset")) return;
+    setAction("pushReset", "loading");
+
+    const ok = await runOneSignal(async (OneSignal) => {
+      try {
+        if (typeof OneSignal.logout === "function") await OneSignal.logout();
+        if (OneSignal.User?.PushSubscription?.optOut) await OneSignal.User.PushSubscription.optOut();
+        if (OneSignal.User?.PushSubscription?.optIn) await OneSignal.User.PushSubscription.optIn();
+        if (OneSignal.Notifications?.permission !== true && OneSignal.Notifications?.requestPermission) {
+          await OneSignal.Notifications.requestPermission();
+        }
+        await OneSignal.login(user.username);
+        return true;
+      } catch (e) {
+        console.warn("Push reset error:", e);
+        return false;
+      }
+    });
+
+    if (ok) {
+      setAction("pushReset", "success", 1800);
+      setAction("push", "success", 1800);
+      showToast("✅ ההתראות אופסו וחוברו מחדש");
+    } else {
+      setAction("pushReset", "error", 2500);
+      showToast("⚠️ איפוס נכשל, בדוק הרשאת התראות בדפדפן");
+    }
+  };
+
   const PushSetupCard = ({compact=false}) => (
-    <Press
-      onClick={enablePushForCurrentUser}
-      style={{
-        ...card({
-          marginBottom: compact ? 10 : 12,
-          background: "#e3f2fd",
-          border: `1px solid ${C.lightBlue}`,
-          display: "flex",
-          alignItems: "center",
-          gap: 10
-        }),
-        padding: compact ? "10px 14px" : "12px 16px"
-      }}
-    >
-      <span style={{fontSize:18}}>🔔</span>
-      <div style={{flex:1}}>
-        <div style={{fontWeight:800,fontSize:13,color:C.blue}}>הפעל התראות אישיות</div>
-        <div style={{fontSize:11,color:C.muted}}>נדרש לקבלת משימות ועדכונים לפי משתמש</div>
-      </div>
-      <span style={{fontSize:12,fontWeight:800,color:C.blue}}>
-        {actionLabel("push",{idle:"הפעל",loading:"⏳",success:"✅",error:"נסה שוב"})}
-      </span>
-    </Press>
+    <div style={{...card({marginBottom: compact ? 10 : 12,background: "#e3f2fd",border: `1px solid ${C.lightBlue}`}),padding: compact ? "10px 14px" : "12px 16px"}}>
+      <Press onClick={enablePushForCurrentUser} style={{display: "flex",alignItems: "center",gap: 10}}>
+        <span style={{fontSize:18}}>🔔</span>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:800,fontSize:13,color:C.blue}}>הפעל התראות אישיות</div>
+          <div style={{fontSize:11,color:C.muted}}>נדרש לקבלת משימות ועדכונים לפי משתמש</div>
+        </div>
+        <span style={{fontSize:12,fontWeight:800,color:C.blue}}>
+          {actionLabel("push",{idle:"הפעל",loading:"⏳",success:"✅",error:"נסה שוב"})}
+        </span>
+      </Press>
+      <Press onClick={resetPushForCurrentUser} style={{marginTop:8,display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#fff",border:`1px solid ${C.border}`,color:C.muted,fontSize:11,fontWeight:800}}>
+        <span>↻</span>
+        <span>{actionLabel("pushReset",{idle:"איפוס התראות",loading:"מאפס...",success:"אופס",error:"נסה שוב"})}</span>
+      </Press>
+    </div>
   );
 
   useEffect(()=>{
@@ -1090,6 +1118,88 @@ const [screen,setScreen] = useState(() => {
   const handleLogout = () => { localStorage.removeItem("galileo_user"); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
 
   const showToast = (msg) => { clearTimeout(toastTimer.current); setToast({msg,visible:true}); toastTimer.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2500); };
+
+  useEffect(() => {
+    const standaloneQuery = window.matchMedia?.("(display-mode: standalone)");
+    const updateStandalone = () => setIsStandalone(standaloneQuery?.matches || window.navigator?.standalone === true);
+    const onBeforeInstall = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    const onInstalled = () => {
+      setInstallPrompt(null);
+      setIsStandalone(true);
+      showToast("✅ האפליקציה הותקנה");
+    };
+
+    updateStandalone();
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    window.addEventListener("appinstalled", onInstalled);
+    standaloneQuery?.addEventListener?.("change", updateStandalone);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+      window.removeEventListener("appinstalled", onInstalled);
+      standaloneQuery?.removeEventListener?.("change", updateStandalone);
+    };
+  }, []);
+
+  const installApp = async () => {
+    if (isStandalone) {
+      showToast("✅ האפליקציה כבר מותקנת");
+      return;
+    }
+
+    if (isActionLoading("install")) return;
+    setAction("install", "loading");
+
+    if (installPrompt) {
+      installPrompt.prompt();
+      const choice = await installPrompt.userChoice.catch(() => null);
+      setInstallPrompt(null);
+      if (choice?.outcome === "accepted") {
+        setAction("install", "success", 1800);
+        showToast("✅ התקנת האפליקציה התחילה");
+      } else {
+        setAction("install", "error", 2200);
+        showToast("⚠️ ההתקנה בוטלה");
+      }
+      return;
+    }
+
+    setAction("install", "manual", 3500);
+    showToast("ב-Chrome לחץ ⋮ ואז התקנת האפליקציה / הוספה למסך הבית");
+  };
+
+  const InstallAppCard = ({compact=false}) => {
+    if (isStandalone) return null;
+    return (
+      <Press
+        onClick={installApp}
+        style={{
+          ...card({
+            marginTop: compact ? 0 : 12,
+            marginBottom: compact ? 10 : 0,
+            background: "#e8f5e9",
+            border: "1px solid #a5d6a7",
+            display: "flex",
+            alignItems: "center",
+            gap: 10
+          }),
+          padding: compact ? "10px 14px" : "12px 16px"
+        }}
+      >
+        <span style={{fontSize:18}}>⬇️</span>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:800,fontSize:13,color:C.green}}>התקן אפליקציה</div>
+          <div style={{fontSize:11,color:C.muted}}>פתח בלי דפדפן וקבל חוויה יציבה יותר</div>
+        </div>
+        <span style={{fontSize:12,fontWeight:800,color:C.green}}>
+          {actionLabel("install",{idle:"התקן",loading:"⏳",success:"✅",manual:"⋮",error:"נסה שוב"})}
+        </span>
+      </Press>
+    );
+  };
 
   useEffect(() => {
     initOneSignal().then(() => {
@@ -1400,7 +1510,7 @@ const report = {
 
   if(screen==="login") return (
     <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#1565c0;box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}#onesignal-bell-container{display:block!important}`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#1565c0;box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}#onesignal-bell-container{display:none!important}`}</style>
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
       <div style={{width:"100%",maxWidth:360}}>
         <div style={{textAlign:"center",marginBottom:36}} onPointerDown={()=>{ logoLongPress.current = setTimeout(()=>{ haptic("success"); setShowSetup(true); }, 3000); }} onPointerUp={()=>clearTimeout(logoLongPress.current)} onPointerLeave={()=>clearTimeout(logoLongPress.current)}>
@@ -1423,8 +1533,10 @@ const report = {
             {actionLabel("login",{idle:"כניסה →",loading:"⏳ מתחבר...",success:"✅ התחברת",error:"⚠️ נסה שוב"})}
           </Press>
         </div>
+        <InstallAppCard/>
         <p style={{textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.35)",marginTop:16,marginBottom:0,letterSpacing:"0.05em"}}>POOLMANG.BY.OR2026 {APP_VERSION}</p>
       </div>
+      <Toast msg={toast.msg} visible={toast.visible}/>
     </div>
   );
 
@@ -1464,6 +1576,7 @@ const report = {
           </div>
         </div>
         <div style={{margin:"-20px 16px 0",position:"relative",zIndex:10}}>
+          <InstallAppCard compact/>
           <PushSetupCard/>
           <div style={{...card({marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}),padding:"14px 18px"}}>
             <div>
@@ -1710,7 +1823,7 @@ const report = {
           ))}
         </Sec>
 
-        {user?.role==="admin"&&(()=>{
+        {form.adminReport&&(()=>{
           const poolType = (clients.find(c=>c.name===client)||{}).poolType||"";
           const isSalt = !poolType || poolType==="מלח" || poolType==="גלישה" || poolType==="סקימר";
           if(!isSalt) return null;
@@ -1850,7 +1963,7 @@ const report = {
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <Press onClick={()=>{setAdminTab("daily");window.scrollTo(0,0);haptic();}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📋</Press>
-              <Press onClick={()=>{setForm({...blank()});setScreen("form");haptic("medium");}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📝 דוח</Press>
+              <Press onClick={()=>{setForm({...blank(),adminReport:true});setScreen("form");haptic("medium");}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📝 דוח</Press>
               <Press onClick={handleLogout} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>יציאה</Press>
             </div>
           </div>
@@ -1861,6 +1974,7 @@ const report = {
           ))}
         </div>
         <div style={{padding:"20px 16px 0"}}>
+          <InstallAppCard compact/>
           <PushSetupCard compact/>
           {adminTab==="adminreport"&&(
             <div>
@@ -1884,7 +1998,7 @@ const report = {
                   </div>
                 )}
               </div>
-              <Press onClick={()=>{ if(!form.client){showToast("⚠️ בחר לקוח");return;} sf("clientLocked",true); setScreen("form"); haptic("medium"); }} disabled={!form.client} style={{padding:"14px",borderRadius:14,background:form.client?`linear-gradient(135deg,${C.blue},${C.lightBlue})`:"#90caf9",color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:form.client?"0 4px 14px rgba(21,101,192,0.3)":"none",marginBottom:8}}>📝 פתח דוח לאדמין</Press>
+              <Press onClick={()=>{ if(!form.client){showToast("⚠️ בחר לקוח");return;} setForm(f=>({...f,clientLocked:true,adminReport:true})); setScreen("form"); haptic("medium"); }} disabled={!form.client} style={{padding:"14px",borderRadius:14,background:form.client?`linear-gradient(135deg,${C.blue},${C.lightBlue})`:"#90caf9",color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:form.client?"0 4px 14px rgba(21,101,192,0.3)":"none",marginBottom:8}}>📝 פתח דוח לאדמין</Press>
             </div>
           )}
           {adminTab==="daily"&&(
