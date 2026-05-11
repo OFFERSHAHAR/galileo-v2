@@ -131,7 +131,13 @@ function initOneSignal() {
         finish(true);
       } catch (e) {
         console.warn("OneSignal init error:", e);
-        finish(false);
+        const msg = String(e?.message || e || "").toLowerCase();
+        if (msg.includes("already") || msg.includes("initialized")) {
+          window.OneSignalInitialized = true;
+          finish(true);
+        } else {
+          finish(false);
+        }
       }
     };
 
@@ -1014,9 +1020,13 @@ const [screen,setScreen] = useState(() => {
     }
 
     const ok = await runOneSignal(async (OneSignal) => {
-        if (OneSignal.Notifications?.requestPermission) {
-          const permission = await OneSignal.Notifications.requestPermission();
-          if (permission === false) {
+        if (OneSignal.Notifications?.isPushSupported && !OneSignal.Notifications.isPushSupported()) {
+          return "unsupported";
+        }
+
+        if (OneSignal.Notifications?.permission !== true && OneSignal.Notifications?.requestPermission) {
+          await OneSignal.Notifications.requestPermission();
+          if (OneSignal.Notifications.permission !== true) {
             return "denied";
           }
         }
@@ -1031,6 +1041,9 @@ const [screen,setScreen] = useState(() => {
     } else if (ok === "denied") {
       setAction("push", "error", 2200);
       showToast("⚠️ הרשאת התראות לא אושרה");
+    } else if (ok === "unsupported") {
+      setAction("push", "error", 2200);
+      showToast("⚠️ הדפדפן לא תומך בהתראות");
     } else {
       setAction("push", "error", 2200);
       showToast("⚠️ לא ניתן להפעיל התראות");
