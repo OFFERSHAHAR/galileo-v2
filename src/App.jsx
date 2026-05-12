@@ -1564,7 +1564,7 @@ const report = {
 
       saved = res?.success === true;
 
-      if (saved && user?.role !== "admin") {
+      if (saved && !res?.duplicate && user?.role !== "admin") {
         await sendNotificationToAdmins(
           `✅ דוח בוצע: ${client}`,
           `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
