@@ -1073,17 +1073,19 @@ const [screen,setScreen] = useState(() => {
   });
 
   const sendNotificationToAdmins = async (title, message) => {
-    const adminUsers = allUsers.filter(u => u.role === "admin" && u.username);
-    if (!adminUsers.length) {
-      console.warn("OneSignal: no admin users found for report notification");
-      return 0;
-    }
-
     let sentCount = 0;
+    const adminUsers = allUsers.filter(u => (u.role === "admin" || u.role === "מנהל") && u.username);
     for (const admin of adminUsers) {
       const sent = await sendOneSignalToUser(title, message, admin.username);
       if (sent) sentCount++;
     }
+
+    if (sentCount === 0 && sheetId) {
+      const res = await sheetCall("sendOneSignalToAdmins", {title, message});
+      sentCount = Number(res?.sent || 0);
+      if (!sentCount) console.warn("OneSignal: admin notification not sent", res);
+    }
+
     return sentCount;
   };
 
@@ -1468,15 +1470,29 @@ const [screen,setScreen] = useState(() => {
   };
 
   const ackChange = async (taskId,logIdx) => {
+    const originalTask = tasks.find(t=>t.id===taskId);
+    const originalLog = originalTask?.changeLog?.[logIdx];
     const newTasks=tasks.map(t=>{ if(t.id!==taskId)return t; const newLog=t.changeLog.map((e,i)=>{ if(i!==logIdx)return e; const ackedBy=[...(e.ackedBy||[])]; if(!ackedBy.includes(user?.name))ackedBy.push(user?.name); return{...e,ackedBy}; }); return{...t,changeLog:newLog}; });
-    setTasks(newTasks); if(sheetId) await sheetCall("saveTasks",{tasks:newTasks}); showToast("✓ קיבלת אישור נשלח");
+    setTasks(newTasks); if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
+    await sendNotificationToAdmins(
+      "✅ מפעיל אישר משימה",
+      `${user?.name || "מפעיל"} אישר: ${originalTask?.client?.split(" - ")[0] || "משימה"}${originalLog?.note ? ` — ${originalLog.note}` : ""}`
+    );
+    showToast("✓ קיבלת אישור נשלח");
   };
 
   const removeOp=async(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t)return;await updateTask(id,{operators:t.operators.filter(o=>o!==n)},`הוסר ${n} מהמשימה`,true);await sendNotificationToOperators([n], "📋 הוסרת ממשימה", `${t.client?.split(" - ")[0] || ""} — ${fmtDate(t.date)}`);};
   const addOp=(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t||t.operators.includes(n))return;updateTask(id,{operators:[...t.operators,n]},`נוסף ${n} למשימה`,true);};
   const markDone=(id)=>updateTask(id,{status:"done"},"דוח הוגש — בוצעה",false);
 
-  const handleStartWork = () => { const now=new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"}); localStorage.setItem("galileo_workstart",now); setWorkStart(now); haptic("medium"); showToast("▶ יום עבודה התחיל!"); };
+  const handleStartWork = () => {
+    const now=new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
+    localStorage.setItem("galileo_workstart",now);
+    setWorkStart(now);
+    haptic("medium");
+    showToast("▶ יום עבודה התחיל!");
+    if(sheetId) sheetCall("saveWorkStart",{log:{username:user?.username||"",operator:user?.name,date:todayStr(),start:now}});
+  };
   const handleEndWork = () => {
     if(!workStart)return;
     const end=new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
@@ -1484,7 +1500,11 @@ const [screen,setScreen] = useState(() => {
     const tot=(eh*60+em)-(sh*60+sm); const totalStr=`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;
     const log={id:Date.now(),operator:user?.name,date:todayStr(),start:workStart,end,total:totalStr};
     const newLogs=[...workLogs,log]; setWorkLogs(newLogs); localStorage.setItem("galileo_worklogs",JSON.stringify(newLogs)); localStorage.removeItem("galileo_workstart");
-    setWorkStart(null); haptic("success"); showToast(`⏹ ${totalStr} שעות עבודה נשמרו`); if(sheetId) sheetCall("saveWorkLog",{log});
+    setWorkStart(null); haptic("success"); showToast(`⏹ ${totalStr} שעות עבודה נשמרו`);
+    if(sheetId) {
+      sheetCall("clearWorkStart",{username:user?.username||"",operator:user?.name,date:todayStr()});
+      sheetCall("saveWorkLog",{log});
+    }
   };
 
   const buildWA = (r) => {
