@@ -1017,6 +1017,7 @@ const [screen,setScreen] = useState(() => {
   const [reportFilter,setReportFilter] = useState("");
   const [reportDateFilter,setReportDateFilter] = useState("");
   const [sheetReports,setSheetReports] = useState([]);
+  const [treatmentCounts,setTreatmentCounts] = useState([]);
   const logoLongPress = useRef();
   const fileRef = useRef();
   const toastTimer = useRef();
@@ -1090,6 +1091,12 @@ const [screen,setScreen] = useState(() => {
     }
 
     return sentCount;
+  };
+
+  const loadTreatmentCounts = async () => {
+    const res = await sheetCall("getTreatmentCounts");
+    if (Array.isArray(res?.treatments)) setTreatmentCounts(res.treatments);
+    return res?.treatments || [];
   };
 
   const sendNotificationToOperators = async (operatorNames, title, message) => {
@@ -1513,7 +1520,8 @@ const [screen,setScreen] = useState(() => {
   const buildWA = (r) => {
     const name=r.client?.split(" - ")[0]||"לקוח יקר"; const company = getCompany().name || "POOLMANG";
     const statusLine=r.poolStatus==="אחר"?`⚠️ *נדרשת תשומת לב:*\n${r.customStatusText}${r.restrictedUntil?`\nהבריכה לא זמינה עד ${fmtDate(r.restrictedUntil)}`:""}` :"✅ הבריכה מאוזנת ומוכנה לשימוש מלא";
-    return `*טיפול בריכה הושלם!*\n\nשלום ${name},\n\n${user?.name} סיים את הטיפול בבריכה שלכם היום.\n\n${statusLine}${r.notes?`\n\n📝 ${r.notes}`:""}\n\nתמיד כאן בשבילכם,\n_צוות ${company}_`;
+    const waterLevelNotice = r.waterLevel==="לא תקין" ? `\n\n⚠️ לתשומת לבך חסר מים בבריכה נא למלא מים` : "";
+    return `*טיפול בריכה הושלם!*\n\nשלום ${name},\n\n${user?.name} סיים את הטיפול בבריכה שלכם היום.\n\n${statusLine}${waterLevelNotice}${r.notes?`\n\n📝 ${r.notes}`:""}\n\nתמיד כאן בשבילכם,\n_צוות ${company}_`;
   };
 
   const handleSubmit = async () => {
@@ -1846,6 +1854,11 @@ const report = {
                           {lr.customStatusText}
                         </div>
                       )}
+                      {lr.missedTreatment&&(
+                        <div style={{background:"#fff8e1",borderRadius:10,padding:"8px 12px",marginBottom:6,border:"1px solid #ffe082",fontSize:12,color:C.orange,fontWeight:800}}>
+                          ⚠️ לא בוצע טיפול בתאריך {fmtDate(String(lr.date||"").slice(0,10))}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
@@ -2145,8 +2158,8 @@ const report = {
           </div>
         </div>
         <div style={{background:C.white,padding:"8px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",gap:6,overflowX:"auto",position:"sticky",top:0,zIndex:50,boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
-          {[["daily","📋 חלוקת עבודה"],["adminreport","📝 דוח ידני"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["qr","📷 QR"],["clients","👥 לקוחות"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"],["users","👤 משתמשים"]].map(([t,lbl])=>(
-            <Press key={t} onClick={()=>{setAdminTab(t);haptic();}} style={{padding:"9px 14px",borderRadius:99,border:"none",fontSize:12,fontWeight:800,flexShrink:0,background:adminTab===t?`linear-gradient(135deg,${C.blue},${C.lightBlue})`:"#f0f4f8",color:adminTab===t?"#fff":C.muted,boxShadow:adminTab===t?"0 4px 12px rgba(21,101,192,0.3)":"none",transition:"all 0.2s"}}>{lbl}</Press>
+          {[["daily","📋 חלוקת עבודה"],["adminreport","📝 דוח ידני"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["qr","📷 QR"],["clients","👥 לקוחות"],["treatments","🔢 מספר טיפולים"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"],["users","👤 משתמשים"]].map(([t,lbl])=>(
+            <Press key={t} onClick={()=>{setAdminTab(t);if(t==="treatments") void loadTreatmentCounts();haptic();}} style={{padding:"9px 14px",borderRadius:99,border:"none",fontSize:12,fontWeight:800,flexShrink:0,background:adminTab===t?`linear-gradient(135deg,${C.blue},${C.lightBlue})`:"#f0f4f8",color:adminTab===t?"#fff":C.muted,boxShadow:adminTab===t?"0 4px 12px rgba(21,101,192,0.3)":"none",transition:"all 0.2s"}}>{lbl}</Press>
           ))}
         </div>
         <div style={{padding:"20px 16px 0"}}>
@@ -2349,6 +2362,32 @@ const report = {
                   <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>{["מלח","כלור","גלישה","סקימר"].map(pt=>(<Press key={pt} onClick={async()=>{ const updated=clients.map(x=>x.name===c.name?{...x,poolType:pt}:x); setClients(updated); await sheetCall("saveClientPoolType",{clientName:c.name,poolType:pt}); showToast(`✅ ${c.name.split(" - ")[0]} — ${pt}`); haptic(); }} style={{padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:800,background:(c.poolType||"מלח")===pt?C.blue:"#f0f4f8",color:(c.poolType||"מלח")===pt?"#fff":C.muted}}>{pt}</Press>))}</div>
                 </div>
               ))}
+            </div>
+          )}
+          {adminTab==="treatments"&&(
+            <div>
+              <Press onClick={async()=>{ const rows=await loadTreatmentCounts(); showToast(rows.length?`✅ ${rows.length} לקוחות עודכנו`:"⚠️ אין נתונים"); }}
+                style={{...card({marginBottom:14,background:"#e3f2fd",display:"flex",alignItems:"center",gap:10}),padding:"12px 16px"}}>
+                <span style={{fontSize:16}}>🔄</span>
+                <span style={{fontWeight:700,fontSize:13,color:C.blue}}>רענן מספר טיפולים</span>
+              </Press>
+              {treatmentCounts.length===0&&<div style={{...card({textAlign:"center"}),padding:28,color:C.muted}}>לחץ רענן כדי לטעון את מספר הטיפולים</div>}
+              {treatmentCounts.map((row,i)=>{
+                const doneCount = Number(row.monthlyTreatmentCount || 0);
+                const balance = Number(row.monthlyTreatmentBalance ?? Math.max(0,4-doneCount));
+                return (
+                  <div key={`${row.client}-${i}`} style={{...card({marginBottom:10})}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:10}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontWeight:900,fontSize:15,color:C.text}}>{String(row.client||"").split(" - ")[0]}</div>
+                        <div style={{fontSize:12,color:C.muted,marginTop:3}}>{doneCount} טיפולים בפועל מתוך 4 החודש</div>
+                      </div>
+                      <Badge label={`נותרו ${balance}`} col={balance===0?C.green:C.blue}/>
+                    </div>
+                    <PBar done={Math.min(doneCount,4)} total={4}/>
+                  </div>
+                );
+              })}
             </div>
           )}
           {adminTab==="reports"&&(
