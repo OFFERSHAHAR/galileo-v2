@@ -1620,10 +1620,10 @@ const report = {
       saved = res?.success === true;
 
       if (saved && !res?.duplicate && user?.role !== "admin") {
-        await sendNotificationToAdmins(
+        void sendNotificationToAdmins(
           `✅ דוח בוצע: ${client}`,
           `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
-        );
+        ).catch(e => console.warn("Admin report notification failed", e));
       }
     }
 
