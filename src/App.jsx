@@ -593,7 +593,7 @@ function LicenseScreen({ onDone, onSuperAdmin }) {
 const blank = () => ({
   reportDate:todayStr(),client:"",chlorine:1.5,ph:7.4,salt:3.5,chlora:0,hth:0,phUp:0,acidLiters:0,
   elModel:"",elSerial:"",elDate:"",waterLevel:"תקין",clarity:"תקין",fat:"תקין",flow:"תקין",
-  acid:false,phUpSupply:false,saltPkg:false,saltBags:1,supplyNote:"",poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
+  acid:false,phUpSupply:false,saltPkg:false,saltBags:1,supplyStatus:"",supplyNote:"",poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
   notes:"",photos:[],clientLocked:false,adminReport:false,
 });
 
@@ -1034,7 +1034,7 @@ const [screen,setScreen] = useState(() => {
   const actionLabel = (key, labels) => labels[actionStatus[key] || "idle"] || labels.idle;
 
   const sf = (k,v) => setForm(f=>({...f,[k]:v}));
-  const {reportDate,client,chlorine,ph,salt,elModel,elSerial,elDate,waterLevel,clarity,fat,flow,acid,phUpSupply,saltPkg,saltBags,supplyNote,poolStatus,customStatusText,restrictedUntil,notes,photos} = form;
+  const {reportDate,client,chlorine,ph,salt,elModel,elSerial,elDate,waterLevel,clarity,fat,flow,acid,phUpSupply,saltPkg,saltBags,supplyStatus,supplyNote,poolStatus,customStatusText,restrictedUntil,notes,photos} = form;
   const clientPhone = (n) => (clients.find(c=>c.name===n)||{}).phone||"";
   const clientAddress = (n) => (clients.find(c=>c.name===n)||{}).address||"";
   const clientGateCode = (n) => (clients.find(c=>c.name===n)||{}).gateCode||"";
@@ -1530,7 +1530,7 @@ const [screen,setScreen] = useState(() => {
     setSyncing(true);
     const elNext=calcNext(elDate);
     const supplyLabel=[acid&&"חומצת מלח",phUpSupply&&"מעלה pH",saltPkg&&`מלח ×${saltBags}`].filter(Boolean).join(", ");
-    if(client&&(acid||phUpSupply||saltPkg||String(supplyNote||"").trim())){ const newDB={...supplyDB,[client]:{acid,phUpSupply,saltPkg,saltBags,supplyNote:String(supplyNote||"").trim(),updatedAt:fmtDate(reportDate)}}; setSupplyDB(newDB); if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||""]);await sheetCall("saveSupplyDB",{rows});} }
+    if(client&&(acid||phUpSupply||saltPkg||supplyStatus)){ const supplyText=supplyStatus==="לא סופק"?`לא סופק${String(supplyNote||"").trim()?`: ${String(supplyNote||"").trim()}`:""}`:supplyStatus; const newDB={...supplyDB,[client]:{acid,phUpSupply,saltPkg,saltBags,supplyNote:supplyText,updatedAt:fmtDate(reportDate)}}; setSupplyDB(newDB); if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||""]);await sheetCall("saveSupplyDB",{rows});} }
     const match=tasks.find(t=>t.date===reportDate&&t.client===client&&t.operators.includes(user?.name)&&t.status!=="done"); if(match)markDone(match.id);
     let photosBase64 = [];
     if(photos.length>0){ photosBase64 = await Promise.all(photos.map(url=> fetch(url).then(r=>r.blob()).then(blob=>new Promise(res=>{ const reader=new FileReader(); reader.onload=e=>res(e.target.result.split(",")[1]); reader.readAsDataURL(blob); })) )); }
@@ -2077,10 +2077,23 @@ const report = {
               </div>
             )}
             <div style={{paddingTop:12}}>
-              <label style={{fontSize:13,fontWeight:700,color:C.text,display:"block",marginBottom:8}}>הערת חומרים שסופקו / חסרו</label>
-              <textarea value={supplyNote} onChange={e=>sf("supplyNote",e.target.value)} rows={2}
-                placeholder="לדוגמה: נאסף ציוד, חסרה חומצה במחסן..."
-                style={{...inp,resize:"none",minHeight:68}}/>
+              <label style={{fontSize:13,fontWeight:700,color:C.text,display:"block",marginBottom:8}}>סטטוס אספקת חומרים</label>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:supplyStatus==="לא סופק"?10:0}}>
+                {["סופק","לא סופק"].map(status=>(
+                  <Press key={status} onClick={()=>{sf("supplyStatus",status); if(status==="סופק") sf("supplyNote",""); haptic();}}
+                    style={{padding:"11px",borderRadius:12,textAlign:"center",fontWeight:800,fontSize:13,
+                      background:supplyStatus===status?(status==="סופק"?"#e8f5e9":"#fff8e1"):"#f0f4f8",
+                      color:supplyStatus===status?(status==="סופק"?C.green:C.orange):C.muted,
+                      border:`2px solid ${supplyStatus===status?(status==="סופק"?"#c8e6c9":"#ffe082"):"transparent"}`}}>
+                    {status==="סופק"?"✓ סופק":"⚠️ לא סופק"}
+                  </Press>
+                ))}
+              </div>
+              {supplyStatus==="לא סופק"&&(
+                <textarea value={supplyNote} onChange={e=>sf("supplyNote",e.target.value)} rows={2}
+                  placeholder="לדוגמה: חסרה חומצה במחסן..."
+                  style={{...inp,resize:"none",minHeight:68}}/>
+              )}
             </div>
           </div>
         </Sec>
