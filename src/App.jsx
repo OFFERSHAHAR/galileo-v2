@@ -990,6 +990,7 @@ const [screen,setScreen] = useState(() => {
   const [dailyDate,setDailyDate] = useState(todayStr());
   const [showConv,setShowConv] = useState(false);
   const [navTab,setNavTab] = useState(0);
+  const [openDoneTasks,setOpenDoneTasks] = useState({});
   const [toast,setToast] = useState({msg:"",visible:false});
   const [workStart,setWorkStart] = useState(()=>localStorage.getItem("galileo_workstart")||null);
   const [workLogs,setWorkLogs] = useState(()=>{ try{return JSON.parse(localStorage.getItem("galileo_worklogs")||"[]");}catch{return [];} });
@@ -1752,10 +1753,27 @@ const report = {
           {dayTasks.length===0&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>אין לקוחות לתאריך זה</div></div>}
           {dayTasks.map((t,i)=>{
             const isDone = todayReported.includes(t.client);
+            const doneKey = `${dailyDate}:${t.id || t.client}`;
+            const isDoneOpen = !!openDoneTasks[doneKey];
             const supply = clientSupply(t.client);
             const lastLog = t.changeLog?.[t.changeLog.length-1];
             const needsAck = lastLog?.needsAck && !(lastLog?.ackedBy||[]).includes(user?.name);
             const logIdx = t.changeLog?t.changeLog.length-1:-1;
+            if(isDone && !isDoneOpen) {
+              return (
+                <div key={t.id} style={{...card({marginBottom:8,opacity:0.82,border:"2px solid #c8e6c9",padding:"10px 12px",display:"flex",alignItems:"center",gap:10})}}>
+                  <div style={{width:30,height:30,borderRadius:"50%",background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",color:C.green,fontWeight:900,flexShrink:0}}>✓</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:900,fontSize:14,color:C.text,textDecoration:"line-through",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.client.split(" - ")[0]}</div>
+                    {clientAddress(t.client)&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{clientAddress(t.client)}</div>}
+                  </div>
+                  <Badge label="בוצע" col={C.green}/>
+                  <Press onClick={()=>{setOpenDoneTasks(x=>({...x,[doneKey]:true}));haptic();}} style={{width:34,height:34,borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    ▾
+                  </Press>
+                </div>
+              );
+            }
             const poolType = (clients.find(c=>c.name===t.client)||{}).poolType||"מלח";
             const poolIcon = poolType==="כלור"?"🧪":poolType==="גלישה"?"🌊":poolType==="סקימר"?"🔵":"🧂";
             return (
@@ -1775,6 +1793,7 @@ const report = {
                   </div>
                   <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
                     <Badge label={isDone?"✓ בוצע":"⏳ ממתין"} col={isDone?C.green:C.orange}/>
+                    {isDone&&<Press onClick={()=>{setOpenDoneTasks(x=>({...x,[doneKey]:false}));haptic();}} style={{padding:"6px 10px",borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:12}}>סגור</Press>}
                     {!isDone&&<Press onClick={()=>{setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 דוח</Press>}
                   </div>
                 </div>
