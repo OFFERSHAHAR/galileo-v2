@@ -376,14 +376,18 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
   const sliderRef = useRef();
   const trackRef = useRef();
   const dragRef = useRef({active:false,sliding:false,startX:0,startY:0,pointerId:null});
+  const [manualMode,setManualMode] = useState(false);
   const snap = (n) => Math.round(n / step) * step;
   const clamp = (n) => Math.min(max, Math.max(min, n));
+  const normalize = (n) => Number(clamp(snap(Number(n)||0)).toFixed(3));
+  const fineStep = step || 0.1;
+  const coarseStep = Math.max(fineStep * 10, 1);
+  const updateBy = (delta) => onChange(normalize(Number(value||0) + delta));
   const setValueFromPointer = (clientX) => {
     const rect = trackRef.current?.getBoundingClientRect();
     if (!rect?.width) return;
     const raw = min + ((clientX - rect.left) / rect.width) * (max - min);
-    const next = clamp(snap(raw));
-    onChange(Number(next.toFixed(3)));
+    onChange(normalize(raw));
   };
   const startSlide = (e) => {
     dragRef.current = {active:true,sliding:e.pointerType==="mouse",startX:e.clientX,startY:e.clientY,pointerId:e.pointerId};
@@ -422,6 +426,29 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
           <span style={{color:showStatus?col:C.blue,fontSize:large?28:22,fontWeight:900,minWidth:large?70:50,textAlign:"right"}}>{value}{unit}</span>
         </div>
       </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+        {[[false,"\u05e1\u05dc\u05d9\u05d9\u05d3\u05e8"],[true,"\u05d4\u05e7\u05dc\u05d3\u05d4"]].map(([mode,labelText])=>(
+          <Press key={String(mode)} onClick={()=>setManualMode(mode)}
+            style={{padding:"8px 10px",borderRadius:10,textAlign:"center",fontSize:12,fontWeight:800,background:manualMode===mode?C.blue:"#f0f4f8",color:manualMode===mode?"#fff":C.muted}}>
+            {labelText}
+          </Press>
+        ))}
+      </div>
+      <div dir="ltr" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:manualMode?10:8}}>
+        {[[-coarseStep,`-${coarseStep}`],[-fineStep,`-${fineStep}`],[fineStep,`+${fineStep}`],[coarseStep,`+${coarseStep}`]].map(([delta,labelText])=>(
+          <Press key={labelText} onClick={()=>updateBy(delta)}
+            style={{padding:"8px 0",borderRadius:10,background:"#f5f9ff",border:`1px solid ${C.border}`,color:C.blue,fontSize:12,fontWeight:900,textAlign:"center"}}>
+            {labelText}
+          </Press>
+        ))}
+      </div>
+      {manualMode&&(
+        <input type="number" inputMode="decimal" min={min} max={max} step={step} value={value}
+          onChange={e=>onChange(normalize(e.target.value))}
+          onBlur={e=>onChange(normalize(e.target.value))}
+          style={{...inp,marginBottom:10,textAlign:"center",fontSize:large?24:18,fontWeight:900,color:C.blue}}
+        />
+      )}
       <div ref={trackRef} dir="ltr" onPointerDown={startSlide} onPointerMove={moveSlide} onPointerUp={endSlide} onPointerCancel={endSlide} onPointerLeave={endSlide} style={{position:"relative",height:trackH,borderRadius:99,background:C.border,marginBottom:6,touchAction:"pan-y"}}>
         <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${pct}%`,borderRadius:99,background:`linear-gradient(90deg,${C.blue},${col})`,transition:"width 0.15s"}}/>
         {optimal&&<div style={{position:"absolute",top:-4,left:`${((optimal-min)/(max-min))*100}%`,width:large?3:2,height:large?36:16,background:C.blue,borderRadius:2,transform:"translateX(-50%)"}}/>}
@@ -1018,6 +1045,7 @@ const [screen,setScreen] = useState(() => {
   const [reportDateFilter,setReportDateFilter] = useState("");
   const [sheetReports,setSheetReports] = useState([]);
   const [treatmentCounts,setTreatmentCounts] = useState([]);
+  const [chemicalRestrictionPrompt,setChemicalRestrictionPrompt] = useState(null);
   const logoLongPress = useRef();
   const fileRef = useRef();
   const toastTimer = useRef();
@@ -1035,6 +1063,22 @@ const [screen,setScreen] = useState(() => {
 
   const sf = (k,v) => setForm(f=>({...f,[k]:v}));
   const {reportDate,client,chlorine,ph,salt,elModel,elSerial,elDate,waterLevel,clarity,fat,flow,acid,phUpSupply,saltPkg,saltBags,supplyStatus,supplyNote,poolStatus,customStatusText,restrictedUntil,notes,photos} = form;
+  const fmtTime = (d) => d.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
+  const formatDateInput = (d) => d.toISOString().slice(0,10);
+  const applyChemicalRestriction = (minutes) => {
+    const start = new Date();
+    const end = new Date(start.getTime() + minutes * 60000);
+    const text = `\u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc \u05db\u05d9\u05de\u05d9. \u05d0\u05d9\u05df \u05dc\u05d4\u05e9\u05ea\u05de\u05e9 \u05d1\u05d1\u05e8\u05d9\u05db\u05d4 \u05de\u05d4\u05e9\u05e2\u05d4 ${fmtTime(start)} \u05e2\u05d3 ${fmtTime(end)}.`;
+    setForm(f=>({...f,poolStatus:"\u05d0\u05d7\u05e8",customStatusText:text,restrictedUntil:formatDateInput(end),_chemicalRestrictionApplied:true}));
+    setChemicalRestrictionPrompt(null);
+    haptic("success");
+  };
+  const updateMeasurement = (key, value) => {
+    sf(key,value);
+    if ((key==="hth" || key==="phUp") && Number(value)>0 && !form._chemicalRestrictionApplied && !chemicalRestrictionPrompt) {
+      setChemicalRestrictionPrompt({key});
+    }
+  };
   const clientPhone = (n) => (clients.find(c=>c.name===n)||{}).phone||"";
   const clientAddress = (n) => (clients.find(c=>c.name===n)||{}).address||"";
   const clientGateCode = (n) => (clients.find(c=>c.name===n)||{}).gateCode||"";
@@ -1654,8 +1698,8 @@ const report = {
     {key:"ph",label:"pH",min:5,max:9,step:0.1,unit:"",warnAbove:8,warnBelow:6,optimal:7.4,val:ph,fn:v=>sf("ph",v)},
     {key:"salt",label:"מלח",min:0,max:6,step:0.1,unit:" g/L",optimal:3.5,val:salt,fn:v=>sf("salt",v)},
     {key:"chlora",label:"טבליות כלור (TAB)",min:0,max:5,step:0.25,unit:"",val:form.chlora??0,fn:v=>sf("chlora",v)},
-    {key:"hth",label:"HTH",min:0,max:5,step:0.5,unit:" cups",val:form.hth??0,fn:v=>sf("hth",v)},
-    {key:"phUp",label:"מעלה חומציות pH",min:0,max:5,step:0.5,unit:" כוסות",val:form.phUp??0,fn:v=>sf("phUp",v)},
+    {key:"hth",label:"HTH",min:0,max:5,step:0.5,unit:" cups",val:form.hth??0,fn:v=>updateMeasurement("hth",v)},
+    {key:"phUp",label:"מעלה חומציות pH",min:0,max:5,step:0.5,unit:" כוסות",val:form.phUp??0,fn:v=>updateMeasurement("phUp",v)},
     {key:"acidLiters",label:"חומצת מלח",min:0,max:5,step:0.5,unit:" L",val:form.acidLiters??0,fn:v=>sf("acidLiters",v)},
   ];
 
@@ -2119,6 +2163,24 @@ const report = {
         <Press onClick={handleSubmit} disabled={!client||syncing||isActionLoading("submitReport")} style={{padding:"18px",borderRadius:16,background:actionStatus.submitReport==="success"?C.green:actionStatus.submitReport==="local"?C.orange:syncing||!client?"#90caf9":`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 8px 24px rgba(21,101,192,0.4)",marginBottom:8}}>{actionLabel("submitReport",{idle:"שלח דוח ⚡",loading:"⏳ שולח דוח...",success:"✅ נשלח",local:"⚠️ נשמר מקומית",error:"⚠️ שגיאה"})}</Press>
         <Press onClick={()=>setScreen("daily")} style={{padding:"14px",borderRadius:14,border:`2px solid ${C.border}`,background:C.white,color:C.muted,fontWeight:700,fontSize:14,textAlign:"center"}}>← ביטול</Press>
       </div>
+      {chemicalRestrictionPrompt&&(
+        <BottomSheet title={"\u05d4\u05d2\u05d1\u05dc\u05ea \u05e9\u05d9\u05de\u05d5\u05e9"} onClose={()=>setChemicalRestrictionPrompt(null)}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {[
+              [30,"\u05d7\u05e6\u05d9 \u05e9\u05e2\u05d4"],
+              [60,"\u05e9\u05e2\u05d4"],
+              [120,"\u05e9\u05e2\u05ea\u05d9\u05d9\u05dd"],
+              [240,"4 \u05e9\u05e2\u05d5\u05ea"],
+              [720,"\u05e2\u05d3 \u05de\u05d7\u05e8"]
+            ].map(([minutes,labelText])=>(
+              <Press key={minutes} onClick={()=>applyChemicalRestriction(minutes)}
+                style={{padding:"14px",borderRadius:12,background:"#f5f9ff",border:`1px solid ${C.border}`,color:C.blue,fontSize:14,fontWeight:900,textAlign:"center"}}>
+                {labelText}
+              </Press>
+            ))}
+          </div>
+        </BottomSheet>
+      )}
       <Toast msg={toast.msg} visible={toast.visible}/>
     </div>
   );
