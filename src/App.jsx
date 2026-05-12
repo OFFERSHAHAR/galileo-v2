@@ -1074,7 +1074,10 @@ const [screen,setScreen] = useState(() => {
 
   const sendNotificationToAdmins = async (title, message) => {
     let sentCount = 0;
-    const adminUsers = allUsers.filter(u => (u.role === "admin" || u.role === "מנהל") && u.username);
+    const adminUsers = allUsers.filter(u => {
+      const role = String(u.role || "").trim().toLowerCase();
+      return (role === "admin" || role === "\u05de\u05e0\u05d4\u05dc" || role === "\u05d0\u05d3\u05de\u05d9\u05df") && u.username;
+    });
     for (const admin of adminUsers) {
       const sent = await sendOneSignalToUser(title, message, admin.username);
       if (sent) sentCount++;
@@ -1837,6 +1840,12 @@ const report = {
                         {lr.acidLiters>0&&<span style={{fontSize:12,fontWeight:800,color:C.red}}>חומצה: {lr.acidLiters}L</span>}
                         <span style={{fontSize:10,color:C.muted,marginRight:"auto"}}>{lr.date}</span>
                       </div>
+                      {String(lr.poolStatus||"").trim()==="\u05de\u05d0\u05d5\u05d6\u05e0\u05ea"&&String(lr.customStatusText||"").trim()&&(
+                        <div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 12px",marginBottom:6,border:`1px solid ${C.border}`,fontSize:12,color:C.muted,lineHeight:1.5}}>
+                          <span style={{fontWeight:800,color:C.blue}}>{"\uD83D\uDCDD \u05d4\u05e2\u05e8\u05d4 \u05e4\u05e0\u05d9\u05de\u05d9\u05ea: "}</span>
+                          {lr.customStatusText}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
