@@ -1465,6 +1465,7 @@ const [screen,setScreen] = useState(() => {
   const [selectedAdminOperator,setSelectedAdminOperator] = useState("");
   const [adminOrderDraft,setAdminOrderDraft] = useState([]);
   const [adminOrderClientSearch,setAdminOrderClientSearch] = useState("");
+  const [adminOrderSavedPulse,setAdminOrderSavedPulse] = useState(false);
   const [operatorEditOrder,setOperatorEditOrder] = useState(false);
   const [operatorOrderDraft,setOperatorOrderDraft] = useState([]);
   const [subOperatorRefresh,setSubOperatorRefresh] = useState(0);
@@ -1518,7 +1519,7 @@ const [screen,setScreen] = useState(() => {
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
   const isAdminRole = (role) => ["admin", "מנהל", "אדמין"].includes(String(role || "").trim().toLowerCase());
   const isOperatorRole = (role) => ["operator", "op", "מפעיל", "מפעיל קבוע", "מפעיל_קבוע"].includes(String(role || "").trim().toLowerCase());
-  const isSubOperatorRole = (role) => ["sub_operator", "suboperator", "sub_admin", "subadmin", "עוזר מפעיל", "עוזר_מפעיל"].includes(String(role || "").trim().toLowerCase());
+  const isSubOperatorRole = (role) => ["sub_operator", "sub operator", "sub-operator", "suboperator", "sub_admin", "sub admin", "sub-admin", "subadmin", "עוזר", "עוזר מפעיל", "עוזר_מפעיל", "עוזר-מפעיל"].includes(String(role || "").trim().toLowerCase());
   const operatorUsers = allUsers.filter(u=>isOperatorRole(u.role));
   const opNames = operatorUsers.map(u=>u.name);
   const applyFetchedUsers = (users=[]) => {
@@ -1937,7 +1938,21 @@ const [screen,setScreen] = useState(() => {
   useEffect(()=>{
     if(!user) return;
     setGreeting(getDailyGreeting(user.username || ""));
-    const refresh = async() => { const tR = await sheetCall("getTasks"); if(Array.isArray(tR?.tasks)) { setTasks(tR.tasks); try { const cached = localStorage.getItem("galileo_cache"); const c = cached ? JSON.parse(cached) : {}; localStorage.setItem("galileo_cache", JSON.stringify({...c, tasks:tR.tasks})); } catch {} } };
+    const refresh = async() => {
+      const [tR, uR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers")]);
+      if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
+      if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
+      try {
+        const cached = localStorage.getItem("galileo_cache");
+        const c = cached ? JSON.parse(cached) : {};
+        localStorage.setItem("galileo_cache", JSON.stringify({
+          ...c,
+          tasks:Array.isArray(tR?.tasks) ? tR.tasks : c.tasks,
+          users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
+          cachedAt:Date.now()
+        }));
+      } catch {}
+    };
     const interval = setInterval(refresh, 10000);
     window.addEventListener("focus", refresh);
     return ()=>{ clearInterval(interval); window.removeEventListener("focus", refresh); };
@@ -2004,7 +2019,10 @@ const [screen,setScreen] = useState(() => {
   const getAssignedSubOperator = (date, opName) => {
     const local = String(localStorage.getItem(subOperatorAssignKey(date, opName)) || "");
     if (local) return local;
-    const fromUsers = subOperatorUsers.find(su => normalizeName(resolveKnownOperatorName(rawLinkedOperatorValue(su))) === normalizeName(opName));
+    const fromUsers = subOperatorUsers.find(su => {
+      const linked = rawLinkedOperatorValue(su);
+      return normalizeName(resolveKnownOperatorName(linked) || linked) === normalizeName(opName);
+    });
     return String(fromUsers?.username || "");
   };
   const updateSubOperatorUserCache = (username, opName) => {
@@ -2089,7 +2107,7 @@ const [screen,setScreen] = useState(() => {
     } catch {}
     return "";
   };
-  const linkedOperatorName = (u=user, date=dailyDate) => findAssignedOperatorForSub(date, u) || resolveKnownOperatorName(rawLinkedOperatorValue(u));
+  const linkedOperatorName = (u=user, date=dailyDate) => findAssignedOperatorForSub(date, u) || resolveOperatorName(rawLinkedOperatorValue(u));
   const dailyOwnerName = (date=dailyDate) => isSubOperatorRole(user?.role) ? (linkedOperatorName(user, date) || user?.name || "") : (user?.name || "");
   const isSubOperatorApproved = (date=dailyDate, opName=dailyOwnerName(date), subUsername=user?.username) => localStorage.getItem(subOperatorApprovalKey(date, opName, subUsername)) === "yes";
   const approveSubOperator = (date, opName, subUsername) => {
@@ -3881,7 +3899,7 @@ const report = {
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10}}>
                       <div style={{fontSize:13,fontWeight:900,color:C.blue}}>סדר עבודה: {activeAdminOperator}</div>
-                      <Press onClick={async()=>{const clean=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);setAdminOrderDraft(clean);showToast("סדר נשמר וסונכרן למפעיל");haptic("success");}} style={{padding:"7px 12px",borderRadius:10,background:C.green,color:"#fff",fontSize:12,fontWeight:900}}>שמור סדר</Press>
+                      <Press onClick={async()=>{const clean=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);showToast("סדר נשמר וסונכרן למפעיל");haptic("success");}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר"}</Press>
                     </div>
                     {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
                       <label style={{fontSize:11,fontWeight:900,color:C.muted,display:"block",marginBottom:6}}>שיוך SUB_OPERATOR למפעיל זה</label>
