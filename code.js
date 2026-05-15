@@ -34,6 +34,10 @@
         return json(sendGreenApiWhatsApp_(data));
       }
 
+      if (action === "getGreenApiStatus") {
+        return json(getGreenApiStatus_());
+      }
+
       if (action === "validateLicense") {
         const sheet = ss.getSheetByName("רישיונות");
         if(!sheet) return json({ valid:false, reason:"טבלת רישיונות לא נמצאה" });
@@ -223,10 +227,11 @@
         const previousStatus = String(row[5] || "");
         sheet.getRange(data.rowIndex+1, 6).setValue(data.status);
         if(data.response) sheet.getRange(data.rowIndex+1, 7).setValue(data.response);
-        if ((String(data.status || "") === "בטיפול" || String(data.status || "") === "׳‘׳˜׳™׳₪׳•׳") && previousStatus !== String(data.status || "")) {
+        const nextStatus = String(data.status || "");
+        if ((nextStatus.indexOf("בטיפול") >= 0 || nextStatus.indexOf("˜™₪") >= 0) && previousStatus !== nextStatus) {
           notifyOperatorIssueAcknowledged_(ss, row, data.response);
         }
-        if (String(data.status || "") === "טופל" && previousStatus !== "טופל") {
+        if ((nextStatus.indexOf("טופל") >= 0 || nextStatus.indexOf("˜•₪") >= 0) && previousStatus !== nextStatus) {
           notifyOperatorIssueDone_(ss, row, data.response);
         }
         return json({ success:true });
@@ -912,7 +917,7 @@
     };
   }
 
-  function sendGreenApiWhatsApp_(data) {
+  function getGreenApiConfig_() {
     const props = PropertiesService.getScriptProperties();
     const apiUrl = String(props.getProperty("GREEN_API_URL") || "https://7103.api.greenapi.com").replace(/\/+$/, "");
     const idInstance = String(
@@ -930,7 +935,58 @@
       ""
     ).trim();
 
-    if (!idInstance || !apiTokenInstance) {
+    return {
+      apiUrl: apiUrl,
+      idInstance: idInstance,
+      apiTokenInstance: apiTokenInstance
+    };
+  }
+
+  function getGreenApiStatus_() {
+    const config = getGreenApiConfig_();
+
+    if (!config.idInstance || !config.apiTokenInstance) {
+      return {
+        success: false,
+        error: "missing_green_api_config",
+        message: "Set GREEN_API_ID_INSTANCE and GREEN_API_TOKEN_INSTANCE in Apps Script properties"
+      };
+    }
+
+    const url = config.apiUrl + "/waInstance" + config.idInstance + "/getStateInstance/" + config.apiTokenInstance;
+    const res = UrlFetchApp.fetch(url, {
+      method: "get",
+      muteHttpExceptions: true
+    });
+
+    const code = res.getResponseCode();
+    const text = res.getContentText();
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+
+    Logger.log("Green API state URL: " + url);
+    Logger.log("Green API state status: " + code);
+    Logger.log("Green API state response: " + text);
+
+    const state = String(parsed.stateInstance || parsed.state || "");
+
+    return {
+      success: code >= 200 && code < 300 && state === "authorized",
+      ok: code >= 200 && code < 300 && state === "authorized",
+      status: code,
+      stateInstance: state,
+      response: parsed
+    };
+  }
+
+  function sendGreenApiWhatsApp_(data) {
+    const config = getGreenApiConfig_();
+
+    if (!config.idInstance || !config.apiTokenInstance) {
       return {
         success: false,
         error: "missing_green_api_config",
@@ -944,9 +1000,21 @@
     if (!phone) return { success:false, error:"missing_phone" };
     if (!message) return { success:false, error:"missing_message" };
 
+    const state = getGreenApiStatus_();
+    if (!state.success) {
+      return {
+        success: false,
+        ok: false,
+        error: "green_api_not_authorized",
+        status: state.status,
+        stateInstance: state.stateInstance || "",
+        response: state.response
+      };
+    }
+
     const chatId = phone + "@c.us";
 
-    const url = apiUrl + "/waInstance" + idInstance + "/sendMessage/" + apiTokenInstance;
+    const url = config.apiUrl + "/waInstance" + config.idInstance + "/sendMessage/" + config.apiTokenInstance;
     const payload = {
       chatId: chatId,
       message: message

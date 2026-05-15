@@ -64,7 +64,13 @@ function getCompany() {
 }
 
 const DEFAULT_THEME_COLOR = "#1565c0";
-const DEFAULT_APP_NAME = "POOLMANG";
+const DEFAULT_APP_NAME = "גליליאו";
+const DEFAULT_ICON_192 = "/icons/galileo-icon-192.png";
+const DEFAULT_ICON_512 = "/icons/galileo-icon-512.png";
+const DEFAULT_APPLE_ICON = "/icons/galileo-icon-180.png";
+const DEFAULT_MASKABLE_ICON = "/icons/galileo-icon-maskable-512.png";
+const DEFAULT_ICON_VERSION = "20260515";
+const versionIconUrl = (src) => `${src}?v=${DEFAULT_ICON_VERSION}`;
 
 function defaultIconDataUrl(bg = DEFAULT_THEME_COLOR) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="${bg}"/><text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-size="220">🌊</text></svg>`;
@@ -106,10 +112,15 @@ function iconType(src) {
 
 function normalizeBranding(data = {}) {
   const name = String(data.appName || data.name || DEFAULT_APP_NAME).trim() || DEFAULT_APP_NAME;
-  const logoUrl = String(data.logoUrl || "").trim();
-  const icon192Url = String(data.icon192Url || logoUrl || "").trim();
-  const icon512Url = String(data.icon512Url || icon192Url || logoUrl || "").trim();
-  const appleIconUrl = String(data.appleIconUrl || icon512Url || icon192Url || logoUrl || "").trim();
+  const logoUrl = String(data.logoUrl || DEFAULT_APPLE_ICON).trim();
+  const rawIcon192Url = String(data.icon192Url || "").trim();
+  const rawIcon512Url = String(data.icon512Url || "").trim();
+  const rawAppleIconUrl = String(data.appleIconUrl || "").trim();
+  const rawMaskableIconUrl = String(data.maskableIconUrl || data.iconMaskableUrl || "").trim();
+  const icon192Url = rawIcon192Url && rawIcon192Url !== logoUrl ? rawIcon192Url : versionIconUrl(DEFAULT_ICON_192);
+  const icon512Url = rawIcon512Url && rawIcon512Url !== logoUrl ? rawIcon512Url : versionIconUrl(DEFAULT_ICON_512);
+  const appleIconUrl = rawAppleIconUrl && rawAppleIconUrl !== logoUrl ? rawAppleIconUrl : versionIconUrl(DEFAULT_APPLE_ICON);
+  const maskableIconUrl = rawMaskableIconUrl && rawMaskableIconUrl !== logoUrl ? rawMaskableIconUrl : versionIconUrl(DEFAULT_MASKABLE_ICON);
   const themeColor = String(data.themeColor || DEFAULT_THEME_COLOR).trim() || DEFAULT_THEME_COLOR;
   const backgroundColor = String(data.backgroundColor || themeColor).trim() || themeColor;
   return {
@@ -119,6 +130,7 @@ function normalizeBranding(data = {}) {
     icon192Url,
     icon512Url,
     appleIconUrl,
+    maskableIconUrl,
     themeColor,
     backgroundColor,
   };
@@ -131,6 +143,7 @@ function applyTenantBranding(data = getCompany()) {
   const icon192 = brand.icon192Url || brand.icon512Url || fallbackIcon;
   const icon512 = brand.icon512Url || brand.icon192Url || fallbackIcon;
   const appleIcon = brand.appleIconUrl || icon512 || icon192 || fallbackIcon;
+  const maskableIcon = brand.maskableIconUrl || icon512 || fallbackIcon;
 
   document.title = `${brand.name} - ניהול בריכות`;
   setOrUpdateMeta("theme-color", brand.themeColor);
@@ -150,8 +163,9 @@ function applyTenantBranding(data = getCompany()) {
     lang: "he",
     dir: "rtl",
     icons: [
-      { src: icon192, sizes: "192x192", type: iconType(icon192), purpose: "any maskable" },
-      { src: icon512, sizes: "512x512", type: iconType(icon512), purpose: "any maskable" },
+      { src: icon192, sizes: "192x192", type: iconType(icon192), purpose: "any" },
+      { src: icon512, sizes: "512x512", type: iconType(icon512), purpose: "any" },
+      { src: maskableIcon, sizes: "512x512", type: iconType(maskableIcon), purpose: "maskable" },
     ],
   };
 
@@ -857,9 +871,9 @@ function companyFromLicenseResponse(res = {}) {
     scriptUrl: FIXED_SCRIPT_URL,
     adminEmail: res.adminEmail || "",
     logoUrl: res.logoUrl || "",
-    icon192Url: res.icon192Url || res.logoUrl || "",
-    icon512Url: res.icon512Url || res.icon192Url || res.logoUrl || "",
-    appleIconUrl: res.appleIconUrl || res.icon512Url || res.icon192Url || res.logoUrl || "",
+    icon192Url: res.icon192Url || "",
+    icon512Url: res.icon512Url || "",
+    appleIconUrl: res.appleIconUrl || "",
     themeColor: res.themeColor || DEFAULT_THEME_COLOR,
     backgroundColor: res.backgroundColor || res.themeColor || DEFAULT_THEME_COLOR,
   };
@@ -1072,7 +1086,7 @@ function SuperAdminScreen({ onClose }) {
     id, f.name || "", f.contact || "", f.phone || "", f.email || "", f.plan || "PRO", f.status || "פעיל", f.sheetId || "",
     ...(preserved.length ? preserved : ["","","","","",""]),
     f.notes || "", f.logoUrl || "", f.appName || f.name || "", f.shortName || f.appName || f.name || "",
-    f.icon192Url || f.logoUrl || "", f.icon512Url || f.icon192Url || f.logoUrl || "", f.appleIconUrl || f.icon512Url || f.icon192Url || f.logoUrl || "",
+    f.icon192Url || "", f.icon512Url || "", f.appleIconUrl || "",
     f.themeColor || DEFAULT_THEME_COLOR, f.backgroundColor || f.themeColor || DEFAULT_THEME_COLOR
   ];
 
@@ -1279,7 +1293,7 @@ export default function App() {
     try { const cached = localStorage.getItem("galileo_cache"); if(cached && JSON.parse(cached)?.users?.length) return false; } catch {}
     return true;
   });
-  const [companyName, setCompanyName] = useState(company.name||"POOLMANG");
+  const [companyName, setCompanyName] = useState(company.name||DEFAULT_APP_NAME);
   const [user,setUser] = useState(()=>{ try { return JSON.parse(localStorage.getItem("galileo_user")||"null"); } catch { return null; } });
   const [welcomeMedia,setWelcomeMedia] = useState(null);
   const [showDailyBriefing,setShowDailyBriefing] = useState(false);
@@ -1558,6 +1572,10 @@ const [screen,setScreen] = useState(() => {
     if (!silent) showToast(`✅ ${res?.issues?.length||0} תקלות`);
     return res?.issues || [];
   };
+  const issueText = (value) => String(value || "").trim();
+  const isCriticalIssue = (priority) => issueText(priority).includes("קריט") || issueText(priority).includes("§");
+  const isIssueInProgress = (status) => issueText(status).includes("בטיפול") || issueText(status).includes("˜™₪");
+  const isIssueDone = (status) => issueText(status).includes("טופל") || issueText(status).includes("˜•₪");
 
   const reportCriticalFlowIssue = async (report) => {
     if (report.flow !== "לא תקין") return null;
@@ -1980,6 +1998,13 @@ const [screen,setScreen] = useState(() => {
   },[screen]);
 
   useEffect(()=>{
+    if(screen!=="daily") return;
+    loadOperatorIssues(true);
+    const timer = setInterval(()=>loadOperatorIssues(true), 60 * 1000);
+    return () => clearInterval(timer);
+  },[screen, user?.name]);
+
+  useEffect(()=>{
     if(!user || user.role==="admin") return;
     loadOperatorIssues(true);
     const timer = setInterval(()=>loadOperatorIssues(true), 9 * 60 * 1000);
@@ -2209,7 +2234,9 @@ const [screen,setScreen] = useState(() => {
     }
 
     console.warn("Green API send failed", res);
-    showToast(`⚠️ Green API לא שלח${res?.status ? ` (${res.status})` : ""}`);
+    const greenState = res?.stateInstance ? ` · ${res.stateInstance}` : "";
+    const greenError = res?.error ? ` · ${res.error}` : "";
+    showToast(`⚠️ WhatsApp לא נשלח${res?.status ? ` (${res.status})` : ""}${greenState}${greenError}`);
     return false;
   };
 
@@ -2384,7 +2411,7 @@ const report = {
 
   if (showSetup) return (
     <>
-      <LicenseScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||"POOLMANG"); setShowSetup(false); }} onSuperAdmin={()=>setShowSuperAdmin(true)}/>
+      <LicenseScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||DEFAULT_APP_NAME); setShowSetup(false); }} onSuperAdmin={()=>setShowSuperAdmin(true)}/>
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
     </>
   );
@@ -2395,7 +2422,7 @@ const report = {
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
       <div style={{width:"100%",maxWidth:360}}>
         <div style={{textAlign:"center",marginBottom:36}} onPointerDown={()=>{ logoLongPress.current = setTimeout(()=>{ haptic("success"); setShowSetup(true); }, 3000); }} onPointerUp={()=>clearTimeout(logoLongPress.current)} onPointerLeave={()=>clearTimeout(logoLongPress.current)}>
-          {(()=>{ const logoUrl = getCompany().logoUrl; return logoUrl ? (<img src={logoUrl} alt="logo" style={{width:80,height:80,objectFit:"contain",marginBottom:12,filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))",borderRadius:12}}/>) : (<div style={{fontSize:60,marginBottom:12,filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))",cursor:"pointer",userSelect:"none"}}>🌊</div>); })()}
+          {(()=>{ const logoUrl = normalizeBranding(getCompany()).logoUrl; return logoUrl ? (<div style={{width:112,height:112,margin:"0 auto 12px",padding:6,borderRadius:24,background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center",filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))",overflow:"visible"}}><img src={logoUrl} alt="logo" style={{width:"100%",height:"100%",objectFit:"contain",display:"block"}}/></div>) : (<div style={{fontSize:60,marginBottom:12,filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))",cursor:"pointer",userSelect:"none"}}>🌊</div>); })()}
           <h1 style={{color:"#fff",fontSize:24,fontWeight:900,margin:"0 0 6px",letterSpacing:"-0.5px"}}>{companyName}</h1>
           <p style={{color:"rgba(255,255,255,0.6)",fontSize:14,margin:0}}>מערכת ניהול בריכות</p>
           {clientPlan.plan&&(
@@ -2432,8 +2459,8 @@ const report = {
     const dayTasks = operatorEditOrder ? operatorOrderDraft : activeDayTasks;
     const criticalOperatorNotice = operatorIssues.find(iss => {
       const [id, operator, , , priority, status] = iss;
-      return priority === "קריטי" &&
-        status === "בטיפול" &&
+      return isCriticalIssue(priority) &&
+        isIssueInProgress(status) &&
         normalizeName(operator) === normalizeName(user?.name) &&
         !dismissedCriticalIssueIds.includes(String(id));
     });
@@ -3017,7 +3044,7 @@ const report = {
     const filteredOrderClients = filterClientOptions(assignedOrderClients, adminOrderClientSearch);
     const taskClientOptions = clientsForOperatorsAndDate(clients, taskDate, taskOps);
     const dayTasks = tasks.filter(t=>t.date===taskDate);
-    const criticalAdminIssueIndex = operatorIssues.findIndex(iss => iss[4] === "קריטי" && !["בטיפול","טופל"].includes(String(iss[5] || "")));
+    const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]));
     const criticalAdminIssue = criticalAdminIssueIndex >= 0 ? operatorIssues[criticalAdminIssueIndex] : null;
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:C.bg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:30}}>
