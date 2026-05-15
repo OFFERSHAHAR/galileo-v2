@@ -2149,6 +2149,34 @@ const [screen,setScreen] = useState(() => {
     const task = taskForClientOperator(date, clientName, opName);
     return task?.status === "done" || reports.some(r => r.reportDate === date && r.client === clientName && normalizeName(r.operator) === normalizeName(opName));
   };
+  const progressReportsForOperator = (date, opName) => {
+    const seen = new Set();
+    return [...sheetReports, ...reports.filter(r=>!r._fromSheet)]
+      .filter(r => normalizeDate(r.reportDate) === date && normalizeName(r.operator) === normalizeName(opName) && r.client)
+      .filter(r => {
+        const key = `${normalizeDate(r.reportDate)}:${normalizeName(r.operator)}:${normalizeName(r.client)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  };
+  const getOperatorProgressEntries = (date, opName) => {
+    const byClient = new Map();
+    getAdminOrderEntries(date, opName).forEach((entry, index) => {
+      if (!entry?.client) return;
+      byClient.set(normalizeName(entry.client), {...entry, client:entry.client, orderIndex:Number(entry.orderIndex || index + 1), reported:false, source:"order"});
+    });
+    progressReportsForOperator(date, opName).forEach((report, index) => {
+      const key = normalizeName(report.client);
+      const existing = byClient.get(key);
+      byClient.set(key, {
+        ...(existing || {client:report.client, note:"", orderIndex:9999 + index, source:"report"}),
+        reported:true,
+        report
+      });
+    });
+    return [...byClient.values()].sort((a,b)=>Number(a.orderIndex || 9999)-Number(b.orderIndex || 9999));
+  };
   const baseOperatorClients = (date, opName) => {
     const dayName = dateDayName(date);
     const names = new Set();
@@ -3771,10 +3799,10 @@ const report = {
   if(screen==="admin") {
     const progressDate = adminTab==="daily" ? taskDate : dailyDate;
     const progressData = operatorUsers.map(op=>{
-      const adminOrder = getAdminOrderEntries(progressDate, op.name);
-      const total = adminOrder.length;
-      const done = adminOrder.filter(x=>taskDoneForClient(progressDate, x.client, op.name)).length;
-      return {op,total,done,pending:Math.max(0,total-done)};
+      const entries = getOperatorProgressEntries(progressDate, op.name);
+      const total = entries.length;
+      const done = entries.filter(x=>x.reported).length;
+      return {op,total,done,pending:Math.max(0,total-done),entries};
     });
     const activeAdminOperator = selectedAdminOperator || operatorUsers[0]?.name || "";
     const adminOrderList = adminOrderDraft.length || selectedAdminOperator ? adminOrderDraft : (activeAdminOperator ? getAdminOrderEntries(taskDate, activeAdminOperator) : []);
@@ -4092,7 +4120,7 @@ const report = {
           {adminTab==="progress"&&(
             <div>
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:C.muted}}>תאריך:</label><input type="date" value={dailyDate} onChange={e=>setDailyDate(e.target.value)} style={{...inp,maxWidth:160,color:C.blue,border:`1px solid ${C.lightBlue}`,fontWeight:700}}/></div>
-              {progressData.map(({op,total,done})=>(
+              {progressData.map(({op,total,done,entries})=>(
                 <div key={op.name} style={{...card({marginBottom:12})}}>
                   <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:total?14:0}}>
                     <span style={{fontSize:28}}>{op.icon}</span>
@@ -4100,7 +4128,7 @@ const report = {
                     <Badge label={`${done}/${total}`} col={done===total&&total>0?C.green:C.blue}/>
                   </div>
                   {total>0&&<PBar done={done} total={total}/>}
-                  {tasks.filter(t=>t.date===dailyDate&&t.operators.includes(op.name)).map(t=>(<div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderTop:`1px solid ${C.border}`,marginTop:8}}><span style={{color:C.muted,fontSize:13}}>{t.client.split(" - ")[0]}</span><Badge label={t.status==="done"?"✓ בוצע":"ממתין"} col={t.status==="done"?C.green:C.orange}/></div>))}
+                  {entries.map((entry,i)=>(<div key={`${op.name}-${entry.client}-${i}`} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderTop:`1px solid ${C.border}`,marginTop:8}}><span style={{color:C.muted,fontSize:13}}>{entry.client.split(" - ")[0]}</span><Badge label={entry.reported?"✓ דוח נוצר":"ממתין לדוח"} col={entry.reported?C.green:C.orange}/></div>))}
                 </div>
               ))}
             </div>
