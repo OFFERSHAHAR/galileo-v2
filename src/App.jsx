@@ -1688,7 +1688,8 @@ const [screen,setScreen] = useState(() => {
     const tDate2 = tDate.includes("T") ? tDate.split("T")[0] : tDate;
     const dateMatch = tDate2 === date;
     const ownerName = isSubOperatorRole(user?.role) ? dailyOwnerName(date) : user?.name;
-    const nameMatch = isAdminPanelRole(user?.role) || (t.operators||[]).some(op => normalizeName(op)===normalizeName(ownerName));
+    const subValues = isSubOperatorRole(user?.role) ? [user?.username, user?.name].map(normalizeName).filter(Boolean) : [];
+    const nameMatch = isAdminPanelRole(user?.role) || (t.operators||[]).some(op => normalizeName(op)===normalizeName(ownerName) || subValues.includes(normalizeName(op)));
     return dateMatch && nameMatch;
   });
 
@@ -1994,10 +1995,16 @@ const [screen,setScreen] = useState(() => {
     const match = operatorUsers.find(op => normalizeName(op.name) === v || normalizeName(op.username) === v);
     return String(match?.name || value || "").trim();
   };
+  const resolveKnownOperatorName = (value) => {
+    const v = normalizeName(value);
+    if (!v) return "";
+    const match = operatorUsers.find(op => normalizeName(op.name) === v || normalizeName(op.username) === v);
+    return String(match?.name || "").trim();
+  };
   const getAssignedSubOperator = (date, opName) => {
     const local = String(localStorage.getItem(subOperatorAssignKey(date, opName)) || "");
     if (local) return local;
-    const fromUsers = subOperatorUsers.find(su => normalizeName(resolveOperatorName(rawLinkedOperatorValue(su))) === normalizeName(opName));
+    const fromUsers = subOperatorUsers.find(su => normalizeName(resolveKnownOperatorName(rawLinkedOperatorValue(su))) === normalizeName(opName));
     return String(fromUsers?.username || "");
   };
   const updateSubOperatorUserCache = (username, opName) => {
@@ -2021,6 +2028,11 @@ const [screen,setScreen] = useState(() => {
       return merged;
     });
   };
+  const isSameSubOperator = (saved, u) => {
+    const value = normalizeName(saved);
+    return !!value && (value === normalizeName(u?.username) || value === normalizeName(u?.name));
+  };
+  const subOperatorValues = (u) => [u?.username, u?.name].map(normalizeName).filter(Boolean);
   const setAssignedSubOperator = async (date, opName, username) => {
     const key = subOperatorAssignKey(date, opName);
     const previousUsername = getAssignedSubOperator(date, opName);
@@ -2028,6 +2040,21 @@ const [screen,setScreen] = useState(() => {
     updateSubOperatorUserCache(previousUsername, "");
     updateSubOperatorUserCache(username, opName);
     setSubOperatorRefresh(x=>x+1);
+    const previousUser = subOperatorUsers.find(su => isSameSubOperator(previousUsername, su));
+    const nextUser = subOperatorUsers.find(su => isSameSubOperator(username, su));
+    const removeValues = subOperatorValues(previousUser);
+    const addValues = [nextUser?.name, nextUser?.username].filter(Boolean);
+    const nextTasks = tasks.map(t => {
+      const sameDayOperator = normalizeDate(t.date) === date && (t.operators || []).some(op => normalizeName(op) === normalizeName(opName));
+      if (!sameDayOperator) return t;
+      const cleanedOps = (t.operators || []).filter(op => !removeValues.includes(normalizeName(op)));
+      addValues.forEach(v => {
+        if (v && !cleanedOps.some(op => normalizeName(op) === normalizeName(v))) cleanedOps.push(v);
+      });
+      return {...t, operators: cleanedOps.filter(Boolean)};
+    });
+    setTasks(nextTasks);
+    if (sheetId) await sheetCall("saveTasks", {tasks: nextTasks}).catch(e => console.warn("Sub-operator task assignment sync failed", e));
     if (sheetId) {
       try {
         if (previousUsername && previousUsername !== username) await sheetCall("saveSubOperatorAssignment", {username: previousUsername, operator: ""});
@@ -2037,14 +2064,18 @@ const [screen,setScreen] = useState(() => {
       }
     }
   };
-  const isSameSubOperator = (saved, u) => {
-    const value = normalizeName(saved);
-    return !!value && (value === normalizeName(u?.username) || value === normalizeName(u?.name));
-  };
   const findAssignedOperatorForSub = (date, subUser=user) => {
     if (!subUser) return "";
     const exact = operatorUsers.find(op => isSameSubOperator(getAssignedSubOperator(date, op.name), subUser))?.name;
     if (exact) return exact;
+    const subValues = subOperatorValues(subUser);
+    const taskMatch = tasks.find(t =>
+      normalizeDate(t.date) === date &&
+      (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0) &&
+      (t.operators || []).some(op => subValues.includes(normalizeName(op)))
+    );
+    const taskOperator = (taskMatch?.operators || []).find(op => !subValues.includes(normalizeName(op)));
+    if (taskOperator) return resolveOperatorName(taskOperator);
     try {
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i) || "";
@@ -2058,7 +2089,7 @@ const [screen,setScreen] = useState(() => {
     } catch {}
     return "";
   };
-  const linkedOperatorName = (u=user, date=dailyDate) => resolveOperatorName(rawLinkedOperatorValue(u) || findAssignedOperatorForSub(date, u));
+  const linkedOperatorName = (u=user, date=dailyDate) => findAssignedOperatorForSub(date, u) || resolveKnownOperatorName(rawLinkedOperatorValue(u));
   const dailyOwnerName = (date=dailyDate) => isSubOperatorRole(user?.role) ? (linkedOperatorName(user, date) || user?.name || "") : (user?.name || "");
   const isSubOperatorApproved = (date=dailyDate, opName=dailyOwnerName(date), subUsername=user?.username) => localStorage.getItem(subOperatorApprovalKey(date, opName, subUsername)) === "yes";
   const approveSubOperator = (date, opName, subUsername) => {
@@ -2130,6 +2161,8 @@ const [screen,setScreen] = useState(() => {
   const syncAdminOrderTasks = async (date, opName, entries) => {
     const clean = saveAdminOrderEntries(date, opName, entries);
     const cleanNames = new Set(clean.map(x=>x.client));
+    const assignedSub = subOperatorUsers.find(su => isSameSubOperator(getAssignedSubOperator(date, opName), su));
+    const assignedSubOps = [assignedSub?.name, assignedSub?.username].filter(Boolean);
     const existingByClient = new Map(tasks
       .filter(t => normalizeDate(t.date) === date && (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)))
       .map(t => [t.client, t])
@@ -2141,7 +2174,7 @@ const [screen,setScreen] = useState(() => {
         id: existing?.id || `admin-order-${date}-${opName}-${index + 1}-${Date.now()}`,
         date,
         client: entry.client,
-        operators: [opName],
+        operators: [opName, ...assignedSubOps].filter((op, idx, arr) => op && arr.findIndex(x => normalizeName(x) === normalizeName(op)) === idx),
         status: existing?.status || "pending",
         changeLog: existing?.changeLog || [],
         orderIndex: index + 1,
@@ -3002,7 +3035,27 @@ const report = {
     const isSubOperator = isSubOperatorRole(user?.role);
     const currentDailyOwner = dailyOwnerName(dailyDate);
     const canSubOperatorReport = !isSubOperator || (currentDailyOwner && isSubOperatorApproved(dailyDate, currentDailyOwner, user?.username));
-    const linkedSubOperators = subOperatorUsers.filter(su => normalizeName(linkedOperatorName(su, dailyDate)) === normalizeName(user?.name) || isSameSubOperator(getAssignedSubOperator(dailyDate, user?.name), su));
+    const linkedSubOperators = (() => {
+      if(isSubOperator) return [];
+      const linked = subOperatorUsers.filter(su => normalizeName(linkedOperatorName(su, dailyDate)) === normalizeName(user?.name) || isSameSubOperator(getAssignedSubOperator(dailyDate, user?.name), su));
+      const seen = new Set(linked.map(su => normalizeName(su.username || su.name)));
+      const subValuesByUser = subOperatorUsers.map(su => ({ su, values: subOperatorValues(su) }));
+      tasks
+        .filter(t => normalizeDate(t.date) === dailyDate && (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0) && (t.operators || []).some(op => normalizeName(op) === normalizeName(user?.name)))
+        .forEach(t => {
+          const ops = (t.operators || []).map(normalizeName);
+          subValuesByUser.forEach(({ su, values }) => {
+            if(values.some(v => ops.includes(v))) {
+              const key = normalizeName(su.username || su.name);
+              if(!seen.has(key)) {
+                seen.add(key);
+                linked.push(su);
+              }
+            }
+          });
+        });
+      return linked;
+    })();
     const pendingSubReportForOperator = !isSubOperator
       ? pendingSubReports.find(item => item?.status === "pending" && normalizeName(item.operator) === normalizeName(user?.name))
       : null;
