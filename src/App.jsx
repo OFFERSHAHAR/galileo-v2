@@ -3444,17 +3444,18 @@ const report = {
               {treatmentCounts.length===0&&<div style={{...card({textAlign:"center"}),padding:28,color:C.muted}}>לחץ רענן כדי לטעון את מספר הטיפולים</div>}
               {treatmentCounts.map((row,i)=>{
                 const doneCount = Number(row.monthlyTreatmentCount || 0);
-                const balance = Number(row.monthlyTreatmentBalance ?? Math.max(0,4-doneCount));
+                const quota = Number(row.monthlyTreatmentQuota || (doneCount + Number(row.monthlyTreatmentBalance || 0)) || 4);
+                const balance = Number(row.monthlyTreatmentBalance ?? Math.max(0,quota-doneCount));
                 return (
                   <div key={`${row.client}-${i}`} style={{...card({marginBottom:10})}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:10}}>
                       <div style={{flex:1}}>
                         <div style={{fontWeight:900,fontSize:15,color:C.text}}>{String(row.client||"").split(" - ")[0]}</div>
-                        <div style={{fontSize:12,color:C.muted,marginTop:3}}>{doneCount} טיפולים בפועל מתוך 4 החודש</div>
+                        <div style={{fontSize:12,color:C.muted,marginTop:3}}>{doneCount} טיפולים בפועל מתוך {quota} החודש</div>
                       </div>
                       <Badge label={`נותרו ${balance}`} col={balance===0?C.green:C.blue}/>
                     </div>
-                    <PBar done={Math.min(doneCount,4)} total={4}/>
+                    <PBar done={Math.min(doneCount,quota)} total={quota || 1}/>
                   </div>
                 );
               })}

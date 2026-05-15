@@ -256,8 +256,10 @@
         const rows = sheet.getDataRange().getValues();
         let hi = rows.findIndex(r => String(r[0]).includes("שם_לקוח") || String(r[0]).includes("שם לקוח"));
         if (hi === -1) hi = 2;
+        const headers = (rows[hi] || []).map(h => String(h || "").trim());
+        const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
         const clients = rows.slice(hi + 1).filter(r => r[0]).map(r => ({
-          name: String(r[0]), phone: String(r[1]), address: String(r[2]), qrUrl: String(r[3]||""), gateCode: String(r[4]||""), poolType: String(r[5]||"מלח"), regularDays: String(r[6]||""), regularOperator: String(r[7]||""), monthlyTreatmentBalance: Number(r[8] || 4), monthlyTreatmentCount: Number(r[9] || 0)
+          name: String(r[0]), phone: String(r[1]), address: String(r[2]), qrUrl: String(r[3]||""), gateCode: String(r[4]||""), poolType: String(r[5]||"מלח"), regularDays: String(r[6]||""), regularOperator: String(r[7]||""), monthlyTreatmentBalance: Number(r[8] || 0), monthlyTreatmentCount: Number(r[9] || 0), monthlyTreatmentQuota: Number(quotaIdx >= 0 ? r[quotaIdx] || 0 : 0)
         }));
         return json({ clients });
       }
@@ -469,15 +471,23 @@
         for (let i = 0; i < last; i++) {
           if (String(sheet.getRange(i+1,1).getValue()).includes("שם")) { hi = i+1; break; }
         }
-        // Clear data rows
-        if (last > hi) sheet.deleteRows(hi+1, last-hi);
-        data.clients.forEach(c => sheet.appendRow([
-          c.name, c.phone, c.address, c.qrUrl||"",
-          c.gateCode||"", c.poolType||"מלח", c.regularDays||"", c.regularOperator||"",
-          Number(c.monthlyTreatmentBalance ?? 4), Number(c.monthlyTreatmentCount ?? 0)
-        ]));
-        return json({ success: true });
-      }
+      // Clear data rows
+      if (last > hi) sheet.deleteRows(hi+1, last-hi);
+      ensureColumns(sheet, ["יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל", "מכסת_טיפולים_חודשית", "חודש_טיפולים"]);
+      const headers = sheet.getRange(hi, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h || "").trim());
+      const baseCols = Math.max(10, sheet.getLastColumn());
+      data.clients.forEach(c => sheet.appendRow([
+        c.name, c.phone, c.address, c.qrUrl||"",
+        c.gateCode||"", c.poolType||"מלח", c.regularDays||"", c.regularOperator||"",
+        Number(c.monthlyTreatmentBalance ?? 0), Number(c.monthlyTreatmentCount ?? 0)
+      ].concat(Array(Math.max(0, baseCols - 10)).fill("")).map((value, idx) => {
+        const header = headers[idx] || "";
+        if (header === "מכסת_טיפולים_חודשית") return Number(c.monthlyTreatmentQuota ?? c.monthlyTreatmentBalance ?? 0);
+        if (header === "חודש_טיפולים") return "";
+        return value;
+      })));
+      return json({ success: true });
+    }
 
       if (action === "getLastReadings") {
         const sheet = ss.getSheetByName("דוחות");
@@ -566,10 +576,10 @@
     s = clientSS.getSheetByName("לקוחות");
     if(!s) {
       s = clientSS.insertSheet("לקוחות");
-      s.appendRow(["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל"]);
-    } else {
-      ensureColumns(s, ["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל"]);
-    }
+    s.appendRow(["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
+  } else {
+    ensureColumns(s, ["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
+  }
     
     // ── דוחות ──
     s = clientSS.getSheetByName("דוחות");
@@ -830,7 +840,7 @@
     const reportsSheet = ss.getSheetByName("דוחות");
     if (!clientsSheet || !reportsSheet) return [];
 
-    ensureColumns(clientsSheet, ["יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל"]);
+    ensureColumns(clientsSheet, ["יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל", "מכסת_טיפולים_חודשית", "חודש_טיפולים"]);
 
     const clientsRows = clientsSheet.getDataRange().getValues();
     if (!clientsRows.length) return [];
@@ -838,6 +848,8 @@
     const headers = (clientsRows[headerRowIndex] || []).map(h => String(h || "").trim());
     const balanceIdx = headers.indexOf("יתרת_טיפולים_חודשית");
     const countIdx = headers.indexOf("מונה_טיפולים_בפועל");
+    const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
+    const quotaMonthIdx = headers.indexOf("חודש_טיפולים");
     const monthKey = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM");
     const counts = {};
 
@@ -854,12 +866,42 @@
       const client = String(clientsRows[i][0] || "").trim();
       if (!client) continue;
       const actual = counts[client] || 0;
-      const balance = Math.max(0, 4 - actual);
+      const row = clientsRows[i];
+      const regularDays = String(row[6] || "");
+      const savedMonth = quotaMonthIdx >= 0 ? String(row[quotaMonthIdx] || "").trim() : "";
+      const typedQuota = quotaIdx >= 0 ? Number(row[quotaIdx] || 0) : 0;
+      const typedBalance = balanceIdx >= 0 ? Number(row[balanceIdx] || 0) : 0;
+      const calculatedQuota = countClientCalendarTreatments_(regularDays, new Date()) || 4;
+      const manualQuota = typedQuota || (typedBalance ? typedBalance + actual : 0);
+      const quota = (savedMonth === monthKey || !savedMonth)
+        ? Math.max(0, Math.round(manualQuota || calculatedQuota))
+        : calculatedQuota;
+      const balance = Math.max(0, quota - actual);
       if (balanceIdx >= 0) clientsSheet.getRange(i + 1, balanceIdx + 1).setValue(balance);
       if (countIdx >= 0) clientsSheet.getRange(i + 1, countIdx + 1).setValue(actual);
-      treatments.push({ client, monthlyTreatmentBalance: balance, monthlyTreatmentCount: actual });
+      if (quotaIdx >= 0) clientsSheet.getRange(i + 1, quotaIdx + 1).setValue(quota);
+      if (quotaMonthIdx >= 0) clientsSheet.getRange(i + 1, quotaMonthIdx + 1).setValue(monthKey);
+      treatments.push({ client, monthlyTreatmentBalance: balance, monthlyTreatmentCount: actual, monthlyTreatmentQuota: quota });
     }
     return treatments;
+  }
+
+  function countClientCalendarTreatments_(regularDays, date) {
+    const wantedDays = String(regularDays || "")
+      .split(/[,;|/\\\s]+/)
+      .map(normalizeHebrewDay_)
+      .filter(Boolean);
+    if (!wantedDays.length) return 0;
+
+    const year = Number(Utilities.formatDate(date, "Asia/Jerusalem", "yyyy"));
+    const month = Number(Utilities.formatDate(date, "Asia/Jerusalem", "M"));
+    const daysInMonth = new Date(year, month, 0).getDate();
+    let count = 0;
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (wantedDays.includes(hebrewDayName_(dateStr))) count++;
+    }
+    return count;
   }
 
   function normalizeSheetDate_(value) {
@@ -1482,9 +1524,11 @@ function json(obj) {
         {name:"סוג_בריכה", col:6},
         {name:"ימים_קבועים", col:7},
         {name:"מפעיל_קבוע", col:8},
-        {name:"יתרת_טיפולים_חודשית", col:9},
-        {name:"מונה_טיפולים_בפועל", col:10},
-      ];
+      {name:"יתרת_טיפולים_חודשית", col:9},
+      {name:"מונה_טיפולים_בפועל", col:10},
+      {name:"מכסת_טיפולים_חודשית", col:11},
+      {name:"חודש_טיפולים", col:12},
+    ];
       needed.forEach(({name, col}) => {
         if(!headers.includes(name)) {
           clientSheet.getRange(headerRow, col).setValue(name);
