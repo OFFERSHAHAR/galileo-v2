@@ -1365,6 +1365,15 @@ const [pending, setPending] = useState(() => {
     return [];
   }
 });
+const [pendingSubReports, setPendingSubReports] = useState(() => {
+  try {
+    const value = JSON.parse(localStorage.getItem("galileo_sub_operator_pending_reports") || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+});
+const [approvalEditId, setApprovalEditId] = useState("");
 
 useEffect(() => {
   localStorage.setItem(
@@ -1372,6 +1381,10 @@ useEffect(() => {
     JSON.stringify(pending)
   );
 }, [pending]);
+
+useEffect(() => {
+  localStorage.setItem("galileo_sub_operator_pending_reports", JSON.stringify(pendingSubReports));
+}, [pendingSubReports]);
 
 useEffect(() => {
   localStorage.setItem("galileo_completed_reports", JSON.stringify(completedReports));
@@ -1383,7 +1396,7 @@ const [screen,setScreen] = useState(() => {
   try {
     const u = JSON.parse(localStorage.getItem("galileo_user") || "null");
     const role = String(u?.role || "").trim().toLowerCase();
-    const isAdminPanel = ["admin", "מנהל", "אדמין", "sub_admin", "subadmin", "סאב אדמין", "סגן מנהל"].includes(role);
+    const isAdminPanel = ["admin", "מנהל", "אדמין"].includes(role);
     return u ? (isAdminPanel ? "admin" : "daily") : "login";
   } catch {
     return "login";
@@ -1443,6 +1456,7 @@ const [screen,setScreen] = useState(() => {
   const [adminOrderClientSearch,setAdminOrderClientSearch] = useState("");
   const [operatorEditOrder,setOperatorEditOrder] = useState(false);
   const [operatorOrderDraft,setOperatorOrderDraft] = useState([]);
+  const [subOperatorRefresh,setSubOperatorRefresh] = useState(0);
   const [reportFilter,setReportFilter] = useState("");
   const [saltSearch,setSaltSearch] = useState("");
   const [selectedSaltReport,setSelectedSaltReport] = useState(null);
@@ -1494,8 +1508,9 @@ const [screen,setScreen] = useState(() => {
   const normalizeDate = (d) => String(d||"").trim().slice(0,10);
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
   const isAdminRole = (role) => ["admin", "מנהל", "אדמין"].includes(String(role || "").trim().toLowerCase());
-  const isSubAdminRole = (role) => ["sub_admin", "subadmin", "סאב אדמין", "סגן מנהל"].includes(String(role || "").trim().toLowerCase());
-  const isAdminPanelRole = (role) => isAdminRole(role) || isSubAdminRole(role);
+  const isSubOperatorRole = (role) => ["sub_operator", "suboperator", "sub_admin", "subadmin", "עוזר מפעיל", "עוזר_מפעיל"].includes(String(role || "").trim().toLowerCase());
+  const subOperatorUsers = allUsers.filter(u=>isSubOperatorRole(u.role));
+  const isAdminPanelRole = (role) => isAdminRole(role);
   const clientDisplayName = (c) => String(c?.name || c || "").split(" - ")[0].trim();
   const sortByClientName = (list) => [...(list || [])].sort((a,b)=>clientDisplayName(a).localeCompare(clientDisplayName(b), "he"));
   const filterClientOptions = (list, query) => {
@@ -1552,7 +1567,7 @@ const [screen,setScreen] = useState(() => {
     setCompletedReports(prev => prev.filter(x => x !== key));
   };
   const isClientReportedDone = (date, clientName) => {
-    const opName = user?.name || "";
+    const opName = dailyOwnerName(date) || user?.name || "";
     return reports.some(r=>r.reportDate===date&&r.operator===opName&&r.client===clientName) ||
       completedReports.includes(completedReportKey(date, clientName, opName));
   };
@@ -1571,7 +1586,7 @@ const [screen,setScreen] = useState(() => {
     sf("suppliedEquipment", current.includes(name) ? current.filter(x=>x!==name) : [...current, name]);
   };
   const openDoneReportEditor = (task) => {
-    const opName = user?.name || "";
+    const opName = dailyOwnerName(dailyDate) || user?.name || "";
     const existing = [...reports].reverse().find(r => r.reportDate === dailyDate && r.operator === opName && r.client === task.client);
     const lr = lastReadings[task.client] || {};
     const source = existing || {
@@ -1648,7 +1663,8 @@ const [screen,setScreen] = useState(() => {
     const tDate = normalizeDate(t.date);
     const tDate2 = tDate.includes("T") ? tDate.split("T")[0] : tDate;
     const dateMatch = tDate2 === date;
-    const nameMatch = isAdminPanelRole(user?.role) || (t.operators||[]).some(op => normalizeName(op)===normalizeName(user?.name));
+    const ownerName = isSubOperatorRole(user?.role) ? dailyOwnerName(date) : user?.name;
+    const nameMatch = isAdminPanelRole(user?.role) || (t.operators||[]).some(op => normalizeName(op)===normalizeName(ownerName));
     return dateMatch && nameMatch;
   });
 
@@ -1902,16 +1918,6 @@ const [screen,setScreen] = useState(() => {
     return ()=>{ clearInterval(interval); window.removeEventListener("focus", refresh); };
   },[user]);
 
-  const todayReported = [
-    ...reports.filter(r=>r.reportDate===dailyDate&&r.operator===user?.name).map(r=>r.client),
-    ...completedReports
-      .map(key => {
-        const [date, clientName, operatorName] = String(key).split("|");
-        return date === dailyDate && operatorName === normalizeName(user?.name) ? clientName : "";
-      })
-      .filter(Boolean)
-  ];
-
   const localKey = (...parts) => parts.map(p=>String(p||"").replaceAll(":", "_")).join(":");
   const readLocalArray = (key) => {
     try {
@@ -1926,9 +1932,43 @@ const [screen,setScreen] = useState(() => {
   const writeLocalArray = (key, value) => {
     localStorage.setItem(key, JSON.stringify(value || []));
   };
+  const removePendingSubReport = (id) => {
+    setPendingSubReports(prev => prev.filter(item => item.id !== id));
+  };
   const adminOrderKey = (date, opName) => localKey("galileo_admin_order", date, opName);
   const operatorOrderKey = (username, date) => localKey("galileo_operator_order", username, date);
+  const subOperatorAssignKey = (date, opName) => localKey("galileo_sub_operator", date, opName);
+  const subOperatorApprovalKey = (date, opName, subUsername) => localKey("galileo_sub_operator_approval", date, opName, subUsername);
   const lockedClientsKey = (username, date) => localKey("galileo_locked_clients", username, date);
+  const getAssignedSubOperator = (date, opName) => String(localStorage.getItem(subOperatorAssignKey(date, opName)) || "");
+  const setAssignedSubOperator = (date, opName, username) => {
+    const key = subOperatorAssignKey(date, opName);
+    username ? localStorage.setItem(key, username) : localStorage.removeItem(key);
+    setSubOperatorRefresh(x=>x+1);
+  };
+  const findAssignedOperatorForSub = (date, username) => {
+    const target = String(username || "").trim();
+    if (!target) return "";
+    return operatorUsers.find(op => getAssignedSubOperator(date, op.name) === target)?.name || "";
+  };
+  const linkedOperatorName = (u=user, date=dailyDate) => String(u?.linkedOperator || u?.parentOperator || u?.operator || u?.regularOperator || u?.assignedOperator || findAssignedOperatorForSub(date, u?.username) || "").trim();
+  const dailyOwnerName = (date=dailyDate) => isSubOperatorRole(user?.role) ? (linkedOperatorName(user, date) || user?.name || "") : (user?.name || "");
+  const isSubOperatorApproved = (date=dailyDate, opName=dailyOwnerName(date), subUsername=user?.username) => localStorage.getItem(subOperatorApprovalKey(date, opName, subUsername)) === "yes";
+  const approveSubOperator = (date, opName, subUsername) => {
+    localStorage.setItem(subOperatorApprovalKey(date, opName, subUsername), "yes");
+    setSubOperatorRefresh(x=>x+1);
+    showToast("✅ עוזר מפעיל אושר למילוי דוחות");
+    haptic("success");
+  };
+  const todayReported = [
+    ...reports.filter(r=>r.reportDate===dailyDate&&r.operator===(dailyOwnerName(dailyDate)||user?.name)).map(r=>r.client),
+    ...completedReports
+      .map(key => {
+        const [date, clientName, operatorName] = String(key).split("|");
+        return date === dailyDate && operatorName === normalizeName(dailyOwnerName(dailyDate)||user?.name) ? clientName : "";
+      })
+      .filter(Boolean)
+  ];
   const taskForClientOperator = (date, clientName, opName) => tasks.find(t =>
     normalizeDate(t.date) === date &&
     t.client === clientName &&
@@ -1995,7 +2035,7 @@ const [screen,setScreen] = useState(() => {
   };
   const stopClientLongPress = (clientName) => clearTimeout(longPressTimers.current[clientName]);
   const getOperatorDailyView = (date=dailyDate) => {
-    const opName = user?.name;
+    const opName = dailyOwnerName(date);
     const adminEntries = readLocalArray(adminOrderKey(date, opName)).filter(x=>x?.client);
     let list;
     if (adminEntries.length) {
@@ -2400,6 +2440,102 @@ const [screen,setScreen] = useState(() => {
     return false;
   };
 
+  const queueSubOperatorReportForApproval = (report, photosBase64, adminEmail) => {
+    const item = {
+      id: crypto.randomUUID(),
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      operator: report.operator,
+      subUsername: user?.username || "",
+      subName: user?.name || user?.username || "",
+      report,
+      photos: photosBase64,
+      adminEmail,
+      clientAddress: clientAddress(report.client),
+      clientPhone: clientPhone(report.client),
+    };
+    setPendingSubReports(prev => [item, ...prev]);
+    setAction("submitReport", "success", 1600);
+    showToast("הדוח ממתין לאישור מפעיל");
+    haptic("success");
+  };
+
+  const editPendingSubReport = (item) => {
+    const r = item?.report || {};
+    setApprovalEditId(item.id);
+    setEditingReport(null);
+    setForm({
+      ...blank(),
+      ...r,
+      client: r.client || "",
+      reportDate: r.reportDate || todayStr(),
+      suppliedEquipment: String(r.suppliedEquipment || "").split(",").map(x=>x.trim()).filter(Boolean),
+      photos: [],
+      clientLocked: true,
+    });
+    setScreen("form");
+    showToast("ערוך את הדוח ושלח");
+    haptic("medium");
+  };
+
+  const approvePendingSubReport = async (item) => {
+    if (!item || syncing || isActionLoading(`approveSubReport:${item.id}`)) return;
+    const report = item.report;
+    setAction(`approveSubReport:${item.id}`, "loading");
+    setSyncing(true);
+
+    let saved = false;
+    if (sheetId) {
+      const res = await sheetCall("saveReport", {
+        report,
+        photos: item.photos || [],
+        adminEmail: item.adminEmail || getCompany().adminEmail || "",
+        clientAddress: item.clientAddress || clientAddress(report.client),
+        clientPhone: item.clientPhone || clientPhone(report.client),
+      }).catch(() => null);
+      saved = res?.success === true;
+      if (saved && !res?.duplicate) {
+        void sendNotificationToAdmins(
+          `✅ דוח בוצע: ${report.client}`,
+          `${item.subName || "עוזר מפעיל"} מילא דוח שאושר על ידי ${user?.name || "מפעיל"} · כלור ${report.chlorine}, pH ${report.ph}`
+        ).catch(e => console.warn("Admin report notification failed", e));
+      }
+    }
+
+    if (saved) {
+      setReports(prev => [...prev, report]);
+      rememberCompletedReport(report);
+      setLastReadings(prev => ({
+        ...prev,
+        [report.client]: {
+          ...(prev[report.client] || {}),
+          date: report.reportDate,
+          chlorine: report.chlorine,
+          ph: report.ph,
+          salt: report.salt,
+          poolStatus: report.poolStatus,
+          customStatusText: report.customStatusText,
+          notes: report.notes,
+          missedTreatment: false
+        }
+      }));
+      const match = tasks.find(t => t.date === report.reportDate && t.client === report.client && (t.operators || []).includes(report.operator) && t.status !== "done");
+      if (match) markDone(match.id);
+      removePendingSubReport(item.id);
+      setAction(`approveSubReport:${item.id}`, "success", 1400);
+      showToast("✅ הדוח אושר ונשלח");
+      void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
+      void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+    } else {
+      setPending(p => [...p, report]);
+      removePendingSubReport(item.id);
+      setAction(`approveSubReport:${item.id}`, "local", 2200);
+      showToast("⚠️ הדוח נשמר מקומית לשליחה מאוחרת");
+    }
+
+    setSyncing(false);
+  };
+
   const handleSubmit = async () => {
     if (!client || syncing || isActionLoading("submitReport")) return;
     const isEditingExistingReport = !!editingReport;
@@ -2418,7 +2554,7 @@ const [screen,setScreen] = useState(() => {
     setSyncing(true);
     const elNext=calcNext(elDate);
     const supplyLabel=[acid&&"חומצת מלח",phUpSupply&&"מעלה pH",saltPkg&&`מלח ×${saltBags}`].filter(Boolean).join(", ");
-    if(client&&(acid||phUpSupply||saltPkg||suppliedEquipment.length)){
+    if(client&&(acid||phUpSupply||saltPkg||suppliedEquipment.length)&&(!isSubOperatorRole(user?.role)||approvalEditId)){
       const newDB={...supplyDB};
       if (acid || phUpSupply || saltPkg) {
         newDB[client]={acid,phUpSupply,saltPkg,saltBags,supplyNote:"",updatedAt:fmtDate(reportDate)};
@@ -2428,13 +2564,16 @@ const [screen,setScreen] = useState(() => {
       setSupplyDB(newDB);
       if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||""]);await sheetCall("saveSupplyDB",{rows});}
     }
-    const match=tasks.find(t=>t.date===reportDate&&t.client===client&&t.operators.includes(user?.name)&&t.status!=="done"); if(match)markDone(match.id);
+    const reportOperatorName = dailyOwnerName(reportDate) || user?.name;
+    if (!isSubOperatorRole(user?.role) || approvalEditId) {
+      const match=tasks.find(t=>t.date===reportDate&&t.client===client&&t.operators.includes(reportOperatorName)&&t.status!=="done"); if(match)markDone(match.id);
+    }
     let photosBase64 = [];
     if(photos.length>0){ photosBase64 = await Promise.all(photos.map(url=> fetch(url).then(r=>r.blob()).then(blob=>new Promise(res=>{ const reader=new FileReader(); reader.onload=e=>res(e.target.result.split(",")[1]); reader.readAsDataURL(blob); })) )); }
 const report = {
   id: editingReport?.localId || crypto.randomUUID(),
   reportDate,
-  operator:user?.name||"",
+  operator:reportOperatorName||user?.name||"",
   client,
   chlorine,
   ph,
@@ -2459,6 +2598,14 @@ const report = {
   notes,
   photosCount:photos.length
 };
+    if (!isEditingExistingReport && isSubOperatorRole(user?.role) && !approvalEditId) {
+      const adminEmail = getCompany().adminEmail || "";
+      queueSubOperatorReportForApproval(report, photosBase64, adminEmail);
+      setSyncing(false);
+      setEditingReport(null);
+      setScreen("daily");
+      return;
+    }
     if (isEditingExistingReport) {
       setReports(prev => {
         const next = [...prev];
@@ -2537,6 +2684,10 @@ const report = {
     }
 
     setSyncing(false);
+    if (approvalEditId) {
+      removePendingSubReport(approvalEditId);
+      setApprovalEditId("");
+    }
     setEditingReport(null);
     setScreen("done");
     if (!isEditingExistingReport) {
@@ -2646,11 +2797,18 @@ const report = {
   );
 
   if(screen==="daily") {
+    const isSubOperator = isSubOperatorRole(user?.role);
+    const currentDailyOwner = dailyOwnerName(dailyDate);
+    const canSubOperatorReport = !isSubOperator || (currentDailyOwner && isSubOperatorApproved(dailyDate, currentDailyOwner, user?.username));
+    const linkedSubOperators = subOperatorUsers.filter(su => normalizeName(linkedOperatorName(su, dailyDate)) === normalizeName(user?.name) || getAssignedSubOperator(dailyDate, user?.name) === su.username);
+    const pendingSubReportForOperator = !isSubOperator
+      ? pendingSubReports.find(item => item?.status === "pending" && normalizeName(item.operator) === normalizeName(user?.name))
+      : null;
     const orderedDayTasks = getOperatorDailyView(dailyDate);
     const lockedClients = getLockedClients(dailyDate);
     const lockedDayTasks = orderedDayTasks.filter(t=>lockedClients.has(t.client));
     const activeDayTasks = orderedDayTasks.filter(t=>!lockedClients.has(t.client));
-    const dayTasks = operatorEditOrder ? operatorOrderDraft : activeDayTasks;
+    const dayTasks = (!isSubOperator && operatorEditOrder) ? operatorOrderDraft : activeDayTasks;
     const criticalOperatorNotice = operatorIssues.find(iss => {
       const [id, operator, , , priority, status] = iss;
       return isCriticalIssue(priority) &&
@@ -2685,6 +2843,30 @@ const report = {
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} workStart={workStart} supplyDB={supplyDB} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
+        {pendingSubReportForOperator&&(()=>{ const item=pendingSubReportForOperator; const r=item.report||{}; return (
+          <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{width:"100%",maxWidth:420,background:"rgba(255,255,255,0.96)",borderRadius:24,padding:18,boxShadow:"0 28px 90px rgba(15,23,42,0.34)",border:"1px solid rgba(148,163,184,0.32)"}}>
+              <div style={{fontSize:18,fontWeight:900,color:C.text,marginBottom:4}}>דוח ממתין לאישור</div>
+              <div style={{fontSize:12,fontWeight:800,color:C.muted,marginBottom:12}}>נשלח על ידי {item.subName || item.subUsername || "SUB_OPERATOR"}</div>
+              <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:16,padding:12,display:"grid",gap:8,marginBottom:12}}>
+                <div style={{fontSize:15,fontWeight:900,color:C.text}}>{String(r.client||"").split(" - ")[0]}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>תאריך<br/><b style={{color:C.text}}>{fmtDate(r.reportDate)}</b></div>
+                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>זרימה<br/><b style={{color:r.flow==="לא תקין"?C.red:C.text}}>{r.flow || "-"}</b></div>
+                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>כלור<br/><b style={{color:C.text}}>{r.chlorine}</b></div>
+                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>pH<br/><b style={{color:C.text}}>{r.ph}</b></div>
+                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>מלח<br/><b style={{color:C.text}}>{r.salt || 0}</b></div>
+                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>מצב<br/><b style={{color:C.text}}>{r.poolStatus || "-"}</b></div>
+                </div>
+                {(r.customStatusText||r.notes)&&<div style={{fontSize:12,fontWeight:800,color:C.text,lineHeight:1.5,background:"#fff",borderRadius:12,padding:"8px 10px"}}>{r.customStatusText || r.notes}</div>}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <Press onClick={()=>editPendingSubReport(item)} style={{padding:"13px",borderRadius:14,background:"#fff8e1",color:C.orange,fontSize:13,fontWeight:900,textAlign:"center",border:"1px solid #ffe082"}}>ערוך לפני שליחה</Press>
+                <Press onClick={()=>approvePendingSubReport(item)} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:13,fontWeight:900,textAlign:"center",boxShadow:"0 12px 28px rgba(79,70,229,0.25)"}}>{actionLabel(`approveSubReport:${item.id}`,{idle:"אשר ושלח",loading:"שולח...",success:"נשלח",local:"נשמר"})}</Press>
+              </div>
+            </div>
+          </div>
+        );})()}
         {internalNoteEdit&&(
           <BottomSheet title="הערה פנימית" onClose={()=>setInternalNoteEdit(null)}>
             <div style={{fontSize:13,fontWeight:900,color:C.text,marginBottom:10}}>{internalNoteEdit.client?.split(" - ")[0]}</div>
@@ -2750,6 +2932,13 @@ const report = {
               {workStart?"⏹ סיום":"▶ התחלה"}
             </Press>
           </div>
+          {!isSubOperator&&linkedSubOperators.length>0&&<div style={{...card({marginBottom:12})}}>
+            <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>אישור עוזר מפעיל לדוחות</div>
+            {linkedSubOperators.map(su=>{ const approved=isSubOperatorApproved(dailyDate,user?.name,su.username); return <div key={su.username} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
+              <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:900,color:C.text}}>{su.name||su.username}</div><div style={{fontSize:11,fontWeight:800,color:approved?C.green:C.muted}}>{approved?"מאושר למילוי דוחות":"צפייה בלבד"}</div></div>
+              <Press onClick={()=>approveSubOperator(dailyDate,user?.name,su.username)} style={{padding:"7px 11px",borderRadius:12,background:approved?"#e8f5e9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:approved?C.green:"#fff",fontSize:12,fontWeight:900}}>{approved?"מאושר":"אשר עריכה"}</Press>
+            </div>;})}
+          </div>}
           {dayTasks.length>0&&<div style={{...card(),padding:"14px 18px",marginBottom:4}}><PBar done={done} total={dayTasks.length}/></div>}
           <div style={{...card({marginBottom:4})}}>
             <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>חומרים לסיפוק היום</div>
@@ -2781,17 +2970,17 @@ const report = {
               <Press onClick={()=>setDismissed(true)} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
             </div>
           )}
-          <Press onClick={openManualReport} disabled={isActionLoading("openManualReport")} style={{...card({marginBottom:16,display:"flex",alignItems:"center",gap:12,border:`2px dashed ${C.lightBlue}`,background:isActionLoading("openManualReport")?"#e3f2fd":"#f5f9ff",opacity:isActionLoading("openManualReport")?0.75:1}),padding:"14px 18px"}}>
+          {canSubOperatorReport&&<Press onClick={openManualReport} disabled={isActionLoading("openManualReport")} style={{...card({marginBottom:16,display:"flex",alignItems:"center",gap:12,border:`2px dashed ${C.lightBlue}`,background:isActionLoading("openManualReport")?"#e3f2fd":"#f5f9ff",opacity:isActionLoading("openManualReport")?0.75:1}),padding:"14px 18px"}}>
             <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📝</div>
             <div><div style={{fontWeight:800,fontSize:15,color:C.blue}}>{isActionLoading("openManualReport")?"⏳ פותח דוח...":"+ פתח דוח חדש"}</div><div style={{fontSize:12,color:C.muted}}>דוח ידני — לקוח מכל הרשימה</div></div>
-          </Press>
+          </Press>}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
             <div>
               <h2 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:0}}>סידור יומי</h2>
               <div style={{fontSize:13,fontWeight:800,color:C.blue,marginTop:2}}>יום {dateDayName(dailyDate)}</div>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <Press onClick={()=>{
+              {!isSubOperator&&<Press onClick={()=>{
                 if(operatorEditOrder) {
                   writeLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate), operatorOrderDraft.map(t=>t.client));
                   setOperatorEditOrder(false);
@@ -2803,11 +2992,11 @@ const report = {
                 haptic("medium");
               }} style={{padding:"6px 10px",borderRadius:10,background:operatorEditOrder?"#fff8e1":"#f0f4f8",color:operatorEditOrder?C.orange:C.blue,fontSize:11,fontWeight:900,border:`1px solid ${operatorEditOrder?"#ffe082":C.border}`}}>
                 {operatorEditOrder?"סיום עריכה":"עריכת סדר"}
-              </Press>
+              </Press>}
               <input type="date" value={dailyDate} onChange={e=>{setDailyDate(e.target.value);setOperatorEditOrder(false);}} style={{fontSize:12,fontWeight:700,color:C.blue,border:"none",background:"transparent",outline:"none",cursor:"pointer",maxWidth:112}}/>
             </div>
           </div>
-          <div style={{marginBottom:12,position:"relative"}}>
+          {canSubOperatorReport&&<div style={{marginBottom:12,position:"relative"}}>
             <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="🔍 חפש לקוח מכל הימים לפי א-ב..." style={{...inp,fontSize:13}}/>
             {clientSearch&&(
               <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:240,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
@@ -2820,7 +3009,7 @@ const report = {
                 {filterClientOptions([...clients,...unassignedClients], clientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות מתחילת שם הלקוח</div>}
               </div>
             )}
-          </div>
+          </div>}
           {dayTasks.length===0&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>אין לקוחות לתאריך זה</div></div>}
           {dayTasks.map((t,i)=>{
             const isDone = isClientReportedDone(dailyDate, t.client);
@@ -2834,14 +3023,14 @@ const report = {
               return (
                 <div
                   key={t.id}
-                  draggable={operatorEditOrder}
-                  onDragStart={e=>operatorEditOrder&&e.dataTransfer.setData("text/plain", String(i))}
-                  onDragOver={e=>operatorEditOrder&&e.preventDefault()}
-                  onDrop={e=>{ if(operatorEditOrder){ e.preventDefault(); moveDraftItem(Number(e.dataTransfer.getData("text/plain")), i); } }}
-                  onPointerDown={()=>!operatorEditOrder&&startClientLongPress(t.client, false)}
+                  draggable={!isSubOperator&&operatorEditOrder}
+                  onDragStart={e=>!isSubOperator&&operatorEditOrder&&e.dataTransfer.setData("text/plain", String(i))}
+                  onDragOver={e=>!isSubOperator&&operatorEditOrder&&e.preventDefault()}
+                  onDrop={e=>{ if(!isSubOperator&&operatorEditOrder){ e.preventDefault(); moveDraftItem(Number(e.dataTransfer.getData("text/plain")), i); } }}
+                  onPointerDown={()=>!isSubOperator&&!operatorEditOrder&&startClientLongPress(t.client, false)}
                   onPointerUp={()=>stopClientLongPress(t.client)}
                   onPointerLeave={()=>stopClientLongPress(t.client)}
-                  onClick={()=>!operatorEditOrder&&openDoneReportEditor(t)}
+                  onClick={()=>canSubOperatorReport&&!operatorEditOrder&&openDoneReportEditor(t)}
                   style={{...card({marginBottom:8,opacity:0.82,border:"2px solid #c8e6c9",padding:"10px 12px",display:"flex",alignItems:"center",gap:10,background:operatorEditOrder?"#fffde7":"#fff"})}}
                 >
                   <div style={{width:30,height:30,borderRadius:"50%",background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",color:C.green,fontWeight:900,flexShrink:0}}>✓</div>
@@ -2850,9 +3039,9 @@ const report = {
                     {clientAddress(t.client)&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{clientAddress(t.client)}</div>}
                   </div>
                   <Badge label="בוצע" col={C.green}/>
-                  <Press onClick={(e)=>{e.stopPropagation();openDoneReportEditor(t);}} style={{padding:"6px 10px",borderRadius:10,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12}}>ערוך</Press>
+                  {canSubOperatorReport&&<Press onClick={(e)=>{e.stopPropagation();openDoneReportEditor(t);}} style={{padding:"6px 10px",borderRadius:10,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12}}>ערוך</Press>}
                   <Press onClick={(e)=>{e.stopPropagation();forgetCompletedReport(dailyDate,t.client);setOpenDoneTasks(x=>({...x,[doneKey]:true}));showToast("הכיווץ בוטל");haptic("medium");}} style={{padding:"6px 10px",borderRadius:10,background:"#ffebee",color:C.red,fontWeight:900,fontSize:12}}>בטל כיווץ</Press>
-                  {operatorEditOrder&&(
+                  {!isSubOperator&&operatorEditOrder&&(
                     <div style={{display:"flex",gap:4}}>
                       <Press onClick={()=>moveDraftItem(i, Math.max(0, i-1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↑</Press>
                       <Press onClick={()=>moveDraftItem(i, Math.min(dayTasks.length-1, i+1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↓</Press>
@@ -2870,11 +3059,11 @@ const report = {
             return (
               <div
                 key={t.id}
-                draggable={operatorEditOrder}
-                onDragStart={e=>operatorEditOrder&&e.dataTransfer.setData("text/plain", String(i))}
-                onDragOver={e=>operatorEditOrder&&e.preventDefault()}
-                onDrop={e=>{ if(operatorEditOrder){ e.preventDefault(); moveDraftItem(Number(e.dataTransfer.getData("text/plain")), i); } }}
-                onPointerDown={()=>!operatorEditOrder&&startClientLongPress(t.client, false)}
+                draggable={!isSubOperator&&operatorEditOrder}
+                onDragStart={e=>!isSubOperator&&operatorEditOrder&&e.dataTransfer.setData("text/plain", String(i))}
+                onDragOver={e=>!isSubOperator&&operatorEditOrder&&e.preventDefault()}
+                onDrop={e=>{ if(!isSubOperator&&operatorEditOrder){ e.preventDefault(); moveDraftItem(Number(e.dataTransfer.getData("text/plain")), i); } }}
+                onPointerDown={()=>!isSubOperator&&!operatorEditOrder&&startClientLongPress(t.client, false)}
                 onPointerUp={()=>stopClientLongPress(t.client)}
                 onPointerLeave={()=>stopClientLongPress(t.client)}
                 style={{...card({marginBottom:12,opacity:isDone?0.65:1,border:`2px solid ${operatorEditOrder?"#ffe082":needsAck?"#ff9800":isDone?"#c8e6c9":C.border}`,transition:"all 0.3s",background:operatorEditOrder?"#fffde7":"#fff"})}}
@@ -2895,7 +3084,7 @@ const report = {
                   <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
                     <Badge label={isDone?"✓ בוצע":"⏳ ממתין"} col={isDone?C.green:C.orange}/>
                     {isDone&&<Press onClick={()=>{setOpenDoneTasks(x=>({...x,[doneKey]:false}));haptic();}} style={{padding:"6px 10px",borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:12}}>סגור</Press>}
-                    {!isDone&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 דוח</Press>}
+                    {!isDone&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 דוח</Press>}
                   </div>
                 </div>
                 {operatorEditOrder&&(
@@ -3026,7 +3215,7 @@ const report = {
                   </div>
                   {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
                   {(t.changeLog?.[t.changeLog.length-1]?.note)&&<div style={{background:"#fff8e1",borderRadius:8,padding:"6px 10px",fontSize:12,color:C.orange,fontWeight:600,marginBottom:8}}>📝 {t.changeLog[t.changeLog.length-1].note}</div>}
-                  {t.status!=="done"&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setNavTab(0);setScreen("form");haptic();}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>📝 פתח דוח</Press>}
+                  {t.status!=="done"&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setNavTab(0);setScreen("form");haptic();}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>📝 פתח דוח</Press>}
                 </div>
               ));
             })()}
@@ -3302,7 +3491,7 @@ const report = {
     const adminSoftText = {color:"#64748b"};
     const adminPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     const adminGlass = (extra={}) => card({background:"rgba(226,237,250,0.78)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(30,64,175,0.14), 0 1px 0 rgba(255,255,255,0.76) inset",...extra});
-    const isSubAdminPanel = isSubAdminRole(user?.role);
+    const isSubAdminPanel = false;
     const adminTabs = isSubAdminPanel
       ? [["daily","📋 חלוקת עבודה"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"]]
       : [["daily","📋 חלוקת עבודה"],["adminreport","📝 דוח ידני"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["treatments","🔢 מספר טיפולים"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"],["users","👤 משתמשים"]];
@@ -3434,6 +3623,14 @@ const report = {
                       <div style={{fontSize:13,fontWeight:900,color:C.blue}}>סדר עבודה: {activeAdminOperator}</div>
                       <Press onClick={()=>{const clean=saveAdminOrderEntries(taskDate, activeAdminOperator, adminOrderList);setAdminOrderDraft(clean);showToast("סדר מקומי נשמר");haptic("success");}} style={{padding:"7px 12px",borderRadius:10,background:C.green,color:"#fff",fontSize:12,fontWeight:900}}>שמור סדר</Press>
                     </div>
+                    {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
+                      <label style={{fontSize:11,fontWeight:900,color:C.muted,display:"block",marginBottom:6}}>שיוך SUB_OPERATOR למפעיל זה</label>
+                      <select value={getAssignedSubOperator(taskDate, activeAdminOperator)} onChange={e=>{setAssignedSubOperator(taskDate, activeAdminOperator, e.target.value); showToast(e.target.value?"✅ עוזר מפעיל שויך":"שיוך עוזר מפעיל הוסר"); haptic("medium");}} style={{...sel,fontSize:12,margin:0}}>
+                        <option value="">ללא עוזר מפעיל</option>
+                        {subOperatorUsers.map(su=><option key={su.username} value={su.username}>{su.name || su.username}</option>)}
+                      </select>
+                      <div style={{fontSize:10,fontWeight:800,color:C.muted,marginTop:6}}>העוזר יראה את סדר היום של {activeAdminOperator}. מילוי דוחות ייפתח רק אחרי אישור מפעיל.</div>
+                    </div>}
                     <input value={adminOrderClientSearch} onChange={e=>setAdminOrderClientSearch(e.target.value)} placeholder="חפש והוסף בריכה לסדר..." style={{...inp,fontSize:12,marginBottom:8}}/>
                     {adminOrderClientSearch&&(
                       <div style={{maxHeight:160,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#fff",marginBottom:10}}>
