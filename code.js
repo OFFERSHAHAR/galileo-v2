@@ -1779,26 +1779,23 @@ function json(obj) {
         );
       }
 
-      // סוג מנוי / plan
-      if (h.includes("plan") || h.includes("סוג מנוי")) {
-        rules.push(
-          SpreadsheetApp.newConditionalFormatRule()
-            .whenTextContains("PRO")
-            .setBackground("#F3E8FF")
-            .setFontColor("#6B21A8")
-            .setRanges([range])
-            .build()
-        );
-
-        rules.push(
-          SpreadsheetApp.newConditionalFormatRule()
-            .whenTextContains("FREE")
-            .setBackground("#E0F2FE")
-            .setFontColor("#075985")
-            .setRanges([range])
-            .build()
-        );
-      }
+    // Subscription plan
+    if (h.includes("plan") || h.includes("סוג מנוי")) {
+      const proRule = SpreadsheetApp.newConditionalFormatRule()
+        .whenTextContains("PRO")
+        .setBackground("#F3E8FF")
+        .setFontColor("#6B21A8")
+        .setRanges([range])
+        .build();
+      const freeRule = SpreadsheetApp.newConditionalFormatRule()
+        .whenTextContains("FREE")
+        .setBackground("#E0F2FE")
+        .setFontColor("#075985")
+        .setRanges([range])
+        .build();
+      rules.push(proRule);
+      rules.push(freeRule);
+    }
 
       // תקלות
       if (h.includes("דחיפות") || h.includes("תקלה") || h.includes("סטטוס")) {

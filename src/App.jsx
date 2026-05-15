@@ -69,7 +69,7 @@ const DEFAULT_ICON_192 = "/icons/galileo-icon-192.png";
 const DEFAULT_ICON_512 = "/icons/galileo-icon-512.png";
 const DEFAULT_APPLE_ICON = "/icons/galileo-icon-180.png";
 const DEFAULT_MASKABLE_ICON = "/icons/galileo-icon-maskable-512.png";
-const DEFAULT_ICON_VERSION = "20260515";
+const DEFAULT_ICON_VERSION = "20260515c";
 const versionIconUrl = (src) => `${src}?v=${DEFAULT_ICON_VERSION}`;
 
 function defaultIconDataUrl(bg = DEFAULT_THEME_COLOR) {
