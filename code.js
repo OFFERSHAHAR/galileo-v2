@@ -512,6 +512,10 @@
         return json({ lastReadings: readings });
       }
 
+      if (action === "saveClientInternalNote") {
+        return json(saveClientInternalNote_(ss, data));
+      }
+
       if (action === "saveWorkLog") {
         const sheet = ss.getSheetByName("שעות_עבודה");
         const l = data.log;
@@ -1060,6 +1064,39 @@
     if (digits.indexOf("0") === 0) return "972" + digits.slice(1);
     if (digits.length === 9 && digits.indexOf("5") === 0) return "972" + digits;
     return digits;
+  }
+
+  function saveClientInternalNote_(ss, data) {
+    const sheet = ss.getSheetByName("דוחות");
+    if (!sheet) return { success:false, error:"reports sheet not found" };
+
+    const client = String(data.client || "").trim();
+    const note = String(data.note || "");
+    if (!client) return { success:false, error:"missing client" };
+
+    const rows = sheet.getDataRange().getValues();
+    let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
+    if (hi === -1) hi = 0;
+
+    let targetRow = 0;
+    let targetDate = "";
+    for (let i = hi + 1; i < rows.length; i++) {
+      const rowClient = String(rows[i][2] || "").trim();
+      if (rowClient !== client) continue;
+      const rowDate = normalizeSheetDate_(rows[i][0]);
+      if (!targetRow || rowDate >= targetDate) {
+        targetRow = i + 1;
+        targetDate = rowDate;
+      }
+    }
+
+    if (!targetRow) {
+      return { success:false, error:"no report row for client", client:client };
+    }
+
+    // Column 17 is פירוט_מצב / customStatusText.
+    sheet.getRange(targetRow, 17).setValue(note);
+    return { success:true, row:targetRow, client:client, note:note };
   }
   
 

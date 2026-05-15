@@ -1393,6 +1393,7 @@ const [screen,setScreen] = useState(() => {
   const [opIssueClient,setOpIssueClient] = useState("");
   const [opIssueDesc,setOpIssueDesc] = useState("");
   const [opIssuePriority,setOpIssuePriority] = useState("רגיל");
+  const [internalNoteEdit,setInternalNoteEdit] = useState(null);
   const [clientSearch,setClientSearch] = useState("");
   const [unassignedClients,setUnassignedClients] = useState([]);
   const [editingReport,setEditingReport] = useState(null);
@@ -1571,6 +1572,32 @@ const [screen,setScreen] = useState(() => {
     if (res?.issues) setOperatorIssues(res.issues);
     if (!silent) showToast(`✅ ${res?.issues?.length||0} תקלות`);
     return res?.issues || [];
+  };
+  const saveInternalNoteForClient = async () => {
+    if (!internalNoteEdit?.client) return;
+    const clientName = internalNoteEdit.client;
+    const note = internalNoteEdit.note || "";
+    setInternalNoteEdit(null);
+    setLastReadings(prev => {
+      const next = {
+        ...prev,
+        [clientName]: {
+          ...(prev[clientName] || {}),
+          date: prev[clientName]?.date || todayStr(),
+          poolStatus: prev[clientName]?.poolStatus || "מאוזנת",
+          customStatusText: note
+        }
+      };
+      try {
+        const cached = JSON.parse(localStorage.getItem("galileo_cache") || "{}");
+        localStorage.setItem("galileo_cache", JSON.stringify({...cached, lastReadings: next, cachedAt: Date.now()}));
+      } catch {}
+      return next;
+    });
+    const res = await sheetCall("saveClientInternalNote", {client: clientName, note}).catch(()=>null);
+    if (res?.success) showToast("✅ הערה פנימית נשמרה");
+    else showToast("⚠️ ההערה עודכנה מקומית, לא נמצאה שורת דוח לשמירה");
+    haptic(res?.success ? "success" : "medium");
   };
   const issueText = (value) => String(value || "").trim();
   const isCriticalIssue = (priority) => issueText(priority).includes("קריט") || issueText(priority).includes("§");
@@ -2479,6 +2506,17 @@ const report = {
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} workStart={workStart} supplyDB={supplyDB} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
+        {internalNoteEdit&&(
+          <BottomSheet title="הערה פנימית" onClose={()=>setInternalNoteEdit(null)}>
+            <div style={{fontSize:13,fontWeight:900,color:C.text,marginBottom:10}}>{internalNoteEdit.client?.split(" - ")[0]}</div>
+            <textarea value={internalNoteEdit.note} onChange={e=>setInternalNoteEdit(x=>({...x,note:e.target.value}))} rows={4} placeholder="הערה פנימית למפעילים בלבד..." style={{...inp,resize:"none",minHeight:110,marginBottom:12}}/>
+            <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",gap:6,alignItems:"center"}}>
+              <span>🔒</span>
+              <span style={{fontSize:11,fontWeight:800,color:C.blue}}>פנימי בלבד — לא יוצר דוח ולא נשלח ללקוח</span>
+            </div>
+            <Press onClick={saveInternalNoteForClient} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 4px 14px rgba(21,101,192,0.3)"}}>שמור הערה</Press>
+          </BottomSheet>
+        )}
         {criticalOperatorNotice&&(()=>{
           const [id, operator, clientName, desc, priority, status, response, date] = criticalOperatorNotice;
           return (
@@ -2692,7 +2730,13 @@ const report = {
                     📝 {t.adminNote}
                   </div>
                 )}
-                {(()=>{const lr=lastReadings[t.client];if(!lr)return null;
+                {(()=>{const lr=lastReadings[t.client];if(!lr)return (
+                  <div style={{marginBottom:10}}>
+                    <Press onClick={()=>{setInternalNoteEdit({client:t.client,note:""});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11}}>
+                      ✏️ הוסף הערה פנימית
+                    </Press>
+                  </div>
+                );
                   return (
                     <div style={{marginBottom:10}}>
                       <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
@@ -2705,12 +2749,15 @@ const report = {
                         {lr.acidLiters>0&&<span style={{fontSize:12,fontWeight:800,color:C.red}}>חומצה: {lr.acidLiters}L</span>}
                         <span style={{fontSize:11,color:C.text,marginRight:"auto",fontWeight:800}}>{fmtDate(String(lr.date||"").slice(0,10))}</span>
                       </div>
-                      {String(lr.poolStatus||"").trim()==="\u05de\u05d0\u05d5\u05d6\u05e0\u05ea"&&String(lr.customStatusText||"").trim()&&(
+                      {String(lr.customStatusText||"").trim()&&(
                         <div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 12px",marginBottom:6,border:`1px solid ${C.border}`,fontSize:12,color:C.muted,lineHeight:1.5}}>
                           <span style={{fontWeight:800,color:C.blue}}>{"\uD83D\uDCDD \u05d4\u05e2\u05e8\u05d4 \u05e4\u05e0\u05d9\u05de\u05d9\u05ea: "}</span>
                           {lr.customStatusText}
                         </div>
                       )}
+                      <Press onClick={()=>{setInternalNoteEdit({client:t.client,note:String(lr.customStatusText||"")});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11,marginBottom:6}}>
+                        ✏️ ערוך הערה פנימית
+                      </Press>
                       {lr.missedTreatment&&(
                         <div style={{background:"#fff8e1",borderRadius:10,padding:"8px 12px",marginBottom:6,border:"1px solid #ffe082",fontSize:12,color:C.orange,fontWeight:800}}>
                           ⚠️ לא בוצע טיפול בתאריך {fmtDate(String(lr.date||"").slice(0,10))}
