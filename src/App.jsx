@@ -791,32 +791,38 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
 
 const clientMetaLine = (c) => [c?.regularOperator && `מפעיל: ${c.regularOperator}`, c?.regularDays && `ימים: ${c.regularDays}`].filter(Boolean).join(" · ");
 
-function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,val,fn,large,expandKey,form,sf,disabled=false,disabledReason="",zeroButtonLabel=""}) {
+function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,val,fn,large,expandKey,form,sf,disabled=false,disabledReason="",zeroButtonLabel="",phLowButton=false}) {
   const isOpen = !!form[expandKey];
-  const hasValue = val > 0;
+  const displayVal = Number(val) || 0;
+  const hasValue = displayVal > 0 || (phLowButton && form.phLowConfirmed);
   return (
     <div style={{...card({marginBottom:8})}}>
       <Press onClick={()=>sf(expandKey,!isOpen)}
         style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0"}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontWeight:700,fontSize:14,color:C.text}}>{label}</span>
-          {hasValue&&!isOpen&&<span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"2px 10px",fontSize:12,fontWeight:800}}>{val}{unit}</span>}
+          {hasValue&&!isOpen&&<span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"2px 10px",fontSize:12,fontWeight:800}}>{phLowButton&&form.phLowConfirmed?"HP נמוך":`${displayVal}${unit}`}</span>}
         </div>
         <span style={{fontSize:16,color:C.blue,display:"inline-block",transform:isOpen?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▾</span>
       </Press>
       {isOpen&&(
         <>
           {zeroButtonLabel&&(
-            <Press onClick={()=>{fn(0);haptic();}} style={{padding:"9px 12px",borderRadius:12,background:val===0?"#e8f5e9":"#f0f4f8",color:val===0?C.green:C.muted,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${val===0?"#c8e6c9":C.border}`}}>
-              {val===0?"✓ ":""}{zeroButtonLabel}
+            <Press onClick={()=>{fn(0);haptic();}} style={{padding:"9px 12px",borderRadius:12,background:displayVal===0?"#e8f5e9":"#f0f4f8",color:displayVal===0?C.green:C.muted,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${displayVal===0?"#c8e6c9":C.border}`}}>
+              {displayVal===0?"✓ ":""}{zeroButtonLabel}
             </Press>
           )}
-          {label==="כלור"&&val===0&&(
+          {label==="כלור"&&displayVal===0&&(
             <Press onClick={()=>{sf("chlorineZeroConfirmed",true);haptic("success");}} style={{padding:"9px 12px",borderRadius:12,background:form.chlorineZeroConfirmed?"#e8f5e9":"#fff8e1",color:form.chlorineZeroConfirmed?C.green:C.orange,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${form.chlorineZeroConfirmed?"#c8e6c9":"#ffe082"}`}}>
               {form.chlorineZeroConfirmed?"✓ ":""}רמת כלור 0
             </Press>
           )}
-          <SliderField label={label} min={min} max={max} step={step} value={val} onChange={fn} unit={unit} warnAbove={warnAbove} warnBelow={warnBelow} optimal={optimal} large={large} disabled={disabled} disabledReason={disabledReason}/>
+          {phLowButton&&displayVal===0&&(
+            <Press onClick={()=>{sf("phLowConfirmed",true);fn(0);haptic("success");}} style={{padding:"9px 12px",borderRadius:12,background:form.phLowConfirmed?"#e8f5e9":"#fff8e1",color:form.phLowConfirmed?C.green:C.orange,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${form.phLowConfirmed?"#c8e6c9":"#ffe082"}`}}>
+              {form.phLowConfirmed?"✓ ":""}PH נמוך
+            </Press>
+          )}
+          <SliderField label={label} min={min} max={max} step={step} value={displayVal} onChange={fn} unit={unit} warnAbove={warnAbove} warnBelow={warnBelow} optimal={optimal} large={large} disabled={disabled} disabledReason={disabledReason}/>
         </>
       )}
     </div>
@@ -979,7 +985,7 @@ function LicenseScreen({ onDone, onSuperAdmin }) {
 const blank = () => ({
   reportDate:todayStr(),client:"",chlorine:0,ph:0,salt:0,chlora:0,hth:0,phUp:0,acidLiters:0,
   elModel:"",elSerial:"",elDate:"",waterLevel:"תקין",clarity:"תקין",fat:"תקין",flow:"",
-  acid:false,phUpSupply:false,saltPkg:false,saltBags:1,supplyStatus:"",supplyNote:"",suppliedEquipment:[],chlorineZeroConfirmed:false,poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
+  acid:false,phUpSupply:false,saltPkg:false,saltBags:1,supplyStatus:"",supplyNote:"",suppliedEquipment:[],chlorineZeroConfirmed:false,phLowConfirmed:false,poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
   notes:"",photos:[],clientLocked:false,adminReport:false,
 });
 
@@ -1606,6 +1612,7 @@ const [screen,setScreen] = useState(() => {
     const secondary = part==="סקימר" || part==="גלישה" ? (secondaryPoolType(poolType)===part ? "" : part) : secondaryPoolType(poolType);
     return [primary, secondary].filter(Boolean).join(",");
   };
+  const isLowPhValue = (value) => ["hp נמוך", "ph נמוך", "pH נמוך"].some(x => normalizeName(value) === normalizeName(x));
   const toggleSuppliedEquipment = (name) => {
     const current = Array.isArray(form.suppliedEquipment) ? form.suppliedEquipment : [];
     sf("suppliedEquipment", current.includes(name) ? current.filter(x=>x!==name) : [...current, name]);
@@ -1639,7 +1646,9 @@ const [screen,setScreen] = useState(() => {
       reportDate: source.reportDate || dailyDate,
       client: task.client,
       clientLocked: true,
-      chlorineZeroConfirmed: Number(source.chlorine || 0) === 0
+      ph: isLowPhValue(source.ph) ? 0 : source.ph,
+      chlorineZeroConfirmed: Number(source.chlorine || 0) === 0,
+      phLowConfirmed: isLowPhValue(source.ph)
     });
     setEditingReport({date:dailyDate, client:task.client, operator:opName, localId:existing?.id || ""});
     setOpenDoneTasks(x=>({...x,[`${dailyDate}:${task.id || task.client}`]:true}));
@@ -2803,6 +2812,12 @@ const [screen,setScreen] = useState(() => {
       haptic("medium");
       return;
     }
+    if (Number(ph) === 0 && !form.phLowConfirmed) {
+      showToast("⚠️ חובה לבחור ערך pH או לסמן PH נמוך");
+      sf("_exp_ph", true);
+      haptic("medium");
+      return;
+    }
     setAction("submitReport", "loading");
     setSyncing(true);
     const elNext=calcNext(elDate);
@@ -2829,7 +2844,7 @@ const report = {
   operator:reportOperatorName||user?.name||"",
   client,
   chlorine,
-  ph,
+  ph: form.phLowConfirmed && Number(ph) === 0 ? "HP נמוך" : ph,
   salt,
   chlora:form.chlora>0?form.chlora:undefined,
   hth:form.hth>0?form.hth:undefined,
@@ -2887,7 +2902,7 @@ const report = {
           ...previous,
           date: reportDate,
           chlorine,
-          ph,
+          ph: report.ph,
           salt,
           chlora: form.chlora > 0 ? form.chlora : 0,
           hth: form.hth > 0 ? form.hth : 0,
@@ -2999,7 +3014,7 @@ const report = {
 
   const SLIDER_CONFIGS = [
     {key:"chlorine",label:"כלור",min:0,max:8,step:0.1,unit:" ppm",warnAbove:3,optimal:1.5,val:chlorine,fn:v=>setForm(f=>({...f,chlorine:v,chlorineZeroConfirmed:Number(v)===0?f.chlorineZeroConfirmed:false}))},
-    {key:"ph",label:"pH",min:5,max:9,step:0.1,unit:"",warnAbove:8,warnBelow:6,optimal:7.4,val:ph,fn:v=>sf("ph",v)},
+    {key:"ph",label:"pH",min:5,max:9,step:0.1,unit:"",warnAbove:8,warnBelow:6,optimal:7.4,val:ph,fn:v=>setForm(f=>({...f,ph:v,phLowConfirmed:Number(v)===0?f.phLowConfirmed:false})),phLowButton:true},
     {key:"salt",label:"מלח",min:0,max:6,step:0.1,unit:" g/L",optimal:3.5,val:salt,fn:v=>sf("salt",v),disabled:currentPrimaryPool==="כלור",disabledReason:"נעול בבריכת כלור"},
     {key:"chlora",label:"טבליות כלור (TAB)",min:0,max:5,step:0.25,unit:"",val:form.chlora??0,fn:v=>sf("chlora",v),zeroButtonLabel:"אין צורך להוסיף"},
     {key:"hth",label:"HTH",min:0,max:5,step:0.5,unit:" cups",val:form.hth??0,fn:v=>sf("hth",v)},
@@ -3593,7 +3608,7 @@ const report = {
 
         <Sec icon="📊" title="מדידות">
           {SLIDER_CONFIGS.map(s=>(
-            <CollapsibleSlider key={s.key} label={s.label} min={s.min} max={s.max} step={s.step} unit={s.unit} warnAbove={s.warnAbove} warnBelow={s.warnBelow} optimal={s.optimal} val={s.val} fn={s.fn} large={largeSlider} expandKey={`_exp_${s.key}`} form={form} sf={sf} disabled={s.disabled} disabledReason={s.disabledReason} zeroButtonLabel={s.zeroButtonLabel}/>
+            <CollapsibleSlider key={s.key} label={s.label} min={s.min} max={s.max} step={s.step} unit={s.unit} warnAbove={s.warnAbove} warnBelow={s.warnBelow} optimal={s.optimal} val={s.val} fn={s.fn} large={largeSlider} expandKey={`_exp_${s.key}`} form={form} sf={sf} disabled={s.disabled} disabledReason={s.disabledReason} zeroButtonLabel={s.zeroButtonLabel} phLowButton={s.phLowButton}/>
           ))}
         </Sec>
 
@@ -3738,7 +3753,7 @@ const report = {
           <Press onClick={()=>setScreen("daily")} style={{padding:14,borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>🏠 לוח יומי</Press>
         </div>
         {reports.length>0&&(
-          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:18,border:`1px solid rgba(194,65,12,0.24)`,background:"rgba(255,247,237,0.82)",color:C.orange,fontWeight:900,fontSize:13,textAlign:"center",width:"100%",maxWidth:340,boxShadow:"0 10px 24px rgba(194,65,12,0.08)"}}>✏️ ערוך דוח אחרון</Press>
+          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,ph:isLowPhValue(last.ph)?0:last.ph,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0,phLowConfirmed:isLowPhValue(last.ph)}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:18,border:`1px solid rgba(194,65,12,0.24)`,background:"rgba(255,247,237,0.82)",color:C.orange,fontWeight:900,fontSize:13,textAlign:"center",width:"100%",maxWidth:340,boxShadow:"0 10px 24px rgba(194,65,12,0.08)"}}>✏️ ערוך דוח אחרון</Press>
         )}
       </div>
     );
