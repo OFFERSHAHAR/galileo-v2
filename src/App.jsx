@@ -505,6 +505,7 @@ function WelcomeMediaModal({media,onClose}) {
 
 function DailyBriefingModal({tasks,workStart,supplyDB,onStartWork,onConfirm,onClose}) {
   const list = Array.isArray(tasks) ? tasks : [];
+  const [openMaterial,setOpenMaterial] = useState(null);
   const materials = list.reduce((acc, task) => {
     const supply = supplyDB?.[task.client];
     if (!supply) return acc;
@@ -513,6 +514,15 @@ function DailyBriefingModal({tasks,workStart,supplyDB,onStartWork,onConfirm,onCl
     if (supply.saltPkg) acc.saltBags += Number(supply.saltBags || 1);
     return acc;
   }, { acid: 0, phUpSupply: 0, saltBags: 0 });
+  const materialRecipients = list.reduce((acc, task) => {
+    const supply = supplyDB?.[task.client];
+    if (!supply) return acc;
+    const client = String(task.client || "").split(" - ")[0];
+    if (supply.acid) acc.acid.push(client);
+    if (supply.phUpSupply) acc.phUpSupply.push(client);
+    if (supply.saltPkg) acc.saltBags.push(`${client} ×${Number(supply.saltBags || 1)}`);
+    return acc;
+  }, { acid: [], phUpSupply: [], saltBags: [] });
   const hasMaterials = materials.acid || materials.phUpSupply || materials.saltBags;
   return (
     <div dir="rtl" style={{position:"fixed",inset:0,zIndex:1300,background:"rgba(0,0,0,0.58)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(6px)"}}>
@@ -542,11 +552,19 @@ function DailyBriefingModal({tasks,workStart,supplyDB,onStartWork,onConfirm,onCl
         <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:14,padding:12,marginBottom:12}}>
           <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>חומרים לסיפוק היום</div>
           {hasMaterials ? (
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-              <div style={{background:"#ffebee",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.red}}>{materials.acid}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>חומצה</div></div>
-              <div style={{background:"#f3e5f5",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:"#6a1b9a"}}>{materials.phUpSupply}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>מעלה pH</div></div>
-              <div style={{background:"#e8f5e9",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.green}}>{materials.saltBags}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>שקי מלח</div></div>
-            </div>
+            <>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                <Press onClick={()=>setOpenMaterial(openMaterial==="acid"?null:"acid")} style={{background:"#ffebee",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.red}}>{materials.acid}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>חומצה</div></Press>
+                <Press onClick={()=>setOpenMaterial(openMaterial==="phUpSupply"?null:"phUpSupply")} style={{background:"#f3e5f5",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:"#6a1b9a"}}>{materials.phUpSupply}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>מעלה pH</div></Press>
+                <Press onClick={()=>setOpenMaterial(openMaterial==="saltBags"?null:"saltBags")} style={{background:"#e8f5e9",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.green}}>{materials.saltBags}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>שקי מלח</div></Press>
+              </div>
+              {openMaterial&&(
+                <div style={{marginTop:8,background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"9px 10px"}}>
+                  <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>מיועד ל:</div>
+                  {(materialRecipients[openMaterial] || []).length ? (materialRecipients[openMaterial] || []).map((name,i)=><div key={`${openMaterial}-${i}`} style={{fontSize:12,fontWeight:800,color:C.text,padding:"3px 0"}}>{name}</div>) : <div style={{fontSize:12,fontWeight:800,color:C.muted}}>אין נמענים לחומר הזה</div>}
+                </div>
+              )}
+            </>
           ) : (
             <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין חומרים מסומנים לסיפוק</div>
           )}
@@ -760,6 +778,8 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
   );
 }
 
+const clientMetaLine = (c) => [c?.regularOperator && `מפעיל: ${c.regularOperator}`, c?.regularDays && `ימים: ${c.regularDays}`].filter(Boolean).join(" · ");
+
 function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,val,fn,large,expandKey,form,sf,disabled=false,disabledReason="",zeroButtonLabel=""}) {
   const isOpen = !!form[expandKey];
   const hasValue = val > 0;
@@ -778,6 +798,11 @@ function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,
           {zeroButtonLabel&&(
             <Press onClick={()=>{fn(0);haptic();}} style={{padding:"9px 12px",borderRadius:12,background:val===0?"#e8f5e9":"#f0f4f8",color:val===0?C.green:C.muted,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${val===0?"#c8e6c9":C.border}`}}>
               {val===0?"✓ ":""}{zeroButtonLabel}
+            </Press>
+          )}
+          {label==="כלור"&&val===0&&(
+            <Press onClick={()=>{sf("chlorineZeroConfirmed",true);haptic("success");}} style={{padding:"9px 12px",borderRadius:12,background:form.chlorineZeroConfirmed?"#e8f5e9":"#fff8e1",color:form.chlorineZeroConfirmed?C.green:C.orange,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${form.chlorineZeroConfirmed?"#c8e6c9":"#ffe082"}`}}>
+              {form.chlorineZeroConfirmed?"✓ ":""}רמת כלור 0
             </Press>
           )}
           <SliderField label={label} min={min} max={max} step={step} value={val} onChange={fn} unit={unit} warnAbove={warnAbove} warnBelow={warnBelow} optimal={optimal} large={large} disabled={disabled} disabledReason={disabledReason}/>
@@ -943,7 +968,7 @@ function LicenseScreen({ onDone, onSuperAdmin }) {
 const blank = () => ({
   reportDate:todayStr(),client:"",chlorine:0,ph:0,salt:0,chlora:0,hth:0,phUp:0,acidLiters:0,
   elModel:"",elSerial:"",elDate:"",waterLevel:"תקין",clarity:"תקין",fat:"תקין",flow:"",
-  acid:false,phUpSupply:false,saltPkg:false,saltBags:1,supplyStatus:"",supplyNote:"",suppliedEquipment:[],poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
+  acid:false,phUpSupply:false,saltPkg:false,saltBags:1,supplyStatus:"",supplyNote:"",suppliedEquipment:[],chlorineZeroConfirmed:false,poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
   notes:"",photos:[],clientLocked:false,adminReport:false,
 });
 
@@ -1304,8 +1329,6 @@ export default function App() {
   const [companyName, setCompanyName] = useState(company.name||DEFAULT_APP_NAME);
   const [user,setUser] = useState(()=>{ try { return JSON.parse(localStorage.getItem("galileo_user")||"null"); } catch { return null; } });
   const [welcomeMedia,setWelcomeMedia] = useState(null);
-  const [localWelcomeMedia,setLocalWelcomeMedia] = useState(()=>{ try{return JSON.parse(localStorage.getItem("galileo_local_welcome_media")||"null");}catch{return null;} });
-  const [welcomeMediaLink,setWelcomeMediaLink] = useState("");
   const [showDailyBriefing,setShowDailyBriefing] = useState(false);
   const [greeting, setGreeting] = useState(()=>{
     try {
@@ -1425,9 +1448,9 @@ const [screen,setScreen] = useState(() => {
   const [sheetReports,setSheetReports] = useState([]);
   const [treatmentCounts,setTreatmentCounts] = useState([]);
   const [chemicalRestrictionPrompt,setChemicalRestrictionPrompt] = useState(null);
+  const [openDailySupplyType,setOpenDailySupplyType] = useState(null);
   const logoLongPress = useRef();
   const longPressTimers = useRef({});
-  const welcomeMediaFileRef = useRef();
   const fileRef = useRef();
   const toastTimer = useRef();
 
@@ -1584,47 +1607,6 @@ const [screen,setScreen] = useState(() => {
     if (!silent) showToast(`✅ ${res?.issues?.length||0} תקלות`);
     return res?.issues || [];
   };
-  const saveLocalWelcomeMedia = (media) => {
-    localStorage.setItem("galileo_local_welcome_media", JSON.stringify(media));
-    setLocalWelcomeMedia(media);
-    setWelcomeMediaLink("");
-  };
-  const clearLocalWelcomeMedia = () => {
-    localStorage.removeItem("galileo_local_welcome_media");
-    setLocalWelcomeMedia(null);
-    setWelcomeMediaLink("");
-    showToast("🗑️ המדיה נמחקה מהמכשיר");
-    haptic("success");
-  };
-  const uploadLocalWelcomeImage = (file) => {
-    if (!file) return;
-    if (!file.type?.startsWith("image/")) {
-      showToast("⚠️ בחר קובץ תמונה בלבד");
-      return;
-    }
-    if (file.size > 2800 * 1024) {
-      showToast("⚠️ התמונה גדולה מדי. עדיף עד 2.8MB");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      saveLocalWelcomeMedia({url:String(reader.result || ""), source:"localUpload", name:file.name, savedAt:Date.now()});
-      showToast("✅ התמונה נשמרה מקומית");
-      haptic("success");
-    };
-    reader.onerror = () => showToast("⚠️ לא הצלחתי לקרוא את התמונה");
-    reader.readAsDataURL(file);
-  };
-  const saveLocalWelcomeLink = () => {
-    const url = extractFirstUrl(welcomeMediaLink);
-    if (!url) {
-      showToast("⚠️ הדבק לינק תקין");
-      return;
-    }
-    saveLocalWelcomeMedia({url, source:"localLink", savedAt:Date.now()});
-    showToast("✅ הלינק נשמר מקומית");
-    haptic("success");
-  };
   const saveInternalNoteForClient = async () => {
     if (!internalNoteEdit?.client) return;
     const clientName = internalNoteEdit.client;
@@ -1680,14 +1662,28 @@ const [screen,setScreen] = useState(() => {
     localStorage.setItem("galileo_dismissed_critical_issues", JSON.stringify(next));
   };
 
+  const notifyOperatorIssueAcknowledged = async (issue, note) => {
+    const operatorName = normalizeName(issue?.[1] || "");
+    const opUser = allUsers.find(u => u.role === "operator" && u.username && normalizeName(u.name) === operatorName);
+    if (!opUser?.username) {
+      console.warn("OneSignal: operator user not found for critical issue ack", issue?.[1]);
+      return false;
+    }
+    const clientName = String(issue?.[2] || "").split(" - ")[0];
+    return sendOneSignalToUser("🚨 תקלה קריטית אושרה", `${clientName} — ${note}`, opUser.username);
+  };
+
   const acknowledgeCriticalIssue = async (issue, index) => {
     const note = `אושר על ידי ${user?.name || "אדמין"} - תקלה קריטית בטיפול מיידי`;
+    const issueId = issue?.[0];
     const updated = [...operatorIssues];
     updated[index] = [...issue];
     updated[index][5] = "בטיפול";
     updated[index][6] = note;
     setOperatorIssues(updated);
-    await sheetCall("updateOperatorIssue", {rowIndex:index+1, status:"בטיפול", response:note});
+    dismissCriticalIssue(issueId);
+    await sheetCall("updateOperatorIssue", {rowIndex:index+1, status:"בטיפול", response:note}).catch(e => console.warn("Critical issue sheet update failed", e));
+    await notifyOperatorIssueAcknowledged(issue, note);
     showToast("✅ התקלה אושרה ונשלחה התראה למפעיל");
     haptic("success");
   };
@@ -2113,9 +2109,7 @@ const [screen,setScreen] = useState(() => {
   const _doLogin = (found) => {
     setUser(found);
     setGreeting(getDailyGreeting(found.username||""));
-    let localMedia = null;
-    try { localMedia = JSON.parse(localStorage.getItem("galileo_local_welcome_media") || "null"); } catch {}
-    setWelcomeMedia(classifyWelcomeMedia(localMedia || mediaUrlFromUser(found)));
+    setWelcomeMedia(classifyWelcomeMedia(mediaUrlFromUser(found)));
     setShowDailyBriefing(found.role !== "admin");
     localStorage.setItem("galileo_user", JSON.stringify(found));
     setScreen(found.role === "admin" ? "admin" : "daily");
@@ -2336,6 +2330,12 @@ const [screen,setScreen] = useState(() => {
       haptic("medium");
       return;
     }
+    if (Number(chlorine) === 0 && !form.chlorineZeroConfirmed) {
+      showToast("⚠️ אשר במפורש רמת כלור 0");
+      sf("_exp_chlorine", true);
+      haptic("medium");
+      return;
+    }
     setAction("submitReport", "loading");
     setSyncing(true);
     const elNext=calcNext(elDate);
@@ -2475,6 +2475,7 @@ const report = {
         const res = await sheetCall("getFreeClients");
         if(res?.clients?.length) setFreeClients(res.clients);
       }
+      setClientSearch("");
       setForm(blank());
       setScreen("form");
     } finally {
@@ -2489,7 +2490,7 @@ const report = {
   const currentPrimaryPool = primaryPoolType(currentPoolType);
 
   const SLIDER_CONFIGS = [
-    {key:"chlorine",label:"כלור",min:0,max:8,step:0.1,unit:" ppm",warnAbove:3,optimal:1.5,val:chlorine,fn:v=>sf("chlorine",v)},
+    {key:"chlorine",label:"כלור",min:0,max:8,step:0.1,unit:" ppm",warnAbove:3,optimal:1.5,val:chlorine,fn:v=>setForm(f=>({...f,chlorine:v,chlorineZeroConfirmed:Number(v)===0?f.chlorineZeroConfirmed:false}))},
     {key:"ph",label:"pH",min:5,max:9,step:0.1,unit:"",warnAbove:8,warnBelow:6,optimal:7.4,val:ph,fn:v=>sf("ph",v)},
     {key:"salt",label:"מלח",min:0,max:6,step:0.1,unit:" g/L",optimal:3.5,val:salt,fn:v=>sf("salt",v),disabled:currentPrimaryPool==="כלור",disabledReason:"נעול בבריכת כלור"},
     {key:"chlora",label:"טבליות כלור (TAB)",min:0,max:5,step:0.25,unit:"",val:form.chlora??0,fn:v=>sf("chlora",v),zeroButtonLabel:"אין צורך להוסיף"},
@@ -2562,6 +2563,15 @@ const report = {
       if (supply.saltPkg) acc.saltBags += Number(supply.saltBags || 1);
       return acc;
     }, { acid:0, phUpSupply:0, saltBags:0 });
+    const dailySupplyRecipients = orderedDayTasks.reduce((acc, task) => {
+      const supply = supplyDB[task.client];
+      if (!supply) return acc;
+      const clientName = String(task.client || "").split(" - ")[0];
+      if (supply.acid) acc.acid.push(clientName);
+      if (supply.phUpSupply) acc.phUpSupply.push(clientName);
+      if (supply.saltPkg) acc.saltBags.push(`${clientName} ×${Number(supply.saltBags || 1)}`);
+      return acc;
+    }, { acid:[], phUpSupply:[], saltBags:[] });
     const hasDailySupply = dailySupplySummary.acid || dailySupplySummary.phUpSupply || dailySupplySummary.saltBags;
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:C.bg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:90}}>
@@ -2638,11 +2648,19 @@ const report = {
           <div style={{...card({marginBottom:4})}}>
             <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>חומרים לסיפוק היום</div>
             {hasDailySupply ? (
-              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                <div style={{background:"#ffebee",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.red}}>{dailySupplySummary.acid}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>חומצה</div></div>
-                <div style={{background:"#f3e5f5",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:"#6a1b9a"}}>{dailySupplySummary.phUpSupply}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>מעלה pH</div></div>
-                <div style={{background:"#e8f5e9",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.green}}>{dailySupplySummary.saltBags}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>שקי מלח</div></div>
-              </div>
+              <>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                  <Press onClick={()=>setOpenDailySupplyType(openDailySupplyType==="acid"?null:"acid")} style={{background:"#ffebee",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.red}}>{dailySupplySummary.acid}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>חומצה</div></Press>
+                  <Press onClick={()=>setOpenDailySupplyType(openDailySupplyType==="phUpSupply"?null:"phUpSupply")} style={{background:"#f3e5f5",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:"#6a1b9a"}}>{dailySupplySummary.phUpSupply}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>מעלה pH</div></Press>
+                  <Press onClick={()=>setOpenDailySupplyType(openDailySupplyType==="saltBags"?null:"saltBags")} style={{background:"#e8f5e9",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.green}}>{dailySupplySummary.saltBags}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>שקי מלח</div></Press>
+                </div>
+                {openDailySupplyType&&(
+                  <div style={{marginTop:8,background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:12,padding:"9px 10px"}}>
+                    <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>מיועד ל:</div>
+                    {(dailySupplyRecipients[openDailySupplyType] || []).length ? (dailySupplyRecipients[openDailySupplyType] || []).map((name,i)=><div key={`${openDailySupplyType}-${i}`} style={{fontSize:12,fontWeight:800,color:C.text,padding:"3px 0"}}>{name}</div>) : <div style={{fontSize:12,fontWeight:800,color:C.muted}}>אין נמענים לחומר הזה</div>}
+                  </div>
+                )}
+              </>
             ) : (
               <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין חומרים מסומנים לסיפוק</div>
             )}
@@ -2973,12 +2991,27 @@ const report = {
               {form.clientLocked?(
                 <div style={{...inp,color:C.blue,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"default"}}><span>🏊 {client}</span><span style={{fontSize:12,color:C.muted}}>🔒</span></div>
               ):(
-                <select value={client} onChange={e=>sf("client",e.target.value)} style={sel}>
-                  <option value="">בחר לקוח...</option>
-                  {clients.length>0&&<optgroup label="לקוחות קבועים">{clients.map(c=><option key={c.name}>{c.name}</option>)}</optgroup>}
-                  {freeClients.length>0&&<optgroup label="לקוחות נוספים">{freeClients.map(c=><option key={c.name}>{c.name}</option>)}</optgroup>}
-                </select>
+                <div style={{position:"relative"}}>
+                  <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="🔍 חפש לקוח לפי שם, כתובת, טלפון או מפעיל..." style={{...inp,marginBottom:clientSearch?4:0}} autoComplete="off"/>
+                  {clientSearch&&(
+                    <div style={{maxHeight:220,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#fff",boxShadow:"0 8px 24px rgba(0,0,0,0.12)",marginBottom:8}}>
+                      {filterClientOptions([...clients,...freeClients.filter(fc=>!clients.find(c=>c.name===fc.name))], clientSearch).map(c=>(
+                        <Press key={c.name} onClick={()=>{sf("client",c.name);setClientSearch("");haptic();}} style={{padding:"11px 14px",borderBottom:`1px solid ${C.border}`}}>
+                          <div style={{fontSize:14,fontWeight:900,color:C.text}}>{c.name.split(" - ")[0]}</div>
+                          <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:2}}>{clientMetaLine(c)||c.address||"ללא שיוך מפעיל"}</div>
+                        </Press>
+                      ))}
+                      {filterClientOptions([...clients,...freeClients], clientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות לחיפוש</div>}
+                    </div>
+                  )}
+                  <select value={client} onChange={e=>sf("client",e.target.value)} style={sel}>
+                    <option value="">בחר לקוח...</option>
+                    {clients.length>0&&<optgroup label="לקוחות קבועים">{clients.map(c=><option key={c.name} value={c.name}>{c.name}{c.regularOperator?` · ${c.regularOperator}`:""}</option>)}</optgroup>}
+                    {freeClients.length>0&&<optgroup label="לקוחות נוספים">{freeClients.map(c=><option key={c.name} value={c.name}>{c.name}{c.regularOperator?` · ${c.regularOperator}`:""}</option>)}</optgroup>}
+                  </select>
+                </div>
               )}
+              {client&&(()=>{ const c=[...clients,...freeClients].find(x=>x.name===client); const meta=clientMetaLine(c); return meta?<div style={{marginTop:8,fontSize:12,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:10,padding:"8px 12px"}}>{meta}</div>:null; })()}
               {client&&clientPhone(client)&&<a href={`tel:${clientPhone(client)}`} style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"10px 14px",background:"#e8f5e9",border:`1px solid #c8e6c9`,borderRadius:12,textDecoration:"none",color:C.green,fontSize:13,fontWeight:700}}><span>📞</span><span>{client.split(" - ")[0]}</span><span style={{color:C.muted,fontSize:12,marginRight:"auto"}}>לחץ לחיוג</span></a>}
             </div>
           </div>
@@ -3153,7 +3186,7 @@ const report = {
     const filteredOrderClients = filterClientOptions(assignedOrderClients, adminOrderClientSearch);
     const taskClientOptions = clientsForOperatorsAndDate(clients, taskDate, taskOps);
     const dayTasks = tasks.filter(t=>t.date===taskDate);
-    const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]));
+    const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
     const criticalAdminIssue = criticalAdminIssueIndex >= 0 ? operatorIssues[criticalAdminIssueIndex] : null;
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:C.bg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:30}}>
@@ -3234,13 +3267,13 @@ const report = {
                 <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>בחר לקוח</label>
                 {form.client?(<div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}><span style={{color:C.blue,fontWeight:700}}>🏊 {form.client.split(" - ")[0]}</span><span onClick={()=>{sf("client","");setAdminClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span></div>):(
                   <div style={{position:"relative"}}>
-                    <input value={adminClientSearch} onChange={e=>setAdminClientSearch(e.target.value)} placeholder="🔍 חפש לקוח לפי שם או כתובת..." style={inp} autoComplete="off"/>
+                    <input value={adminClientSearch} onChange={e=>setAdminClientSearch(e.target.value)} placeholder="🔍 חפש לקוח לפי שם, כתובת או מפעיל..." style={inp} autoComplete="off"/>
                     {adminClientSearch&&(
                       <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:260,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
                         {filterClientOptions(clients, adminClientSearch).map(c=>(
                           <Press key={c.name} onClick={()=>{sf("client",c.name);setAdminClientSearch("");haptic();}} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
                             <div style={{width:32,height:32,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>🏊</div>
-                            <div><div style={{fontWeight:700,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div>{c.address&&<div style={{fontSize:11,color:C.muted}}>{c.address}</div>}</div>
+                            <div><div style={{fontWeight:700,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div><div style={{fontSize:11,color:C.muted}}>{clientMetaLine(c)||c.address||"ללא שיוך מפעיל"}</div></div>
                           </Press>
                         ))}
                         {filterClientOptions(clients, adminClientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות מתחילת שם הלקוח</div>}
@@ -3490,7 +3523,7 @@ const report = {
               </div>
               {(clientListSearch.trim().length>=2?filterClientOptions(clients, clientListSearch):sortByClientName(clients)).map((c,i)=>(
                 <div key={i} style={{...card({marginBottom:10})}}>
-                  <div style={{display:"flex",alignItems:"center",gap:12}}><div style={{width:40,height:40,borderRadius:12,background:"#e3f2fd",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{poolIconForType(c.poolType)}</div><div style={{flex:1}}><div style={{fontWeight:800,fontSize:14,color:C.text}}>{c.name.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{c.phone} · {c.address}</div><div style={{fontSize:11,color:C.blue,fontWeight:800,marginTop:3}}>{formatPoolType(c.poolType)}{c.regularOperator?` · ${c.regularOperator}`:""}</div></div>{c.phone&&<a href={`tel:${c.phone}`} style={{color:C.blue,fontSize:18,textDecoration:"none"}}>📞</a>}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}><div style={{width:40,height:40,borderRadius:12,background:"#e3f2fd",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{poolIconForType(c.poolType)}</div><div style={{flex:1}}><div style={{fontWeight:800,fontSize:14,color:C.text}}>{c.name.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{c.phone} · {c.address}</div><div style={{fontSize:11,color:C.blue,fontWeight:800,marginTop:3}}>{formatPoolType(c.poolType)}{clientMetaLine(c)?` · ${clientMetaLine(c)}`:""}</div></div>{c.phone&&<a href={`tel:${c.phone}`} style={{color:C.blue,fontSize:18,textDecoration:"none"}}>📞</a>}</div>
                   <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>{["מלח","כלור","סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={async()=>{ const nextType=setPoolTypePart(c.poolType,pt); const updated=clients.map(x=>x.name===c.name?{...x,poolType:nextType}:x); setClients(updated); await sheetCall("saveClientPoolType",{clientName:c.name,poolType:nextType}); showToast(`✅ ${c.name.split(" - ")[0]} — ${formatPoolType(nextType)}`); haptic(); }} style={{padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:800,background:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?C.blue:"#f0f4f8",color:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?"#fff":C.muted}}>{pt}</Press>))}</div>
                 </div>
               ))}
@@ -3593,37 +3626,6 @@ const report = {
           )}
           {adminTab==="users"&&(
             <div>
-              <div style={{...card({marginBottom:14})}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:12}}>
-                  <div>
-                    <div style={{fontWeight:900,fontSize:15,color:C.text}}>מדיה קופצת אחרי התחברות</div>
-                    <div style={{fontSize:12,fontWeight:700,color:C.muted,marginTop:3}}>נשמר מקומית במכשיר הזה בלבד</div>
-                  </div>
-                  {localWelcomeMedia&&<Badge label="פעיל" col={C.green}/>}
-                </div>
-                {localWelcomeMedia&&(
-                  <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:14,padding:10,marginBottom:12}}>
-                    {(()=>{ const m=classifyWelcomeMedia(localWelcomeMedia); return (
-                      <div>
-                        {m?.type==="image"&&<img src={m.url} alt="" style={{width:"100%",maxHeight:180,objectFit:"contain",borderRadius:10,background:"#fff",marginBottom:8}}/>}
-                        {m?.type==="video"&&<video src={m.url} controls playsInline style={{width:"100%",maxHeight:180,borderRadius:10,background:"#000",marginBottom:8}}/>}
-                        {m?.type==="iframe"&&<iframe src={m.embedUrl} title="local-welcome-preview" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen style={{width:"100%",aspectRatio:"16 / 9",border:0,borderRadius:10,background:"#000",marginBottom:8}}/>}
-                        {m?.type==="link"&&<div style={{fontSize:12,fontWeight:800,color:C.blue,wordBreak:"break-word",marginBottom:8}}>{m.url}</div>}
-                        <div style={{fontSize:11,fontWeight:800,color:C.muted}}>מקור: {localWelcomeMedia.source==="localUpload"?"תמונה שהועלתה":"לינק"}</div>
-                      </div>
-                    ); })()}
-                  </div>
-                )}
-                <input ref={welcomeMediaFileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{uploadLocalWelcomeImage(e.target.files?.[0]); e.target.value="";}}/>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                  <Press onClick={()=>welcomeMediaFileRef.current?.click()} style={{padding:"11px 12px",borderRadius:12,background:"#e3f2fd",color:C.blue,fontWeight:900,fontSize:13,textAlign:"center"}}>העלה תמונה</Press>
-                  <Press onClick={clearLocalWelcomeMedia} style={{padding:"11px 12px",borderRadius:12,background:"#ffebee",color:C.red,fontWeight:900,fontSize:13,textAlign:"center",opacity:localWelcomeMedia?1:0.5}}>מחק</Press>
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8}}>
-                  <input value={welcomeMediaLink} onChange={e=>setWelcomeMediaLink(e.target.value)} placeholder="לינק ישיר / YouTube / Instagram..." style={{...inp,marginBottom:0}}/>
-                  <Press onClick={saveLocalWelcomeLink} style={{padding:"11px 14px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center",whiteSpace:"nowrap"}}>שמור</Press>
-                </div>
-              </div>
               {allUsers.map(u=>(<div key={u.username} style={{...card({marginBottom:10,display:"flex",alignItems:"center",gap:12})}}><span style={{fontSize:30}}>{u.icon}</span><div style={{flex:1}}><div style={{fontWeight:800,fontSize:15,color:C.text}}>{u.name}</div><div style={{color:C.muted,fontSize:12,marginTop:2}}>{u.username} · {u.phone}</div><div style={{color:"#b0bec5",fontSize:11,marginTop:2}}>"{u.welcomeMessage}"</div></div><Badge label={u.role==="admin"?"מנהל":"מפעיל"} col={u.role==="admin"?C.orange:C.blue}/></div>))}
               <div style={{marginTop:24}}><Press onClick={()=>setShowReportIssue(true)} style={{...card({background:"#fff8e1",border:"1px solid #ffe082",display:"flex",alignItems:"center",gap:12}),padding:"14px 16px"}}><span style={{fontSize:22}}>🔧</span><div><div style={{fontWeight:800,fontSize:14,color:C.orange}}>דווח על תקלה</div><div style={{fontSize:12,color:C.muted}}>שלח דיווח ישירות למפתח</div></div></Press></div>
             </div>
