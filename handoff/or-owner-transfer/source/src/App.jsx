@@ -503,9 +503,8 @@ function WelcomeMediaModal({media,onClose}) {
   );
 }
 
-function DailyBriefingModal({tasks,workStart,supplyDB,subOperators=[],onStartWork,onConfirm,onClose}) {
+function DailyBriefingModal({tasks,workStart,supplyDB,onStartWork,onConfirm,onClose}) {
   const list = Array.isArray(tasks) ? tasks : [];
-  const linkedSubs = Array.isArray(subOperators) ? subOperators.filter(Boolean) : [];
   const [openMaterial,setOpenMaterial] = useState(null);
   const materials = list.reduce((acc, task) => {
     const supply = supplyDB?.[task.client];
@@ -545,16 +544,6 @@ function DailyBriefingModal({tasks,workStart,supplyDB,subOperators=[],onStartWor
             <div style={{fontSize:11,fontWeight:800,color:C.muted}}>שעון עבודה</div>
           </div>
         </div>
-        {linkedSubs.length>0&&(
-          <div style={{background:"#eef6ff",border:`1px solid ${C.border}`,borderRadius:14,padding:"10px 12px",marginBottom:12}}>
-            <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:6}}>SUB_OPERATOR משויך להיום</div>
-            {linkedSubs.map((sub,i)=>(
-              <div key={sub.username || sub.name || i} style={{fontSize:12,fontWeight:800,color:C.blue,padding:"3px 0"}}>
-                {sub.name || sub.username}
-              </div>
-            ))}
-          </div>
-        )}
         {!workStart&&(
           <Press onClick={onStartWork} style={{padding:"12px 14px",borderRadius:16,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",marginBottom:12,boxShadow:"0 14px 32px rgba(79,70,229,0.22)"}}>
             הפעל שעון
@@ -1651,22 +1640,22 @@ const [screen,setScreen] = useState(() => {
     return sortByClientName(list).filter(c => ops.some(op => clientAssignedToOperatorDate(c, date, op)));
   };
 
-  const myDayClients = (date=dailyDate, opName=user?.name) => {
+  const myDayClients = (date=dailyDate) => {
     const dayName = dateDayName(date);
     const anyHasSchedule = clients.some(c=>c.regularDays||c.regularOperator);
-    if(!anyHasSchedule) return clients.filter(c=>!c.regularOperator || normalizeName(c.regularOperator)===normalizeName(opName));
+    if(!anyHasSchedule) return clients.filter(c=>!c.regularOperator || normalizeName(c.regularOperator)===normalizeName(user?.name));
     return clients.filter(c => {
       const days = String(c.regularDays||"").split(",").map(d=>normalizeDay(d.trim()));
-      const opMatch = !c.regularOperator || normalizeName(c.regularOperator)===normalizeName(opName);
+      const opMatch = !c.regularOperator || normalizeName(c.regularOperator)===normalizeName(user?.name);
       const dayMatch = days.some(d=>d===dayName);
       return opMatch && dayMatch;
     });
   };
 
-  const dayClientProfiles = (date=dailyDate, opName=dailyOwnerName(date) || user?.name) => {
+  const dayClientProfiles = (date=dailyDate) => {
     const existing = myTasks(date);
-    const fromDays = myDayClients(date, opName).filter(c=>!existing.find(t=>t.client===c.name));
-    const dayProfiles = fromDays.map(c=>({id:`day-${c.name}`,client:c.name,operators:[opName],date,status:"pending",changeLog:[],_dayProfile:true}));
+    const fromDays = myDayClients(date).filter(c=>!existing.find(t=>t.client===c.name));
+    const dayProfiles = fromDays.map(c=>({id:`day-${c.name}`,client:c.name,operators:[user?.name],date,status:"pending",changeLog:[],_dayProfile:true}));
     return [...existing, ...dayProfiles];
   };
 
@@ -1923,22 +1912,10 @@ const [screen,setScreen] = useState(() => {
   useEffect(()=>{
     if(!user) return;
     setGreeting(getDailyGreeting(user.username || ""));
-    const refresh = async() => { const tR = await sheetCall("getTasks"); if(Array.isArray(tR?.tasks)) { setTasks(tR.tasks); try { const cached = localStorage.getItem("galileo_cache"); const c = cached ? JSON.parse(cached) : {}; localStorage.setItem("galileo_cache", JSON.stringify({...c, tasks:tR.tasks})); } catch {} } };
+    const refresh = async() => { const tR = await sheetCall("getTasks"); if(Array.isArray(tR?.tasks) && tR.tasks.length>0) { setTasks(tR.tasks); try { const cached = localStorage.getItem("galileo_cache"); const c = cached ? JSON.parse(cached) : {}; localStorage.setItem("galileo_cache", JSON.stringify({...c, tasks:tR.tasks})); } catch {} } };
     const interval = setInterval(refresh, 10000);
     window.addEventListener("focus", refresh);
     return ()=>{ clearInterval(interval); window.removeEventListener("focus", refresh); };
-  },[user]);
-
-  useEffect(()=>{
-    if(!user) return;
-    const onStorage = (e) => {
-      const key = e.key || "";
-      if (key.startsWith("galileo_admin_order:") || key.startsWith("galileo_sub_operator:")) {
-        setSubOperatorRefresh(x=>x+1);
-      }
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
   },[user]);
 
   const localKey = (...parts) => parts.map(p=>String(p||"").replaceAll(":", "_")).join(":");
@@ -1969,28 +1946,12 @@ const [screen,setScreen] = useState(() => {
     username ? localStorage.setItem(key, username) : localStorage.removeItem(key);
     setSubOperatorRefresh(x=>x+1);
   };
-  const isSameSubOperator = (saved, u) => {
-    const value = normalizeName(saved);
-    return !!value && (value === normalizeName(u?.username) || value === normalizeName(u?.name));
+  const findAssignedOperatorForSub = (date, username) => {
+    const target = String(username || "").trim();
+    if (!target) return "";
+    return operatorUsers.find(op => getAssignedSubOperator(date, op.name) === target)?.name || "";
   };
-  const findAssignedOperatorForSub = (date, subUser=user) => {
-    if (!subUser) return "";
-    const exact = operatorUsers.find(op => isSameSubOperator(getAssignedSubOperator(date, op.name), subUser))?.name;
-    if (exact) return exact;
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i) || "";
-        if (!key.startsWith("galileo_sub_operator:")) continue;
-        const saved = localStorage.getItem(key);
-        if (!isSameSubOperator(saved, subUser)) continue;
-        const parts = key.split(":");
-        const opName = parts.slice(2).join(":");
-        if (opName) return opName;
-      }
-    } catch {}
-    return "";
-  };
-  const linkedOperatorName = (u=user, date=dailyDate) => String(u?.linkedOperator || u?.parentOperator || u?.operator || u?.regularOperator || u?.assignedOperator || u?.["מפעיל משויך"] || u?.["מפעיל_משויך"] || u?.["מפעיל קבוע"] || u?.["מפעיל_קבוע"] || findAssignedOperatorForSub(date, u) || "").trim();
+  const linkedOperatorName = (u=user, date=dailyDate) => String(u?.linkedOperator || u?.parentOperator || u?.operator || u?.regularOperator || u?.assignedOperator || findAssignedOperatorForSub(date, u?.username) || "").trim();
   const dailyOwnerName = (date=dailyDate) => isSubOperatorRole(user?.role) ? (linkedOperatorName(user, date) || user?.name || "") : (user?.name || "");
   const isSubOperatorApproved = (date=dailyDate, opName=dailyOwnerName(date), subUsername=user?.username) => localStorage.getItem(subOperatorApprovalKey(date, opName, subUsername)) === "yes";
   const approveSubOperator = (date, opName, subUsername) => {
@@ -2032,66 +1993,14 @@ const [screen,setScreen] = useState(() => {
     return [...names].filter(Boolean).map((clientName, index) => ({client: clientName, note: "", orderIndex: index + 1}));
   };
   const getAdminOrderEntries = (date, opName) => {
-    const saved = getLocalAdminOrderEntries(date, opName);
-    if (saved.length) return saved;
-    const fromTasks = getSheetAdminOrderEntries(date, opName);
-    return fromTasks.length ? fromTasks : baseOperatorClients(date, opName);
-  };
-  const getLocalAdminOrderEntries = (date, opName) => readLocalArray(adminOrderKey(date, opName))
+    const saved = readLocalArray(adminOrderKey(date, opName))
       .filter(x=>x?.client)
       .map((x, i)=>({client:x.client, note:x.note || "", orderIndex:Number(x.orderIndex || i + 1)}));
-  const getSheetAdminOrderEntries = (date, opName) => tasks
-    .filter(t =>
-      normalizeDate(t.date) === date &&
-      (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)) &&
-      (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0)
-    )
-    .map((t, i)=>({client:t.client, note:t.adminNote || "", orderIndex:Number(t.orderIndex || i + 1)}))
-    .sort((a,b)=>a.orderIndex-b.orderIndex);
-  const getEffectiveAdminOrderEntries = (date, opName) => {
-    const local = getLocalAdminOrderEntries(date, opName);
-    if (local.length) return local.sort((a,b)=>a.orderIndex-b.orderIndex);
-    return getSheetAdminOrderEntries(date, opName);
+    return saved.length ? saved.sort((a,b)=>a.orderIndex-b.orderIndex) : baseOperatorClients(date, opName);
   };
   const saveAdminOrderEntries = (date, opName, entries) => {
     const clean = (entries || []).filter(x=>x?.client).map((x, i)=>({client:x.client, note:x.note || "", orderIndex:i + 1}));
     writeLocalArray(adminOrderKey(date, opName), clean);
-    setSubOperatorRefresh(x=>x+1);
-    return clean;
-  };
-  const syncAdminOrderTasks = async (date, opName, entries) => {
-    const clean = saveAdminOrderEntries(date, opName, entries);
-    const cleanNames = new Set(clean.map(x=>x.client));
-    const existingByClient = new Map(tasks
-      .filter(t => normalizeDate(t.date) === date && (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)))
-      .map(t => [t.client, t])
-    );
-    const updatedOrderTasks = clean.map((entry, index) => {
-      const existing = existingByClient.get(entry.client);
-      return {
-        ...(existing || {}),
-        id: existing?.id || `admin-order-${date}-${opName}-${index + 1}-${Date.now()}`,
-        date,
-        client: entry.client,
-        operators: [opName],
-        status: existing?.status || "pending",
-        changeLog: existing?.changeLog || [],
-        orderIndex: index + 1,
-        adminNote: entry.note || "",
-        createdByAdminOrder: true,
-      };
-    });
-    const nextTasks = [
-      ...tasks.filter(t => {
-        const sameDayOperator = normalizeDate(t.date) === date && (t.operators || []).some(op => normalizeName(op) === normalizeName(opName));
-        if (!sameDayOperator) return true;
-        if (!t.createdByAdminOrder && !Number(t.orderIndex || 0)) return true;
-        return !cleanNames.has(t.client);
-      }),
-      ...updatedOrderTasks
-    ];
-    setTasks(nextTasks);
-    if (sheetId) await sheetCall("saveTasks", {tasks: nextTasks});
     return clean;
   };
   const loadAdminOrderDraft = (date, opName) => {
@@ -2127,7 +2036,7 @@ const [screen,setScreen] = useState(() => {
   const stopClientLongPress = (clientName) => clearTimeout(longPressTimers.current[clientName]);
   const getOperatorDailyView = (date=dailyDate) => {
     const opName = dailyOwnerName(date);
-    const adminEntries = getEffectiveAdminOrderEntries(date, opName);
+    const adminEntries = readLocalArray(adminOrderKey(date, opName)).filter(x=>x?.client);
     let list;
     if (adminEntries.length) {
       const ordered = adminEntries
@@ -2141,10 +2050,10 @@ const [screen,setScreen] = useState(() => {
       const extra = myTasks(date).filter(t=>!ordered.some(x=>x.client===t.client));
       list = [...ordered, ...extra];
     } else {
-      list = dayClientProfiles(date, opName);
+      list = dayClientProfiles(date);
     }
     const operatorOrder = readLocalArray(operatorOrderKey(user?.username || user?.name, date));
-    if (!adminEntries.length && operatorOrder.length) {
+    if (operatorOrder.length) {
       const orderMap = new Map(operatorOrder.map((clientName, i)=>[clientName, i]));
       list = [...list].sort((a,b)=>(orderMap.has(a.client)?orderMap.get(a.client):9999) - (orderMap.has(b.client)?orderMap.get(b.client):9999));
     }
@@ -2313,49 +2222,6 @@ const [screen,setScreen] = useState(() => {
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
     } catch {}
   };
-
-  const refreshCurrentPageData = async () => {
-    if (!user || isActionLoading("refreshData")) return;
-    setAction("refreshData", "loading");
-    try {
-      await connectSheets(true);
-      if (screen === "daily" || screen === "admin") await loadOperatorIssues(true);
-      if (screen === "admin" && adminTab === "treatments") await loadTreatmentCounts();
-      setSubOperatorRefresh(x=>x+1);
-      setAction("refreshData", "success", 1400);
-      showToast("✅ הנתונים רועננו");
-      haptic("success");
-    } catch (e) {
-      console.warn("Refresh failed", e);
-      setAction("refreshData", "error", 2200);
-      showToast("⚠️ הריענון נכשל");
-      haptic("medium");
-    }
-  };
-
-  const RefreshTopButton = ({compact=false}) => (
-    <Press
-      onClick={refreshCurrentPageData}
-      disabled={isActionLoading("refreshData")}
-      title="רענון נתונים"
-      style={{
-        background:isActionLoading("refreshData")?"rgba(226,237,250,0.55)":"rgba(226,237,250,0.72)",
-        backdropFilter:"blur(14px)",
-        border:"1px solid rgba(148,163,184,0.22)",
-        borderRadius:16,
-        padding:compact?"9px 11px":"9px 12px",
-        color:actionStatus.refreshData==="error"?C.red:C.blue,
-        fontSize:12,
-        fontWeight:900,
-        minWidth:compact?42:"auto",
-        textAlign:"center",
-        opacity:isActionLoading("refreshData")?0.75:1,
-        boxShadow:"0 10px 26px rgba(30,64,175,0.12)"
-      }}
-    >
-      {actionLabel("refreshData",{idle:"↻",loading:"⏳",success:"✅",error:"⚠️"})}
-    </Press>
-  );
 
   const _doLogin = (found) => {
     setUser(found);
@@ -2934,7 +2800,7 @@ const report = {
     const isSubOperator = isSubOperatorRole(user?.role);
     const currentDailyOwner = dailyOwnerName(dailyDate);
     const canSubOperatorReport = !isSubOperator || (currentDailyOwner && isSubOperatorApproved(dailyDate, currentDailyOwner, user?.username));
-    const linkedSubOperators = subOperatorUsers.filter(su => normalizeName(linkedOperatorName(su, dailyDate)) === normalizeName(user?.name) || isSameSubOperator(getAssignedSubOperator(dailyDate, user?.name), su));
+    const linkedSubOperators = subOperatorUsers.filter(su => normalizeName(linkedOperatorName(su, dailyDate)) === normalizeName(user?.name) || getAssignedSubOperator(dailyDate, user?.name) === su.username);
     const pendingSubReportForOperator = !isSubOperator
       ? pendingSubReports.find(item => item?.status === "pending" && normalizeName(item.operator) === normalizeName(user?.name))
       : null;
@@ -2975,7 +2841,7 @@ const report = {
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
-        {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
+        {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} workStart={workStart} supplyDB={supplyDB} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
         {pendingSubReportForOperator&&(()=>{ const item=pendingSubReportForOperator; const r=item.report||{}; return (
           <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -3613,7 +3479,8 @@ const report = {
     const adminOrderList = adminOrderDraft.length || selectedAdminOperator ? adminOrderDraft : (activeAdminOperator ? getAdminOrderEntries(taskDate, activeAdminOperator) : []);
     const adminOrderNames = new Set(adminOrderList.map(x=>x.client));
     const allOrderClients = [...clients, ...unassignedClients.filter(uc=>!clients.find(c=>c.name===uc.name))];
-    const filteredOrderClients = filterClientOptions(allOrderClients, adminOrderClientSearch);
+    const assignedOrderClients = clientsForOperatorsAndDate(allOrderClients, taskDate, activeAdminOperator ? [activeAdminOperator] : []);
+    const filteredOrderClients = filterClientOptions(assignedOrderClients, adminOrderClientSearch);
     const taskClientOptions = clientsForOperatorsAndDate(clients, taskDate, taskOps);
     const dayTasks = tasks.filter(t=>t.date===taskDate);
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
@@ -3731,7 +3598,7 @@ const report = {
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:12}}>
                   <div>
                     <h3 style={{fontSize:14,fontWeight:900,color:C.text,margin:"0 0 3px"}}>חדר בקרה יומי</h3>
-                    <div style={{fontSize:11,color:C.muted,fontWeight:700}}>סדר נשמר ומסתנכרן למפעיל דרך Google Sheets</div>
+                    <div style={{fontSize:11,color:C.muted,fontWeight:700}}>סדר מקומי בלבד, בלי שינוי ב-Google Sheets</div>
                   </div>
                   <input type="date" value={taskDate} onChange={e=>{setTaskDate(e.target.value); if(activeAdminOperator) loadAdminOrderDraft(e.target.value, activeAdminOperator);}} style={{...inp,maxWidth:132,fontSize:12,margin:0,color:C.blue,fontWeight:800}}/>
                 </div>
@@ -3754,7 +3621,7 @@ const report = {
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10}}>
                       <div style={{fontSize:13,fontWeight:900,color:C.blue}}>סדר עבודה: {activeAdminOperator}</div>
-                      <Press onClick={async()=>{const clean=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);setAdminOrderDraft(clean);showToast("סדר נשמר וסונכרן למפעיל");haptic("success");}} style={{padding:"7px 12px",borderRadius:10,background:C.green,color:"#fff",fontSize:12,fontWeight:900}}>שמור סדר</Press>
+                      <Press onClick={()=>{const clean=saveAdminOrderEntries(taskDate, activeAdminOperator, adminOrderList);setAdminOrderDraft(clean);showToast("סדר מקומי נשמר");haptic("success");}} style={{padding:"7px 12px",borderRadius:10,background:C.green,color:"#fff",fontSize:12,fontWeight:900}}>שמור סדר</Press>
                     </div>
                     {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
                       <label style={{fontSize:11,fontWeight:900,color:C.muted,display:"block",marginBottom:6}}>שיוך SUB_OPERATOR למפעיל זה</label>
@@ -3774,9 +3641,6 @@ const report = {
                               <div style={{minWidth:0}}>
                                 <div style={{fontSize:13,fontWeight:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</div>
                                 {c.address&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>}
-                                <div style={{fontSize:11,color:C.blue,fontWeight:800,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>
-                                  {clientMetaLine(c) || "ללא שיוך קבוע"}
-                                </div>
                               </div>
                               <Badge label={exists?"קיים":"הוסף"} col={exists?C.muted:C.blue}/>
                             </Press>

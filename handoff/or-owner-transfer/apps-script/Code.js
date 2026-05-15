@@ -297,10 +297,7 @@
             client: r[2],
             operators: r[3] ? String(r[3]).split(",").map(x => x.trim()) : [],
             status: r[4],
-            changeLog: r[5] ? JSON.parse(String(r[5])) : [],
-            orderIndex: Number(r[6] || 0),
-            adminNote: String(r[7] || ""),
-            createdByAdminOrder: String(r[8] || "").toLowerCase() === "true" || r[8] === true
+            changeLog: r[5] ? JSON.parse(String(r[5])) : []
           };
         });
         return json({ tasks });
@@ -315,7 +312,7 @@
         const last = sheet.getLastRow();
         if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
         data.tasks.forEach(t => {
-          sheet.appendRow([t.id, t.date, t.client, t.operators.join(","), t.status, JSON.stringify(t.changeLog), t.orderIndex || 0, t.adminNote || "", t.createdByAdminOrder === true]);
+          sheet.appendRow([t.id, t.date, t.client, t.operators.join(","), t.status, JSON.stringify(t.changeLog)]);
         });
         return json({ success: true });
       }
@@ -1540,10 +1537,7 @@ function getTasks_(ss) {
       client: r[2],
       operators: r[3] ? String(r[3]).split(",").map(x => x.trim()) : [],
       status: r[4],
-      changeLog: r[5] ? JSON.parse(String(r[5])) : [],
-      orderIndex: Number(r[6] || 0),
-      adminNote: String(r[7] || ""),
-      createdByAdminOrder: String(r[8] || "").toLowerCase() === "true" || r[8] === true
+      changeLog: r[5] ? JSON.parse(String(r[5])) : []
     };
   });
 }
