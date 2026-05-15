@@ -1640,22 +1640,22 @@ const [screen,setScreen] = useState(() => {
     return sortByClientName(list).filter(c => ops.some(op => clientAssignedToOperatorDate(c, date, op)));
   };
 
-  const myDayClients = (date=dailyDate) => {
+  const myDayClients = (date=dailyDate, opName=user?.name) => {
     const dayName = dateDayName(date);
     const anyHasSchedule = clients.some(c=>c.regularDays||c.regularOperator);
-    if(!anyHasSchedule) return clients.filter(c=>!c.regularOperator || normalizeName(c.regularOperator)===normalizeName(user?.name));
+    if(!anyHasSchedule) return clients.filter(c=>!c.regularOperator || normalizeName(c.regularOperator)===normalizeName(opName));
     return clients.filter(c => {
       const days = String(c.regularDays||"").split(",").map(d=>normalizeDay(d.trim()));
-      const opMatch = !c.regularOperator || normalizeName(c.regularOperator)===normalizeName(user?.name);
+      const opMatch = !c.regularOperator || normalizeName(c.regularOperator)===normalizeName(opName);
       const dayMatch = days.some(d=>d===dayName);
       return opMatch && dayMatch;
     });
   };
 
-  const dayClientProfiles = (date=dailyDate) => {
+  const dayClientProfiles = (date=dailyDate, opName=dailyOwnerName(date) || user?.name) => {
     const existing = myTasks(date);
-    const fromDays = myDayClients(date).filter(c=>!existing.find(t=>t.client===c.name));
-    const dayProfiles = fromDays.map(c=>({id:`day-${c.name}`,client:c.name,operators:[user?.name],date,status:"pending",changeLog:[],_dayProfile:true}));
+    const fromDays = myDayClients(date, opName).filter(c=>!existing.find(t=>t.client===c.name));
+    const dayProfiles = fromDays.map(c=>({id:`day-${c.name}`,client:c.name,operators:[opName],date,status:"pending",changeLog:[],_dayProfile:true}));
     return [...existing, ...dayProfiles];
   };
 
@@ -1946,12 +1946,28 @@ const [screen,setScreen] = useState(() => {
     username ? localStorage.setItem(key, username) : localStorage.removeItem(key);
     setSubOperatorRefresh(x=>x+1);
   };
-  const findAssignedOperatorForSub = (date, username) => {
-    const target = String(username || "").trim();
-    if (!target) return "";
-    return operatorUsers.find(op => getAssignedSubOperator(date, op.name) === target)?.name || "";
+  const isSameSubOperator = (saved, u) => {
+    const value = normalizeName(saved);
+    return !!value && (value === normalizeName(u?.username) || value === normalizeName(u?.name));
   };
-  const linkedOperatorName = (u=user, date=dailyDate) => String(u?.linkedOperator || u?.parentOperator || u?.operator || u?.regularOperator || u?.assignedOperator || findAssignedOperatorForSub(date, u?.username) || "").trim();
+  const findAssignedOperatorForSub = (date, subUser=user) => {
+    if (!subUser) return "";
+    const exact = operatorUsers.find(op => isSameSubOperator(getAssignedSubOperator(date, op.name), subUser))?.name;
+    if (exact) return exact;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) || "";
+        if (!key.startsWith("galileo_sub_operator:")) continue;
+        const saved = localStorage.getItem(key);
+        if (!isSameSubOperator(saved, subUser)) continue;
+        const parts = key.split(":");
+        const opName = parts.slice(2).join(":");
+        if (opName) return opName;
+      }
+    } catch {}
+    return "";
+  };
+  const linkedOperatorName = (u=user, date=dailyDate) => String(u?.linkedOperator || u?.parentOperator || u?.operator || u?.regularOperator || u?.assignedOperator || u?.["מפעיל משויך"] || u?.["מפעיל_משויך"] || u?.["מפעיל קבוע"] || u?.["מפעיל_קבוע"] || findAssignedOperatorForSub(date, u) || "").trim();
   const dailyOwnerName = (date=dailyDate) => isSubOperatorRole(user?.role) ? (linkedOperatorName(user, date) || user?.name || "") : (user?.name || "");
   const isSubOperatorApproved = (date=dailyDate, opName=dailyOwnerName(date), subUsername=user?.username) => localStorage.getItem(subOperatorApprovalKey(date, opName, subUsername)) === "yes";
   const approveSubOperator = (date, opName, subUsername) => {
@@ -2050,7 +2066,7 @@ const [screen,setScreen] = useState(() => {
       const extra = myTasks(date).filter(t=>!ordered.some(x=>x.client===t.client));
       list = [...ordered, ...extra];
     } else {
-      list = dayClientProfiles(date);
+      list = dayClientProfiles(date, opName);
     }
     const operatorOrder = readLocalArray(operatorOrderKey(user?.username || user?.name, date));
     if (operatorOrder.length) {
@@ -2800,7 +2816,7 @@ const report = {
     const isSubOperator = isSubOperatorRole(user?.role);
     const currentDailyOwner = dailyOwnerName(dailyDate);
     const canSubOperatorReport = !isSubOperator || (currentDailyOwner && isSubOperatorApproved(dailyDate, currentDailyOwner, user?.username));
-    const linkedSubOperators = subOperatorUsers.filter(su => normalizeName(linkedOperatorName(su, dailyDate)) === normalizeName(user?.name) || getAssignedSubOperator(dailyDate, user?.name) === su.username);
+    const linkedSubOperators = subOperatorUsers.filter(su => normalizeName(linkedOperatorName(su, dailyDate)) === normalizeName(user?.name) || isSameSubOperator(getAssignedSubOperator(dailyDate, user?.name), su));
     const pendingSubReportForOperator = !isSubOperator
       ? pendingSubReports.find(item => item?.status === "pending" && normalizeName(item.operator) === normalizeName(user?.name))
       : null;
@@ -3479,8 +3495,7 @@ const report = {
     const adminOrderList = adminOrderDraft.length || selectedAdminOperator ? adminOrderDraft : (activeAdminOperator ? getAdminOrderEntries(taskDate, activeAdminOperator) : []);
     const adminOrderNames = new Set(adminOrderList.map(x=>x.client));
     const allOrderClients = [...clients, ...unassignedClients.filter(uc=>!clients.find(c=>c.name===uc.name))];
-    const assignedOrderClients = clientsForOperatorsAndDate(allOrderClients, taskDate, activeAdminOperator ? [activeAdminOperator] : []);
-    const filteredOrderClients = filterClientOptions(assignedOrderClients, adminOrderClientSearch);
+    const filteredOrderClients = filterClientOptions(allOrderClients, adminOrderClientSearch);
     const taskClientOptions = clientsForOperatorsAndDate(clients, taskDate, taskOps);
     const dayTasks = tasks.filter(t=>t.date===taskDate);
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
@@ -3641,6 +3656,9 @@ const report = {
                               <div style={{minWidth:0}}>
                                 <div style={{fontSize:13,fontWeight:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</div>
                                 {c.address&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>}
+                                <div style={{fontSize:11,color:C.blue,fontWeight:800,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>
+                                  {clientMetaLine(c) || "ללא שיוך קבוע"}
+                                </div>
                               </div>
                               <Badge label={exists?"קיים":"הוסף"} col={exists?C.muted:C.blue}/>
                             </Press>
