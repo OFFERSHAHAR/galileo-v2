@@ -1518,6 +1518,18 @@ const [screen,setScreen] = useState(() => {
   const opNames = operatorUsers.map(u=>u.name);
   const normalizeDate = (d) => String(d||"").trim().slice(0,10);
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
+  const applyFetchedUsers = (users=[]) => {
+    if (!Array.isArray(users)) return;
+    setAllUsers(users);
+    setUser(current => {
+      if (!current) return current;
+      const fresh = users.find(u => normalizeName(u?.username) === normalizeName(current.username));
+      if (!fresh) return current;
+      const merged = {...current, ...fresh};
+      localStorage.setItem("galileo_user", JSON.stringify(merged));
+      return merged;
+    });
+  };
   const isAdminRole = (role) => ["admin", "מנהל", "אדמין"].includes(String(role || "").trim().toLowerCase());
   const isSubOperatorRole = (role) => ["sub_operator", "suboperator", "sub_admin", "subadmin", "עוזר מפעיל", "עוזר_מפעיל"].includes(String(role || "").trim().toLowerCase());
   const subOperatorUsers = allUsers.filter(u=>isSubOperatorRole(u.role));
@@ -1964,10 +1976,42 @@ const [screen,setScreen] = useState(() => {
   const subOperatorApprovalKey = (date, opName, subUsername) => localKey("galileo_sub_operator_approval", date, opName, subUsername);
   const lockedClientsKey = (username, date) => localKey("galileo_locked_clients", username, date);
   const getAssignedSubOperator = (date, opName) => String(localStorage.getItem(subOperatorAssignKey(date, opName)) || "");
-  const setAssignedSubOperator = (date, opName, username) => {
+  const updateSubOperatorUserCache = (username, opName) => {
+    if (!username) return;
+    setAllUsers(prev => {
+      const next = prev.map(u => normalizeName(u?.username) === normalizeName(username)
+        ? {...u, linkedOperator:opName || "", assignedOperator:opName || "", operator:opName || ""}
+        : u
+      );
+      try {
+        const cached = localStorage.getItem("galileo_cache");
+        const c = cached ? JSON.parse(cached) : {};
+        localStorage.setItem("galileo_cache", JSON.stringify({...c, users:next}));
+      } catch {}
+      return next;
+    });
+    setUser(current => {
+      if (!current || normalizeName(current.username) !== normalizeName(username)) return current;
+      const merged = {...current, linkedOperator:opName || "", assignedOperator:opName || "", operator:opName || ""};
+      localStorage.setItem("galileo_user", JSON.stringify(merged));
+      return merged;
+    });
+  };
+  const setAssignedSubOperator = async (date, opName, username) => {
     const key = subOperatorAssignKey(date, opName);
+    const previousUsername = getAssignedSubOperator(date, opName);
     username ? localStorage.setItem(key, username) : localStorage.removeItem(key);
+    updateSubOperatorUserCache(previousUsername, "");
+    updateSubOperatorUserCache(username, opName);
     setSubOperatorRefresh(x=>x+1);
+    if (sheetId) {
+      try {
+        if (previousUsername && previousUsername !== username) await sheetCall("saveSubOperatorAssignment", {username: previousUsername, operator: ""});
+        if (username) await sheetCall("saveSubOperatorAssignment", {username, operator: opName});
+      } catch(e) {
+        console.warn("Sub-operator assignment sync failed", e);
+      }
+    }
   };
   const isSameSubOperator = (saved, u) => {
     const value = normalizeName(saved);
@@ -2264,7 +2308,7 @@ const [screen,setScreen] = useState(() => {
 
   useEffect(()=>{
     applyTenantBranding(getCompany());
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) setAllUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); } } catch {}
     const checkLicense = async () => {
       const lic = getLicense(); if(!lic.key) return;
       try { const res = await mgmtCall("validateLicense",{key:lic.key}); if(res?.valid){ const company = companyFromLicenseResponse(res); saveLicense({...lic, plan:res.plan, status:res.status, expiry:res.expiry, logoUrl:res.logoUrl||"", appName:company.appName, shortName:company.shortName, icon192Url:company.icon192Url, icon512Url:company.icon512Url, appleIconUrl:company.appleIconUrl, themeColor:company.themeColor, backgroundColor:company.backgroundColor}); saveCompany(company); setClientPlan({plan:res.plan, status:res.status}); if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId); } else { localStorage.removeItem("galileo_user"); localStorage.removeItem("galileo_license"); setUser(null); setShowSetup(true); } } catch {}
@@ -2294,7 +2338,7 @@ const [screen,setScreen] = useState(() => {
   },[user?.username, user?.role]);
 
   const connectSheets = async (bg=false) => {
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) setAllUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); if(!bg) return; } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
       let boot = await sheetCall("getBootstrapData");
       let u=boot?.users?.length?boot.users:null;
@@ -2307,7 +2351,7 @@ const [screen,setScreen] = useState(() => {
         const [uR,cR,tR,sR,rR,ucR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients")]);
         u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null;
       }
-      if(u)setAllUsers(u); if(c)setClients(c); if(t)setTasks(t); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc);
+      if(u)applyFetchedUsers(u); if(c)setClients(c); if(t)setTasks(t); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc);
       localStorage.setItem("galileo_cache",JSON.stringify({users:u||allUsers,clients:c||clients,tasks:t||[],supplyDB:s||{},lastReadings:lr||{},cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
@@ -2413,7 +2457,7 @@ const [screen,setScreen] = useState(() => {
           // רענן Sheets ברקע
           sheetCall("getUsers").then(uRes => {
             if (Array.isArray(uRes?.users) && uRes.users.length > 0) {
-              setAllUsers(uRes.users);
+              applyFetchedUsers(uRes.users);
               try {
                 const c = JSON.parse(localStorage.getItem("galileo_cache")||"{}");
                 localStorage.setItem("galileo_cache", JSON.stringify({...c, users:uRes.users, cachedAt:Date.now()}));
@@ -2431,7 +2475,7 @@ const [screen,setScreen] = useState(() => {
       const uRes = await sheetCall("getUsers");
       if (Array.isArray(uRes?.users) && uRes.users.length > 0) {
         usersToCheck = uRes.users;
-        setAllUsers(uRes.users);
+        applyFetchedUsers(uRes.users);
         try {
           const c = JSON.parse(localStorage.getItem("galileo_cache")||"{}");
           localStorage.setItem("galileo_cache", JSON.stringify({...c, users:uRes.users, cachedAt:Date.now()}));
@@ -3041,6 +3085,7 @@ const report = {
               )}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <RefreshTopButton compact/>
               <div onPointerDown={()=>{logoLongPress.current=setTimeout(()=>{haptic("success");setShowSetup(true);},3000);}} onPointerUp={()=>clearTimeout(logoLongPress.current)} onPointerLeave={()=>clearTimeout(logoLongPress.current)} style={{fontSize:18,cursor:"pointer",userSelect:"none",padding:"4px 6px",color:C.muted}}>⚙️</div>
               <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
             </div>
@@ -3339,7 +3384,7 @@ const report = {
         {navTab===1&&(
           <BottomSheet title="📋 משימות היום" onClose={()=>setNavTab(0)}>
             {(()=>{
-              const todayTasks = myTasks(dailyDate);
+              const todayTasks = orderedDayTasks;
               if(todayTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות להיום</div></div>;
               return todayTasks.map(t=>(
                 <div key={t.id} style={{...card({marginBottom:10})}}>
@@ -3359,7 +3404,7 @@ const report = {
           <BottomSheet title="📅 משימות עתידיות" onClose={()=>setNavTab(0)}>
             {(()=>{
               const today = todayStr();
-              const futureTasks = tasks.filter(t=>{ const d = normalizeDate(t.date); return d > today && (t.operators||[]).some(op=>normalizeName(op)===normalizeName(user?.name)); }).sort((a,b)=>normalizeDate(a.date).localeCompare(normalizeDate(b.date)));
+              const futureTasks = tasks.filter(t=>{ const d = normalizeDate(t.date); const ownerName = isSubOperator ? dailyOwnerName(d) : user?.name; return d > today && (t.operators||[]).some(op=>normalizeName(op)===normalizeName(ownerName)); }).sort((a,b)=>normalizeDate(a.date).localeCompare(normalizeDate(b.date)));
               if(futureTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות עתידיות</div></div>;
               const grouped = {};
               futureTasks.forEach(t=>{ const d = normalizeDate(t.date); if(!grouped[d]) grouped[d]=[]; grouped[d].push(t); });
@@ -3407,7 +3452,10 @@ const report = {
       <div style={{margin:"12px 14px 0",background:"linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))",border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
           <div><p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:"בחר לקוח"}</p><h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>📝 דוח טיפול</h1></div>
-          <Press onClick={()=>setScreen("daily")} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 14px",color:C.muted,fontSize:13,fontWeight:900}}>← חזרה</Press>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <RefreshTopButton compact/>
+            <Press onClick={()=>setScreen("daily")} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 14px",color:C.muted,fontSize:13,fontWeight:900}}>← חזרה</Press>
+          </div>
         </div>
       </div>
       <div style={{padding:"18px 16px 0"}}>
@@ -3578,6 +3626,7 @@ const report = {
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,textAlign:"center",color:C.text}}>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}@keyframes pop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}#onesignal-bell-container{display:none!important}`}</style>
+        <div style={{position:"absolute",top:14,left:14}}><RefreshTopButton compact/></div>
         <div style={{width:104,height:104,borderRadius:32,background:"rgba(232,241,253,0.82)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(37,99,235,0.12), 0 1px 0 rgba(232,241,253,0.82) inset",display:"flex",alignItems:"center",justifyContent:"center",fontSize:58,marginBottom:18,animation:"pop 0.5s cubic-bezier(0.34,1.56,0.64,1)"}}>✅</div>
         <h1 style={{fontSize:26,fontWeight:900,color:C.text,margin:"0 0 8px"}}>הדוח נשלח!</h1>
         <p style={{color:C.muted,fontSize:15,margin:"0 0 28px",fontWeight:700}}>הלקוח יקבל הודעת WhatsApp עכשיו 💬</p>
@@ -3687,6 +3736,7 @@ const report = {
               )}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <RefreshTopButton compact/>
               <Press onClick={()=>{setAdminTab("daily");window.scrollTo(0,0);haptic();}} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.blue,fontSize:12,fontWeight:900,boxShadow:"0 10px 26px rgba(30,64,175,0.14)"}}>📋</Press>
           {!isSubAdminPanel&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),adminReport:true});setScreen("form");haptic("medium");}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>📝 דוח</Press>}
               <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
@@ -3758,7 +3808,7 @@ const report = {
                     </div>
                     {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
                       <label style={{fontSize:11,fontWeight:900,color:C.muted,display:"block",marginBottom:6}}>שיוך SUB_OPERATOR למפעיל זה</label>
-                      <select value={getAssignedSubOperator(taskDate, activeAdminOperator)} onChange={e=>{setAssignedSubOperator(taskDate, activeAdminOperator, e.target.value); showToast(e.target.value?"✅ עוזר מפעיל שויך":"שיוך עוזר מפעיל הוסר"); haptic("medium");}} style={{...sel,fontSize:12,margin:0}}>
+                      <select value={getAssignedSubOperator(taskDate, activeAdminOperator)} onChange={e=>{void setAssignedSubOperator(taskDate, activeAdminOperator, e.target.value); showToast(e.target.value?"✅ עוזר מפעיל שויך":"שיוך עוזר מפעיל הוסר"); haptic("medium");}} style={{...sel,fontSize:12,margin:0}}>
                         <option value="">ללא עוזר מפעיל</option>
                         {subOperatorUsers.map(su=><option key={su.username} value={su.username}>{su.name || su.username}</option>)}
                       </select>

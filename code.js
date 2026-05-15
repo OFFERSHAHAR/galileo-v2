@@ -249,17 +249,11 @@
       }
 
       if (action === "getUsers") {
-        const sheet = ss.getSheetByName("Users");
-        const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => r.some(c => String(c).toLowerCase() === "username"));
-        if (hi === -1) hi = 0;
-        const headers = rows[hi];
-        const users = rows.slice(hi + 1).filter(r => r[0]).map(r => {
-          const obj = {};
-          headers.forEach((h, i) => obj[h] = r[i]);
-          return obj;
-        });
-        return json({ users });
+        return json({ users: getUsers_(ss) });
+      }
+
+      if (action === "saveSubOperatorAssignment") {
+        return json(saveSubOperatorAssignment_(ss, data));
       }
 
       if (action === "getClients") {
@@ -592,9 +586,9 @@
     let s = clientSS.getSheetByName("Users");
     if(!s) {
       s = clientSS.insertSheet("Users");
-      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram"]);
+      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"]);
     } else {
-      ensureColumns(s, ["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram"]);
+      ensureColumns(s, ["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"]);
     }
     
     // ── לקוחות ──
@@ -1501,12 +1495,50 @@ function getUsers_(ss) {
   const rows = sheet.getDataRange().getValues();
   let hi = rows.findIndex(r => r.some(c => String(c).toLowerCase() === "username"));
   if (hi === -1) hi = 0;
-  const headers = rows[hi];
+  const headers = rows[hi].map(h => String(h || "").trim());
   return rows.slice(hi + 1).filter(r => r[0]).map(r => {
     const obj = {};
     headers.forEach((h, i) => obj[h] = r[i]);
+    const linkedOperator = String(
+      obj.linkedOperator ||
+      obj.assignedOperator ||
+      obj.parentOperator ||
+      obj.operator ||
+      obj.regularOperator ||
+      obj["מפעיל משויך"] ||
+      obj["מפעיל_משויך"] ||
+      obj["מפעיל קבוע"] ||
+      obj["מפעיל_קבוע"] ||
+      ""
+    ).trim();
+    obj.linkedOperator = linkedOperator;
+    obj.assignedOperator = String(obj.assignedOperator || linkedOperator || "").trim();
     return obj;
   });
+}
+
+function saveSubOperatorAssignment_(ss, data) {
+  const sheet = ss.getSheetByName("Users");
+  if (!sheet) return { success:false, error:"Users sheet not found" };
+  ensureColumns(sheet, ["username","linkedOperator","assignedOperator"]);
+  const rows = sheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => r.some(c => String(c).toLowerCase() === "username"));
+  if (hi === -1) hi = 0;
+  const headers = rows[hi].map(h => String(h || "").trim());
+  const usernameIdx = headers.findIndex(h => h.toLowerCase() === "username");
+  const linkedIdx = headers.indexOf("linkedOperator");
+  const assignedIdx = headers.indexOf("assignedOperator");
+  const target = String(data.username || "").trim().toLowerCase();
+  if (!target || usernameIdx < 0 || linkedIdx < 0 || assignedIdx < 0) return { success:false, error:"missing columns" };
+  for (let i = hi + 1; i < rows.length; i++) {
+    if (String(rows[i][usernameIdx] || "").trim().toLowerCase() !== target) continue;
+    const row = i + 1;
+    const operator = String(data.operator || "").trim();
+    sheet.getRange(row, linkedIdx + 1).setValue(operator);
+    sheet.getRange(row, assignedIdx + 1).setValue(operator);
+    return { success:true, row };
+  }
+  return { success:false, error:"user not found" };
 }
 
 function getClients_(ss) {
@@ -1665,7 +1697,7 @@ function json(obj) {
     const usersSheet = ss.getSheetByName("Users");
     if(usersSheet) {
       const usersHeaders = usersSheet.getRange(1,1,1,usersSheet.getLastColumn()).getValues()[0];
-      const neededUsers = ["welcomeImage","welcomeInstagram"];
+      const neededUsers = ["welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"];
       let lastCol = usersSheet.getLastColumn();
       neededUsers.forEach(name => {
         if(!usersHeaders.includes(name)) {
@@ -1678,7 +1710,7 @@ function json(obj) {
       });
     } else {
       const s = ss.insertSheet("Users");
-      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram"]);
+      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"]);
       Logger.log("✅ נוצר טאב: Users");
     }
 
