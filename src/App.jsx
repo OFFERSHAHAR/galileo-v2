@@ -1511,6 +1511,10 @@ const [screen,setScreen] = useState(() => {
     const key = completedReportKey(report.reportDate, report.client, report.operator || user?.name);
     setCompletedReports(prev => prev.includes(key) ? prev : [...prev, key]);
   };
+  const forgetCompletedReport = (date, clientName, operatorName=user?.name) => {
+    const key = completedReportKey(date, clientName, operatorName || user?.name);
+    setCompletedReports(prev => prev.filter(x => x !== key));
+  };
   const isClientReportedDone = (date, clientName) => {
     const opName = user?.name || "";
     return reports.some(r=>r.reportDate===date&&r.operator===opName&&r.client===clientName) ||
@@ -1529,6 +1533,43 @@ const [screen,setScreen] = useState(() => {
   const toggleSuppliedEquipment = (name) => {
     const current = Array.isArray(form.suppliedEquipment) ? form.suppliedEquipment : [];
     sf("suppliedEquipment", current.includes(name) ? current.filter(x=>x!==name) : [...current, name]);
+  };
+  const openDoneReportEditor = (task) => {
+    const opName = user?.name || "";
+    const existing = [...reports].reverse().find(r => r.reportDate === dailyDate && r.operator === opName && r.client === task.client);
+    const lr = lastReadings[task.client] || {};
+    const source = existing || {
+      reportDate: dailyDate,
+      client: task.client,
+      operator: opName,
+      chlorine: lr.chlorine ?? 0,
+      ph: lr.ph ?? 0,
+      salt: lr.salt ?? 0,
+      chlora: lr.chlora ?? 0,
+      hth: lr.hth ?? 0,
+      phUp: lr.phUp ?? 0,
+      acidLiters: lr.acidLiters ?? 0,
+      waterLevel: "תקין",
+      clarity: "תקין",
+      fat: "תקין",
+      flow: lr.flow || "",
+      poolStatus: lr.poolStatus || "מאוזנת",
+      customStatusText: lr.customStatusText || "",
+      notes: lr.notes || ""
+    };
+    setForm({
+      ...blank(),
+      ...source,
+      reportDate: source.reportDate || dailyDate,
+      client: task.client,
+      clientLocked: true,
+      chlorineZeroConfirmed: Number(source.chlorine || 0) === 0
+    });
+    setEditingReport({date:dailyDate, client:task.client, operator:opName, localId:existing?.id || ""});
+    setOpenDoneTasks(x=>({...x,[`${dailyDate}:${task.id || task.client}`]:true}));
+    setScreen("form");
+    haptic("medium");
+    showToast("✏️ עריכת דוח — ללא שליחת WhatsApp");
   };
   const DAY_NAMES = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
   const dateDayName = (dateStr) => { if(!dateStr) return ""; return DAY_NAMES[new Date(dateStr+"T12:00:00").getDay()]; };
@@ -2325,6 +2366,7 @@ const [screen,setScreen] = useState(() => {
 
   const handleSubmit = async () => {
     if (!client || syncing || isActionLoading("submitReport")) return;
+    const isEditingExistingReport = !!editingReport;
     if (chlorine === "" || ph === "" || !flow) {
       showToast("⚠️ חובה למלא כלור, pH וזרימה");
       haptic("medium");
@@ -2354,7 +2396,7 @@ const [screen,setScreen] = useState(() => {
     let photosBase64 = [];
     if(photos.length>0){ photosBase64 = await Promise.all(photos.map(url=> fetch(url).then(r=>r.blob()).then(blob=>new Promise(res=>{ const reader=new FileReader(); reader.onload=e=>res(e.target.result.split(",")[1]); reader.readAsDataURL(blob); })) )); }
 const report = {
-  id: crypto.randomUUID(),
+  id: editingReport?.localId || crypto.randomUUID(),
   reportDate,
   operator:user?.name||"",
   client,
@@ -2381,7 +2423,24 @@ const report = {
   notes,
   photosCount:photos.length
 };
-    setReports(r=>[...r,report]);
+    if (isEditingExistingReport) {
+      setReports(prev => {
+        const next = [...prev];
+        const idx = next.findIndex(r =>
+          r.reportDate === editingReport.date &&
+          r.client === editingReport.client &&
+          r.operator === editingReport.operator
+        );
+        if (idx >= 0) next[idx] = report;
+        else next.push(report);
+        return next;
+      });
+      if (editingReport.date !== report.reportDate || editingReport.client !== report.client || editingReport.operator !== report.operator) {
+        forgetCompletedReport(editingReport.date, editingReport.client, editingReport.operator);
+      }
+    } else {
+      setReports(r=>[...r,report]);
+    }
     rememberCompletedReport(report);
     setLastReadings(prev => {
       const previous = prev[client] || {};
@@ -2408,17 +2467,19 @@ const report = {
     let saved=false;
     const adminEmail = getCompany().adminEmail||"";
        if (sheetId) {
-      const res = await sheetCall("saveReport", {
-        report,
-        photos: photosBase64,
-        adminEmail,
-        clientAddress: clientAddress(client),
-        clientPhone: clientPhone(client),
-      }).catch(() => null);
+      const res = isEditingExistingReport
+        ? await sheetCall("updateReport", {report, original:editingReport}).catch(() => null)
+        : await sheetCall("saveReport", {
+          report,
+          photos: photosBase64,
+          adminEmail,
+          clientAddress: clientAddress(client),
+          clientPhone: clientPhone(client),
+        }).catch(() => null);
 
       saved = res?.success === true;
 
-      if (saved && !res?.duplicate && user?.role !== "admin") {
+      if (!isEditingExistingReport && saved && !res?.duplicate && user?.role !== "admin") {
         void sendNotificationToAdmins(
           `✅ דוח בוצע: ${client}`,
           `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
@@ -2426,20 +2487,26 @@ const report = {
       }
     }
 
-    if (!saved) {
+    if (!saved && !isEditingExistingReport) {
       setPending(p => [...p, report]);
       setDismissed(false);
       setAction("submitReport", "local", 2200);
       showToast("⚠️ הדוח נשמר מקומית");
+    } else if (!saved && isEditingExistingReport) {
+      setAction("submitReport", "error", 2200);
+      showToast("⚠️ העריכה נשמרה מקומית, לא עודכנה בשיטס");
     } else {
       setAction("submitReport", "success", 1200);
-      showToast("✅ הדוח נשלח");
+      showToast(isEditingExistingReport ? "✅ הדוח עודכן" : "✅ הדוח נשלח");
     }
 
     setSyncing(false);
+    setEditingReport(null);
     setScreen("done");
-    void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
-    void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+    if (!isEditingExistingReport) {
+      void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
+      void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+    }
   };
 
   const syncPendingReports = async () => {
@@ -2476,6 +2543,7 @@ const report = {
         if(res?.clients?.length) setFreeClients(res.clients);
       }
       setClientSearch("");
+      setEditingReport(null);
       setForm(blank());
       setScreen("form");
     } finally {
@@ -2706,7 +2774,7 @@ const report = {
             {clientSearch&&(
               <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:240,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
                 {filterClientOptions([...clients,...unassignedClients.filter(uc=>!clients.find(c=>c.name===uc.name))], clientSearch).map(c=>(
-                  <Press key={c.name} onClick={()=>{ setForm({...blank(),client:c.name,reportDate:dailyDate,clientLocked:true}); setClientSearch(""); setScreen("form"); haptic(); }} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
+                  <Press key={c.name} onClick={()=>{ setEditingReport(null); setForm({...blank(),client:c.name,reportDate:dailyDate,clientLocked:true}); setClientSearch(""); setScreen("form"); haptic(); }} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
                     <div style={{width:32,height:32,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>{poolIconForType(c.poolType)}</div>
                     <div><div style={{fontWeight:700,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div>{c.address&&<div style={{fontSize:11,color:C.muted}}>{c.address}</div>}{c.regularOperator&&<div style={{fontSize:11,color:C.blue,fontWeight:800,marginTop:2}}>מפעיל משויך: {c.regularOperator}</div>}</div>
                   </Press>
@@ -2735,6 +2803,7 @@ const report = {
                   onPointerDown={()=>!operatorEditOrder&&startClientLongPress(t.client, false)}
                   onPointerUp={()=>stopClientLongPress(t.client)}
                   onPointerLeave={()=>stopClientLongPress(t.client)}
+                  onClick={()=>!operatorEditOrder&&openDoneReportEditor(t)}
                   style={{...card({marginBottom:8,opacity:0.82,border:"2px solid #c8e6c9",padding:"10px 12px",display:"flex",alignItems:"center",gap:10,background:operatorEditOrder?"#fffde7":"#fff"})}}
                 >
                   <div style={{width:30,height:30,borderRadius:"50%",background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",color:C.green,fontWeight:900,flexShrink:0}}>✓</div>
@@ -2743,13 +2812,15 @@ const report = {
                     {clientAddress(t.client)&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{clientAddress(t.client)}</div>}
                   </div>
                   <Badge label="בוצע" col={C.green}/>
+                  <Press onClick={(e)=>{e.stopPropagation();openDoneReportEditor(t);}} style={{padding:"6px 10px",borderRadius:10,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12}}>ערוך</Press>
+                  <Press onClick={(e)=>{e.stopPropagation();forgetCompletedReport(dailyDate,t.client);setOpenDoneTasks(x=>({...x,[doneKey]:true}));showToast("הכיווץ בוטל");haptic("medium");}} style={{padding:"6px 10px",borderRadius:10,background:"#ffebee",color:C.red,fontWeight:900,fontSize:12}}>בטל כיווץ</Press>
                   {operatorEditOrder&&(
                     <div style={{display:"flex",gap:4}}>
                       <Press onClick={()=>moveDraftItem(i, Math.max(0, i-1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↑</Press>
                       <Press onClick={()=>moveDraftItem(i, Math.min(dayTasks.length-1, i+1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↓</Press>
                     </div>
                   )}
-                  <Press onClick={()=>{setOpenDoneTasks(x=>({...x,[doneKey]:true}));haptic();}} style={{width:34,height:34,borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <Press onClick={(e)=>{e.stopPropagation();setOpenDoneTasks(x=>({...x,[doneKey]:true}));haptic();}} style={{width:34,height:34,borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>
                     ▾
                   </Press>
                 </div>
@@ -2786,7 +2857,7 @@ const report = {
                   <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
                     <Badge label={isDone?"✓ בוצע":"⏳ ממתין"} col={isDone?C.green:C.orange}/>
                     {isDone&&<Press onClick={()=>{setOpenDoneTasks(x=>({...x,[doneKey]:false}));haptic();}} style={{padding:"6px 10px",borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:12}}>סגור</Press>}
-                    {!isDone&&<Press onClick={()=>{setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 דוח</Press>}
+                    {!isDone&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 דוח</Press>}
                   </div>
                 </div>
                 {operatorEditOrder&&(
@@ -2917,7 +2988,7 @@ const report = {
                   </div>
                   {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
                   {(t.changeLog?.[t.changeLog.length-1]?.note)&&<div style={{background:"#fff8e1",borderRadius:8,padding:"6px 10px",fontSize:12,color:C.orange,fontWeight:600,marginBottom:8}}>📝 {t.changeLog[t.changeLog.length-1].note}</div>}
-                  {t.status!=="done"&&<Press onClick={()=>{setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setNavTab(0);setScreen("form");haptic();}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>📝 פתח דוח</Press>}
+                  {t.status!=="done"&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setNavTab(0);setScreen("form");haptic();}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>📝 פתח דוח</Press>}
                 </div>
               ));
             })()}
@@ -3159,11 +3230,11 @@ const report = {
           </div>
         )}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,width:"100%",maxWidth:340,marginBottom:10}}>
-          <Press onClick={()=>{setForm(blank());setScreen("form");haptic();}} style={{padding:14,borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.35)"}}>+ דוח חדש</Press>
+          <Press onClick={()=>{setEditingReport(null);setForm(blank());setScreen("form");haptic();}} style={{padding:14,borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.35)"}}>+ דוח חדש</Press>
           <Press onClick={()=>setScreen("daily")} style={{padding:14,borderRadius:14,border:`2px solid ${C.border}`,background:C.white,color:C.blue,fontWeight:800,fontSize:14,textAlign:"center"}}>🏠 לוח יומי</Press>
         </div>
         {reports.length>0&&(
-          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,clientLocked:true,reportDate:last.reportDate,client:last.client}); setEditingReport(last.id); setReports(r=>r.slice(0,-1)); setScreen("form"); haptic("medium"); showToast("✏️ ערוך והגש מחדש"); }} style={{padding:12,borderRadius:12,border:`2px solid ${C.orange}`,background:"#fff8e1",color:C.orange,fontWeight:800,fontSize:13,textAlign:"center",width:"100%",maxWidth:340}}>✏️ ערוך דוח אחרון</Press>
+          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:12,border:`2px solid ${C.orange}`,background:"#fff8e1",color:C.orange,fontWeight:800,fontSize:13,textAlign:"center",width:"100%",maxWidth:340}}>✏️ ערוך דוח אחרון</Press>
         )}
       </div>
     );
@@ -3248,7 +3319,7 @@ const report = {
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <Press onClick={()=>{setAdminTab("daily");window.scrollTo(0,0);haptic();}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📋</Press>
-              <Press onClick={()=>{setForm({...blank(),adminReport:true});setScreen("form");haptic("medium");}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📝 דוח</Press>
+          <Press onClick={()=>{setEditingReport(null);setForm({...blank(),adminReport:true});setScreen("form");haptic("medium");}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📝 דוח</Press>
               <Press onClick={handleLogout} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>יציאה</Press>
             </div>
           </div>
@@ -3282,7 +3353,7 @@ const report = {
                   </div>
                 )}
               </div>
-              <Press onClick={()=>{ if(!form.client){showToast("⚠️ בחר לקוח");return;} setForm(f=>({...f,clientLocked:true,adminReport:true})); setScreen("form"); haptic("medium"); }} disabled={!form.client} style={{padding:"14px",borderRadius:14,background:form.client?`linear-gradient(135deg,${C.blue},${C.lightBlue})`:"#90caf9",color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:form.client?"0 4px 14px rgba(21,101,192,0.3)":"none",marginBottom:8}}>📝 פתח דוח לאדמין</Press>
+              <Press onClick={()=>{ if(!form.client){showToast("⚠️ בחר לקוח");return;} setEditingReport(null); setForm(f=>({...f,clientLocked:true,adminReport:true})); setScreen("form"); haptic("medium"); }} disabled={!form.client} style={{padding:"14px",borderRadius:14,background:form.client?`linear-gradient(135deg,${C.blue},${C.lightBlue})`:"#90caf9",color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:form.client?"0 4px 14px rgba(21,101,192,0.3)":"none",marginBottom:8}}>📝 פתח דוח לאדמין</Press>
             </div>
           )}
           {adminTab==="daily"&&(

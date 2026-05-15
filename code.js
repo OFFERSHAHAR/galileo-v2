@@ -398,6 +398,17 @@
         return json({ success: true });
       }
 
+      if (action === "updateReport") {
+        const sheet = ss.getSheetByName("דוחות");
+        ensureColumns(sheet, ["ציוד_שסופק"]);
+        const r = data.report;
+        const row = findLatestReportRow_(sheet, data.original || {}, r);
+        if (!row) return json({ success:false, error:"report row not found" });
+        sheet.getRange(row, 1, 1, 24).setValues([reportRowValues_(r)]);
+        refreshMonthlyTreatmentCounters_(ss);
+        return json({ success:true, row });
+      }
+
       if (action === "saveSupplyDB") {
         const sheet = ss.getSheetByName("ציוד_לקוחות");
         ensureColumns(sheet, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים"]);
@@ -1362,6 +1373,36 @@
 
   function normalizeUserName_(value) {
     return String(value || "").trim().toLowerCase();
+  }
+
+  function reportRowValues_(r) {
+    return [r.reportDate, r.operator, r.client, r.chlorine, r.ph, r.salt,
+      r.waterLevel, r.clarity, r.fat, r.flow, r.elModel, r.elSerial,
+      r.elDate, r.elNext, r.supplyLabel, r.poolStatus, r.customStatusText,
+      r.restrictedUntil, r.notes, r.chlora||0, r.hth||0, r.phUp||0, r.acidLiters||0, r.suppliedEquipment||""];
+  }
+
+  function findLatestReportRow_(sheet, original, report) {
+    if (!sheet || sheet.getLastRow() < 2) return 0;
+    const date = normalizeReportDate_(original.date || original.reportDate || report.reportDate);
+    const client = normalizeReportValue_(original.client || report.client);
+    const operator = normalizeReportValue_(original.operator || report.operator);
+    const rows = sheet.getDataRange().getValues();
+    let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
+    if (hi === -1) hi = 0;
+
+    for (let i = rows.length - 1; i > hi; i--) {
+      if (!rows[i][0]) continue;
+      if (
+        normalizeReportDate_(rows[i][0]) === date &&
+        normalizeReportValue_(rows[i][1]) === operator &&
+        normalizeReportValue_(rows[i][2]) === client
+      ) {
+        return i + 1;
+      }
+    }
+
+    return 0;
   }
 
   function findDuplicateReportRow_(sheet, report) {
