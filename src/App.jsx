@@ -1617,7 +1617,6 @@ const [screen,setScreen] = useState(() => {
     const localRow = [Date.now(), issue.operator, issue.client, issue.desc, issue.priority, "פתוח", "", issue.date];
     setOperatorIssues(prev => [localRow, ...prev]);
     const res = await sheetCall("saveOperatorIssue", issue).catch(()=>null);
-    await sendNotificationToAdmins("🚨 תקלה קריטית בזרימה", `${issue.client?.split(" - ")[0] || ""} · מפעיל: ${issue.operator || "לא ידוע"}`).catch(()=>null);
     if (res?.success) showToast("🚨 תקלה קריטית נשלחה לאדמין");
     else showToast("⚠️ התקלה נשמרה מקומית, בדוק חיבור");
     return res;
@@ -2041,12 +2040,21 @@ const [screen,setScreen] = useState(() => {
   const connectSheets = async (bg=false) => {
     try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) setAllUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
-      const [uR,cR,tR,sR,rR,ucR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients")]);
-      const u=uR?.users?.length?uR.users:null; const c=cR?.clients?.length?cR.clients:null; const t=Array.isArray(tR?.tasks)?tR.tasks:null; const s=sR?.supplyDB?sR.supplyDB:null; const lr=rR?.lastReadings?rR.lastReadings:null; const uc=ucR?.clients?.length?ucR.clients:null;
+      let boot = await sheetCall("getBootstrapData");
+      let u=boot?.users?.length?boot.users:null;
+      let c=boot?.clients?.length?boot.clients:null;
+      let t=Array.isArray(boot?.tasks)?boot.tasks:null;
+      let s=boot?.supplyDB?boot.supplyDB:null;
+      let lr=boot?.lastReadings?boot.lastReadings:null;
+      let uc=boot?.unassignedClients?.length?boot.unassignedClients:null;
+      if(!u && !c && !t && !s && !lr){
+        const [uR,cR,tR,sR,rR,ucR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients")]);
+        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null;
+      }
       if(u)setAllUsers(u); if(c)setClients(c); if(t)setTasks(t); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc);
       localStorage.setItem("galileo_cache",JSON.stringify({users:u||allUsers,clients:c||clients,tasks:t||[],supplyDB:s||{},lastReadings:lr||{},cachedAt:Date.now()}));
       setSheetId("connected");
-      try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {}
+      setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
     } catch {}
   };
 

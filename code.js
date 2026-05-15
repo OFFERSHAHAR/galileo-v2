@@ -173,10 +173,10 @@
         return json({ clients });
       }
 
-      if (action === "getFreeClients") {
-        // לקוחות ללא שיוך יום ומפעיל — מגיעים מטאב "לקוחות_חופשיים"
-        const sheet = ss.getSheetByName("לקוחות_חופשיים");
-        if(!sheet) return json({ clients:[] });
+    if (action === "getFreeClients") {
+      // לקוחות ללא שיוך יום ומפעיל — מגיעים מטאב "לקוחות_חופשיים"
+      const sheet = ss.getSheetByName("לקוחות_חופשיים");
+      if(!sheet) return json({ clients:[] });
         const rows = sheet.getDataRange().getValues();
         let hi = rows.findIndex(r => String(r[0]).includes("שם"));
         if(hi===-1) hi=0;
@@ -184,12 +184,23 @@
           name: String(r[0]), phone: String(r[1]||""), address: String(r[2]||""),
           poolType: String(r[3]||"מלח"), gateCode: String(r[4]||"")
         }));
-        return json({ clients });
-      }
+      return json({ clients });
+    }
 
-      if (action === "saveClientPoolType") {
-        const sheet = ss.getSheetByName("לקוחות");
-        if(!sheet) return json({ error:"no sheet" });
+    if (action === "getBootstrapData") {
+      return json({
+        users: getUsers_(ss),
+        clients: getClients_(ss),
+        tasks: getTasks_(ss),
+        supplyDB: getSupplyDB_(ss),
+        lastReadings: getLastReadings_(ss),
+        unassignedClients: getUnassignedClients_(ss)
+      });
+    }
+
+    if (action === "saveClientPoolType") {
+      const sheet = ss.getSheetByName("לקוחות");
+      if(!sheet) return json({ error:"no sheet" });
         const rows = sheet.getDataRange().getValues();
         for(let i=1;i<rows.length;i++){
           if(String(rows[i][0])===String(data.clientName)){
@@ -1438,6 +1449,117 @@ function normalizeReportValue_(value) {
   const n = Number(s);
   if (!isNaN(n)) return String(Math.round(n * 1000) / 1000);
   return s;
+}
+
+function getUsers_(ss) {
+  const sheet = ss.getSheetByName("Users");
+  if (!sheet) return [];
+  const rows = sheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => r.some(c => String(c).toLowerCase() === "username"));
+  if (hi === -1) hi = 0;
+  const headers = rows[hi];
+  return rows.slice(hi + 1).filter(r => r[0]).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = r[i]);
+    return obj;
+  });
+}
+
+function getClients_(ss) {
+  const sheet = ss.getSheetByName("לקוחות");
+  if (!sheet) return [];
+  const rows = sheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => String(r[0]).includes("שם_לקוח") || String(r[0]).includes("שם לקוח"));
+  if (hi === -1) hi = 2;
+  const headers = (rows[hi] || []).map(h => String(h || "").trim());
+  const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
+  return rows.slice(hi + 1).filter(r => r[0]).map(r => ({
+    name: String(r[0]), phone: String(r[1]), address: String(r[2]), qrUrl: String(r[3]||""), gateCode: String(r[4]||""), poolType: String(r[5]||"מלח"), regularDays: String(r[6]||""), regularOperator: String(r[7]||""), monthlyTreatmentBalance: Number(r[8] || 0), monthlyTreatmentCount: Number(r[9] || 0), monthlyTreatmentQuota: Number(quotaIdx >= 0 ? r[quotaIdx] || 0 : 0)
+  }));
+}
+
+function getTasks_(ss) {
+  const sheet = ss.getSheetByName("משימות");
+  if (!sheet) return [];
+  const rows = sheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
+  if (hi === -1) hi = 2;
+  return rows.slice(hi + 1).filter(r => r[0]).map(r => {
+    let date = r[1];
+    if (date instanceof Date) {
+      date = Utilities.formatDate(date, "Asia/Jerusalem", "yyyy-MM-dd");
+    } else {
+      date = String(date).slice(0,10);
+    }
+    return {
+      id: r[0], date,
+      client: r[2],
+      operators: r[3] ? String(r[3]).split(",").map(x => x.trim()) : [],
+      status: r[4],
+      changeLog: r[5] ? JSON.parse(String(r[5])) : []
+    };
+  });
+}
+
+function getSupplyDB_(ss) {
+  const sheet = ss.getSheetByName("ציוד_לקוחות");
+  if (!sheet) return {};
+  const rows = sheet.getDataRange().getValues();
+  const db = {};
+  rows.slice(3).filter(r => r[0]).forEach(r => {
+    db[String(r[0])] = {
+      acid: r[1] === "כן", phUp: r[2] === "כן",
+      saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 1,
+      updatedAt: String(r[5]),
+      supplyNote: String(r[6]||"")
+    };
+  });
+  return db;
+}
+
+function getLastReadings_(ss) {
+  const sheet = ss.getSheetByName("דוחות");
+  if (!sheet) return {};
+  const rows = sheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
+  if (hi === -1) hi = 2;
+  const readings = {};
+  rows.slice(hi + 1).filter(r => r[0]).forEach(r => {
+    const client = String(r[2]);
+    const date = normalizeSheetDate_(r[0]);
+    if (!readings[client] || date > readings[client].date) {
+      readings[client] = {
+        date, chlorine: r[3], ph: r[4],
+        chlora: r[19]||0, hth: r[20]||0, phUp: r[21]||0, acidLiters: r[22]||0,
+        elModel: String(r[10]||""), elSerial: String(r[11]||""),
+        elDate: r[12] instanceof Date ? Utilities.formatDate(r[12],"Asia/Jerusalem","yyyy-MM-dd") : String(r[12]||""),
+        elNext: r[13] instanceof Date ? Utilities.formatDate(r[13],"Asia/Jerusalem","yyyy-MM-dd") : String(r[13]||""),
+        poolStatus: String(r[15]||""),
+        customStatusText: String(r[16]||""),
+        notes: String(r[18]||""),
+        missedTreatment: String(r[18]||"").trim() === "לא בוצע טיפול"
+      };
+    }
+  });
+  return readings;
+}
+
+function getUnassignedClients_(ss) {
+  let sheet = ss.getSheetByName("לקוחות_ללא_שיוך");
+  if(!sheet) {
+    sheet = ss.getSheetByName("לקוחות");
+    if(!sheet) return [];
+    const rows = sheet.getDataRange().getValues();
+    let hi = rows.findIndex(r => String(r[0]).includes("שם_לקוח") || String(r[0]).includes("שם לקוח"));
+    if(hi===-1) hi=0;
+    return rows.slice(hi+1).filter(r=>r[0]).map(r=>({
+      name:String(r[0]), phone:String(r[1]), address:String(r[2])
+    }));
+  }
+  const rows = sheet.getDataRange().getValues();
+  return rows.slice(1).filter(r=>r[0]).map(r=>({
+    name:String(r[0]), phone:String(r[1]||""), address:String(r[2]||"")
+  }));
 }
 
 function getClientBrandingBySheetId_(sheetId) {
