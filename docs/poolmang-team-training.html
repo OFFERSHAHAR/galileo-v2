@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>POOLMANG - מצגת הדרכת צוות</title>
+  <style>
+    :root{
+      --bg1:#e7f0fb;
+      --bg2:#d7e6f7;
+      --card:rgba(244,249,255,.84);
+      --text:#0f1f38;
+      --muted:#52657f;
+      --blue:#1d4ed8;
+      --purple:#7c3aed;
+      --green:#15803d;
+      --orange:#c2410c;
+      --red:#b91c1c;
+      --border:rgba(100,116,139,.26);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:"Segoe UI",Arial,sans-serif;
+      color:var(--text);
+      background:linear-gradient(135deg,var(--bg1),var(--bg2));
+    }
+    .deck{height:100vh;overflow-y:auto;scroll-snap-type:y mandatory}
+    .slide{
+      min-height:100vh;
+      scroll-snap-align:start;
+      padding:56px clamp(24px,6vw,80px);
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      gap:26px;
+      position:relative;
+      overflow:hidden;
+      page-break-after:always;
+    }
+    .slide:before{
+      content:"";
+      position:absolute;
+      inset:4%;
+      border:1px solid rgba(255,255,255,.42);
+      border-radius:42px;
+      background:linear-gradient(145deg,rgba(255,255,255,.46),rgba(213,226,244,.28));
+      box-shadow:0 32px 90px rgba(30,64,175,.16);
+      z-index:-1;
+    }
+    .kicker{
+      display:inline-flex;
+      width:max-content;
+      padding:8px 14px;
+      border-radius:999px;
+      background:rgba(255,255,255,.62);
+      border:1px solid var(--border);
+      color:var(--blue);
+      font-weight:800;
+      font-size:18px;
+    }
+    h1,h2,h3,p{margin:0}
+    h1{font-size:clamp(42px,8vw,76px);line-height:1.04;font-weight:900;letter-spacing:0}
+    h2{font-size:clamp(34px,6vw,56px);line-height:1.08;font-weight:900;letter-spacing:0}
+    h3{font-size:clamp(22px,3vw,32px);font-weight:900}
+    p{font-size:clamp(19px,2.2vw,28px);line-height:1.55;color:var(--muted);font-weight:650}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+    .grid.two{grid-template-columns:repeat(2,1fr)}
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:28px;
+      padding:24px;
+      box-shadow:0 18px 46px rgba(30,64,175,.12), inset 0 1px 0 rgba(255,255,255,.82);
+      backdrop-filter:blur(18px);
+    }
+    .card strong{display:block;font-size:28px;margin-bottom:10px;color:var(--text)}
+    .card span{display:block;font-size:20px;line-height:1.45;color:var(--muted);font-weight:650}
+    .number{
+      width:54px;height:54px;border-radius:18px;
+      background:linear-gradient(135deg,var(--blue),var(--purple));
+      color:#fff;display:grid;place-items:center;
+      font-size:26px;font-weight:900;margin-bottom:14px;
+      box-shadow:0 16px 34px rgba(79,70,229,.24);
+    }
+    ul{margin:0;padding:0;list-style:none;display:grid;gap:13px}
+    li{
+      font-size:clamp(19px,2vw,26px);
+      line-height:1.45;
+      font-weight:750;
+      color:var(--text);
+      background:rgba(255,255,255,.52);
+      border:1px solid var(--border);
+      border-radius:20px;
+      padding:14px 18px;
+    }
+    li small{display:block;color:var(--muted);font-size:.78em;font-weight:650;margin-top:4px}
+    .flow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .pill{
+      padding:14px 18px;
+      border-radius:999px;
+      background:rgba(255,255,255,.66);
+      border:1px solid var(--border);
+      color:var(--text);
+      font-size:22px;
+      font-weight:850;
+    }
+    .arrow{font-size:28px;color:var(--blue);font-weight:900}
+    .role{
+      min-height:230px;
+      display:flex;
+      flex-direction:column;
+      justify-content:space-between;
+    }
+    .role .icon{font-size:44px;margin-bottom:10px}
+    .tag{color:#fff;background:linear-gradient(135deg,var(--blue),var(--purple));border:none}
+    .warning{border-color:rgba(194,65,12,.28);background:rgba(255,247,237,.72)}
+    .success{border-color:rgba(21,128,61,.24);background:rgba(240,253,244,.72)}
+    .footer{
+      position:absolute;
+      bottom:26px;
+      left:48px;
+      right:48px;
+      display:flex;
+      justify-content:space-between;
+      color:var(--muted);
+      font-size:15px;
+      font-weight:750;
+    }
+    @media(max-width:800px){
+      .grid,.grid.two{grid-template-columns:1fr}
+      .slide{padding:36px 18px}
+      .slide:before{inset:10px;border-radius:28px}
+      .footer{left:24px;right:24px}
+    }
+    @media print{
+      body{background:#fff}
+      .deck{height:auto;overflow:visible}
+      .slide{height:100vh;min-height:100vh}
+    }
+  </style>
+</head>
+<body>
+<main class="deck">
+  <section class="slide">
+    <div class="kicker">הדרכת צוות</div>
+    <h1>הדרך החדשה לניהול עבודת הבריכות</h1>
+    <p>אפליקציית POOLMANG מחברת בין אדמין, מפעיל ועוזר מפעיל כדי שכל יום עבודה יהיה מסודר, מתועד וברור.</p>
+    <div class="footer"><span>POOLMANG</span><span>ישיבת הטמעה לצוות</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">למה משנים שיטה?</div>
+    <h2>פחות בלגן, יותר שליטה בשטח</h2>
+    <div class="grid">
+      <div class="card"><strong>סדר יום אחד</strong><span>כולם רואים את אותו סידור עבודה, לפי מפעיל, יום ולקוח.</span></div>
+      <div class="card"><strong>דוחות בזמן אמת</strong><span>כל טיפול מתועד מהטלפון, עם מדידות, הערות ותקלות.</span></div>
+      <div class="card"><strong>מעקב ברור</strong><span>האדמין רואה מה בוצע, מה ממתין ומה דורש טיפול מיידי.</span></div>
+    </div>
+    <div class="footer"><span>מטרה</span><span>עבודה רציפה בלי ניירות ובלי הודעות מפוזרות</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">שלושת התפקידים</div>
+    <h2>מי עושה מה?</h2>
+    <div class="grid">
+      <div class="card role"><div><div class="icon">🧭</div><strong>אדמין</strong><span>בונה סדר יום, מנהל לקוחות, עוקב אחרי דוחות ותקלות.</span></div></div>
+      <div class="card role"><div><div class="icon">🏊</div><strong>מפעיל</strong><span>פותח יום, רואה סדר עבודה, ממלא דוחות ומנהל טיפול בשטח.</span></div></div>
+      <div class="card role"><div><div class="icon">🤝</div><strong>עוזר מפעיל</strong><span>רואה את הסדר של המפעיל. ממלא דוחות רק אחרי אישור מפעיל.</span></div></div>
+    </div>
+    <div class="footer"><span>תפקידים</span><span>כל אחד רואה רק מה שהוא צריך</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">כניסה לאפליקציה</div>
+    <h2>כל משתמש נכנס עם שם משתמש משלו</h2>
+    <ul>
+      <li>נכנסים מהטלפון או מהמחשב עם שם משתמש וסיסמה.</li>
+      <li>אם קיימת תמונת פתיחה או הודעה, היא קופצת אחרי ההתחברות.</li>
+      <li>אחרי סגירת התמונה עוברים למסך “פותחים יום”.</li>
+      <li>לא משתפים משתמשים בין עובדים. כל פעולה צריכה להיות משויכת לאדם הנכון.</li>
+    </ul>
+    <div class="footer"><span>כניסה</span><span>משתמש אישי = אחריות ותיעוד נכון</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">פותחים יום</div>
+    <h2>המסך הראשון לפני תחילת עבודה</h2>
+    <div class="flow">
+      <span class="pill">כניסה</span><span class="arrow">←</span>
+      <span class="pill">תמונת פתיחה אם קיימת</span><span class="arrow">←</span>
+      <span class="pill">פותחים יום</span><span class="arrow">←</span>
+      <span class="pill tag">הפעלת שעון</span>
+    </div>
+    <p>במסך הזה רואים את סדר היום בקצרה ומאשרים התחלת עבודה. אם מתחילים לעבוד, מפעילים שעון.</p>
+    <div class="footer"><span>שגרת בוקר</span><span>לא מתחילים יום בלי לפתוח שעון</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">אדמין</div>
+    <h2>בניית סדר עבודה יומי</h2>
+    <ul>
+      <li>האדמין בוחר תאריך ומפעיל.</li>
+      <li>האפליקציה מציגה את הבריכות הקבועות לפי יום ומפעיל.</li>
+      <li>האדמין מסמן את סדר העבודה לפי סדר הבחירה.</li>
+      <li>אפשר להוסיף בריכות נוספות גם אם הן לא משויכות לאותו יום.</li>
+      <li>לכל לקוח אפשר להוסיף הערת עבודה חופשית.</li>
+    </ul>
+    <div class="footer"><span>אדמין</span><span>הסדר היומי הוא מקור האמת של השטח</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">אדמין</div>
+    <h2>ניהול לקוחות ופרטים חסרים</h2>
+    <div class="grid two">
+      <div class="card">
+        <strong>פרטים שחייבים להיות מלאים</strong>
+        <span>שם לקוח, טלפון, כתובת, קוד שער, סוג בריכה, ימים קבועים, מפעיל קבוע.</span>
+      </div>
+      <div class="card warning">
+        <strong>פרטים חסרים</strong>
+        <span>אם חסר מידע בכרטיס לקוח, האפליקציה מסמנת זאת כדי שהאדמין ישלים לפני עבודה בשטח.</span>
+      </div>
+    </div>
+    <p>כרטיס לקוח טוב חוסך שיחות מיותרות ומונע עצירה של מפעיל מול שער סגור או כתובת לא ברורה.</p>
+    <div class="footer"><span>לקוחות</span><span>המידע בכרטיס חייב להיות מדויק</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">אדמין</div>
+    <h2>מעקב אחרי יום עבודה</h2>
+    <ul>
+      <li>רואים כמה בריכות יש לכל מפעיל.</li>
+      <li>רואים כמה בוצעו וכמה עדיין ממתינות.</li>
+      <li>רואים דוחות שנשלחו, מדידות ותקלות.</li>
+      <li>תקלה קריטית דורשת אישור וטיפול מיידי.</li>
+    </ul>
+    <div class="footer"><span>בקרה</span><span>האדמין לא מחכה לסוף היום כדי לדעת מה קורה</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">מפעיל</div>
+    <h2>מסך הבית של המפעיל</h2>
+    <div class="grid">
+      <div class="card"><div class="number">1</div><strong>סדר יום</strong><span>רשימת בריכות לפי סדר שהוגדר.</span></div>
+      <div class="card"><div class="number">2</div><strong>שעון עבודה</strong><span>הפעלת שעון, תזכורת כיבוי ושמירת שעות.</span></div>
+      <div class="card"><div class="number">3</div><strong>דוחות</strong><span>פתיחת דוח לכל בריכה ותיעוד הטיפול.</span></div>
+    </div>
+    <div class="footer"><span>מפעיל</span><span>כל העבודה היומית מתוך מסך אחד</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">מפעיל</div>
+    <h2>מילוי דוח טיפול</h2>
+    <ul>
+      <li>פותחים דוח מתוך כרטיס הבריכה.</li>
+      <li>ממלאים מדידות: כלור, pH, TAB וזרימה.</li>
+      <li>מסמנים מצב בריכה, ציוד שסופק והערות ללקוח.</li>
+      <li>אם יש תקלה קריטית, האדמין מקבל התראה.</li>
+      <li>אחרי שליחה הכרטיס מתכווץ ומסומן כבוצע.</li>
+    </ul>
+    <div class="footer"><span>דוח</span><span>דוח מלא = תיעוד שמגן על העובד ועל החברה</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">מפעיל</div>
+    <h2>עריכת סדר ופעולות שטח</h2>
+    <div class="grid two">
+      <div class="card"><strong>עריכת סדר</strong><span>המפעיל יכול לערוך מקומית את סדר היום לפי השטח, בלי לשנות את סדר האדמין.</span></div>
+      <div class="card"><strong>נעילה זמנית</strong><span>לחיצה ארוכה יכולה להעביר בריכה למצב נעול/מושהה זמנית, בלי למחוק אותה.</span></div>
+    </div>
+    <p>המטרה היא לאפשר גמישות בשטח בלי לאבד שליטה או תיעוד.</p>
+    <div class="footer"><span>גמישות</span><span>משנים סדר בשטח, לא מוחקים עבודה</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">עוזר מפעיל</div>
+    <h2>מה עוזר מפעיל רואה?</h2>
+    <ul>
+      <li>עוזר מפעיל נכנס עם משתמש משלו.</li>
+      <li>אחרי כניסה הוא רואה תמונת פתיחה אם קיימת.</li>
+      <li>לאחר מכן הוא מגיע למסך “פותחים יום”.</li>
+      <li>הוא רואה את סדר היום של המפעיל שאליו הוא משויך.</li>
+      <li>ברירת מחדל: צפייה בלבד, בלי מילוי דוחות.</li>
+    </ul>
+    <div class="footer"><span>עוזר מפעיל</span><span>רואה סדר יום, לא משנה אותו</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">עוזר מפעיל</div>
+    <h2>מתי עוזר מפעיל יכול למלא דוחות?</h2>
+    <div class="flow">
+      <span class="pill">עוזר רואה סדר יום</span><span class="arrow">←</span>
+      <span class="pill">מפעיל לוחץ “אשר עריכה”</span><span class="arrow">←</span>
+      <span class="pill tag">עוזר יכול למלא דוחות</span>
+    </div>
+    <p>עד שהמפעיל לא מאשר, העוזר נשאר במצב צפייה בלבד. אחרי אישור הוא יכול לפתוח ולמלא דוחות כמו מפעיל.</p>
+    <div class="footer"><span>הרשאה</span><span>המפעיל הראשי אחראי לפתיחת יכולת הדיווח</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">עוזר מפעיל</div>
+    <h2>מה נשמר כשעוזר ממלא דוח?</h2>
+    <div class="grid two">
+      <div class="card success"><strong>העבודה נשארת משויכת למפעיל</strong><span>סדר היום עדיין שייך למפעיל הראשי וללקוחות שלו.</span></div>
+      <div class="card success"><strong>הביצוע מתועד לעוזר</strong><span>כדי לדעת מי מילא בפועל ומתי, בלי לערבב אחריות.</span></div>
+    </div>
+    <p>כך אפשר לעבוד בצוות ועדיין לשמור על בקרה ותיעוד נקיים.</p>
+    <div class="footer"><span>תיעוד</span><span>מי עשה, מתי, ובאיזה לקוח</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">שעון עבודה</div>
+    <h2>כל עובד אחראי לשעות שלו</h2>
+    <ul>
+      <li>פותחים שעון בתחילת יום עבודה.</li>
+      <li>בשעה 12:30 תופיע תזכורת לסגור או לבדוק שעון.</li>
+      <li>בסיום העבודה סוגרים שעון ושומרים שעות.</li>
+      <li>עוזר מפעיל שומר שעות תחת המשתמש שלו, לא תחת המפעיל.</li>
+    </ul>
+    <div class="footer"><span>שעות</span><span>שעון פתוח חייב להיות בשליטה</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">התראות</div>
+    <h2>מתי יש התראה?</h2>
+    <ul>
+      <li>תקלה קריטית בדוח יוצרת התראה לאדמין.</li>
+      <li>אישור אדמין לתקלה יכול להציג חלונית למפעיל.</li>
+      <li>תזכורת שעון מופיעה לכל מי שצריך לסגור שעות.</li>
+      <li>הודעות חשובות מופיעות כחלוניות כדי שלא ילכו לאיבוד.</li>
+    </ul>
+    <div class="footer"><span>התראות</span><span>התראה היא פעולה שצריך לראות ולטפל בה</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">כללי עבודה</div>
+    <h2>מה לא עושים?</h2>
+    <ul>
+      <li>לא משתמשים בשם משתמש של עובד אחר.</li>
+      <li>לא משאירים דוח פתוח בלי סיבה.</li>
+      <li>לא מדלגים על מדידות חובה.</li>
+      <li>לא מתעלמים מתקלה קריטית.</li>
+      <li>לא משנים סדר עבודה בלי להבין את ההשפעה על היום.</li>
+    </ul>
+    <div class="footer"><span>משמעת עבודה</span><span>האפליקציה טובה כמו הנתונים שמכניסים אליה</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">תרגול צוות</div>
+    <h2>תרגול קצר בישיבה</h2>
+    <div class="grid">
+      <div class="card"><div class="number">1</div><strong>אדמין</strong><span>בונה סדר יום למפעיל אחד ומוסיף הערה ללקוח.</span></div>
+      <div class="card"><div class="number">2</div><strong>מפעיל</strong><span>פותח יום, מפעיל שעון ופותח דוח לבריכה.</span></div>
+      <div class="card"><div class="number">3</div><strong>עוזר</strong><span>נכנס, רואה סדר יום, מקבל אישור וממלא דוח.</span></div>
+    </div>
+    <div class="footer"><span>תרגול</span><span>כל עובד עושה פעולה אחת בעצמו</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="kicker">סיכום</div>
+    <h2>השיטה החדשה עובדת כשכולם עובדים באותה דרך</h2>
+    <ul>
+      <li>האדמין מתכנן ומפקח.</li>
+      <li>המפעיל מבצע, מדווח ומנהל את השטח.</li>
+      <li>עוזר המפעיל מסייע רק במסגרת ההרשאות שנפתחו לו.</li>
+      <li>כל דוח, תקלה ושעה נשמרים במקום אחד.</li>
+    </ul>
+    <div class="footer"><span>POOLMANG</span><span>סדר, תיעוד, אחריות</span></div>
+  </section>
+</main>
+</body>
+</html>

@@ -1382,7 +1382,9 @@ useEffect(() => {
 const [screen,setScreen] = useState(() => {
   try {
     const u = JSON.parse(localStorage.getItem("galileo_user") || "null");
-    return u ? (u.role === "admin" ? "admin" : "daily") : "login";
+    const role = String(u?.role || "").trim().toLowerCase();
+    const isAdminPanel = ["admin", "מנהל", "אדמין", "sub_admin", "subadmin", "סאב אדמין", "סגן מנהל"].includes(role);
+    return u ? (isAdminPanel ? "admin" : "daily") : "login";
   } catch {
     return "login";
   }
@@ -1491,6 +1493,9 @@ const [screen,setScreen] = useState(() => {
   const opNames = operatorUsers.map(u=>u.name);
   const normalizeDate = (d) => String(d||"").trim().slice(0,10);
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
+  const isAdminRole = (role) => ["admin", "מנהל", "אדמין"].includes(String(role || "").trim().toLowerCase());
+  const isSubAdminRole = (role) => ["sub_admin", "subadmin", "סאב אדמין", "סגן מנהל"].includes(String(role || "").trim().toLowerCase());
+  const isAdminPanelRole = (role) => isAdminRole(role) || isSubAdminRole(role);
   const clientDisplayName = (c) => String(c?.name || c || "").split(" - ")[0].trim();
   const sortByClientName = (list) => [...(list || [])].sort((a,b)=>clientDisplayName(a).localeCompare(clientDisplayName(b), "he"));
   const filterClientOptions = (list, query) => {
@@ -1643,7 +1648,7 @@ const [screen,setScreen] = useState(() => {
     const tDate = normalizeDate(t.date);
     const tDate2 = tDate.includes("T") ? tDate.split("T")[0] : tDate;
     const dateMatch = tDate2 === date;
-    const nameMatch = user?.role==="admin" || (t.operators||[]).some(op => normalizeName(op)===normalizeName(user?.name));
+    const nameMatch = isAdminPanelRole(user?.role) || (t.operators||[]).some(op => normalizeName(op)===normalizeName(user?.name));
     return dateMatch && nameMatch;
   });
 
@@ -2151,7 +2156,7 @@ const [screen,setScreen] = useState(() => {
   },[screen, user?.name]);
 
   useEffect(()=>{
-    if(!user || user.role==="admin") return;
+    if(!user || isAdminPanelRole(user.role)) return;
     loadOperatorIssues(true);
     const timer = setInterval(()=>loadOperatorIssues(true), 9 * 60 * 1000);
     return () => clearInterval(timer);
@@ -2182,9 +2187,9 @@ const [screen,setScreen] = useState(() => {
     setUser(found);
     setGreeting(getDailyGreeting(found.username||""));
     setWelcomeMedia(classifyWelcomeMedia(mediaUrlFromUser(found)));
-    setShowDailyBriefing(found.role !== "admin");
+    setShowDailyBriefing(!isAdminPanelRole(found.role));
     localStorage.setItem("galileo_user", JSON.stringify(found));
-    setScreen(found.role === "admin" ? "admin" : "daily");
+    setScreen(isAdminPanelRole(found.role) ? "admin" : "daily");
     haptic("medium");
     connectSheets(true);
     // בדיקת מנוי מושהה ברקע — לא חוסם כניסה
@@ -2344,7 +2349,7 @@ const [screen,setScreen] = useState(() => {
   };
 
   useEffect(() => {
-    if (!workStart || user?.role === "admin") return;
+    if (!workStart || isAdminPanelRole(user?.role)) return;
     const check = () => {
       const now = new Date();
       const today = todayStr();
@@ -2594,7 +2599,7 @@ const report = {
     {key:"salt",label:"מלח",min:0,max:6,step:0.1,unit:" g/L",optimal:3.5,val:salt,fn:v=>sf("salt",v),disabled:currentPrimaryPool==="כלור",disabledReason:"נעול בבריכת כלור"},
     {key:"chlora",label:"טבליות כלור (TAB)",min:0,max:5,step:0.25,unit:"",val:form.chlora??0,fn:v=>sf("chlora",v),zeroButtonLabel:"אין צורך להוסיף"},
     {key:"hth",label:"HTH",min:0,max:5,step:0.5,unit:" cups",val:form.hth??0,fn:v=>sf("hth",v)},
-    {key:"phUp",label:"מעלה חומציות pH",min:0,max:5,step:0.5,unit:" כוסות",val:form.phUp??0,fn:v=>updateMeasurement("phUp",v),disabled:currentPrimaryPool==="מלח",disabledReason:"נעול בבריכת מלח"},
+    {key:"phUp",label:"מעלה pH",min:0,max:5,step:0.5,unit:" כוסות",val:form.phUp??0,fn:v=>updateMeasurement("phUp",v),disabled:currentPrimaryPool==="מלח",disabledReason:"נעול בבריכת מלח"},
     {key:"acidLiters",label:"חומצת מלח",min:0,max:5,step:0.5,unit:" L",val:form.acidLiters??0,fn:v=>sf("acidLiters",v),disabled:currentPrimaryPool==="כלור",disabledReason:"נעול בבריכת כלור"},
   ];
 
@@ -2611,7 +2616,7 @@ const report = {
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
       <div style={{width:"100%",maxWidth:360}}>
         <div style={{textAlign:"center",marginBottom:36}} onPointerDown={()=>{ logoLongPress.current = setTimeout(()=>{ haptic("success"); setShowSetup(true); }, 3000); }} onPointerUp={()=>clearTimeout(logoLongPress.current)} onPointerLeave={()=>clearTimeout(logoLongPress.current)}>
-          {(()=>{ const logoUrl = normalizeBranding(getCompany()).logoUrl; return logoUrl ? (<div style={{width:112,height:112,margin:"0 auto 12px",padding:6,borderRadius:28,background:"rgba(232,241,253,0.82)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 24px 60px rgba(37,99,235,0.14), 0 1px 0 rgba(255,255,255,0.8) inset",border:"1px solid rgba(148,163,184,0.22)",overflow:"visible"}}><img src={logoUrl} alt="logo" style={{width:"100%",height:"100%",objectFit:"contain",display:"block"}}/></div>) : (<div style={{width:92,height:92,margin:"0 auto 14px",borderRadius:28,background:"rgba(232,241,253,0.82)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:52,boxShadow:"0 24px 60px rgba(37,99,235,0.14), 0 1px 0 rgba(255,255,255,0.8) inset",cursor:"pointer",userSelect:"none"}}>🌊</div>); })()}
+          {(()=>{ const logoUrl = normalizeBranding(getCompany()).logoUrl; return logoUrl ? (<div style={{width:138,height:138,margin:"0 auto 14px",padding:18,borderRadius:38,background:"linear-gradient(145deg,rgba(244,249,255,0.92),rgba(213,226,244,0.86))",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 26px 64px rgba(30,64,175,0.16), 0 1px 0 rgba(255,255,255,0.82) inset",border:"1px solid rgba(148,163,184,0.28)",overflow:"hidden"}}><img src={logoUrl} alt="logo" style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:24,background:"rgba(255,255,255,0.92)",boxShadow:"0 10px 28px rgba(15,23,42,0.08)"}}/></div>) : (<div style={{width:92,height:92,margin:"0 auto 14px",borderRadius:28,background:"rgba(232,241,253,0.82)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:52,boxShadow:"0 24px 60px rgba(37,99,235,0.14), 0 1px 0 rgba(255,255,255,0.8) inset",cursor:"pointer",userSelect:"none"}}>🌊</div>); })()}
           <h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:"0 0 6px",letterSpacing:"-0.5px"}}>{companyName}</h1>
           <p style={{color:C.muted,fontSize:14,margin:0,fontWeight:800}}>מערכת ניהול בריכות</p>
           {clientPlan.plan&&(
@@ -3297,7 +3302,11 @@ const report = {
     const adminSoftText = {color:"#64748b"};
     const adminPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     const adminGlass = (extra={}) => card({background:"rgba(226,237,250,0.78)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(30,64,175,0.14), 0 1px 0 rgba(255,255,255,0.76) inset",...extra});
-    const adminDisplayName = user?.name || user?.username || "מנהל";
+    const isSubAdminPanel = isSubAdminRole(user?.role);
+    const adminTabs = isSubAdminPanel
+      ? [["daily","📋 חלוקת עבודה"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"]]
+      : [["daily","📋 חלוקת עבודה"],["adminreport","📝 דוח ידני"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["treatments","🔢 מספר טיפולים"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"],["users","👤 משתמשים"]];
+    const adminDisplayName = user?.name || user?.username || (isSubAdminPanel ? "סאב אדמין" : "מנהל");
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:adminShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
@@ -3346,7 +3355,7 @@ const report = {
         <div style={{margin:"12px 14px 0",background:adminHeroBg,border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px 20px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <div>
-              <p style={{...adminSoftText,fontSize:12,fontWeight:800,margin:"0 0 4px",letterSpacing:"0.04em"}}>פאנל ניהול 👔</p>
+              <p style={{...adminSoftText,fontSize:12,fontWeight:800,margin:"0 0 4px",letterSpacing:"0.04em"}}>{isSubAdminPanel ? "פאנל סאב אדמין 🧩" : "פאנל ניהול 👔"}</p>
               <h1 style={{...adminHeroText,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>שלום, {adminDisplayName}</h1>
               {clientPlan.plan&&(
                 <div style={{display:"flex",gap:6,marginTop:6}}>
@@ -3357,13 +3366,13 @@ const report = {
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <Press onClick={()=>{setAdminTab("daily");window.scrollTo(0,0);haptic();}} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.blue,fontSize:12,fontWeight:900,boxShadow:"0 10px 26px rgba(30,64,175,0.14)"}}>📋</Press>
-          <Press onClick={()=>{setEditingReport(null);setForm({...blank(),adminReport:true});setScreen("form");haptic("medium");}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>📝 דוח</Press>
+          {!isSubAdminPanel&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),adminReport:true});setScreen("form");haptic("medium");}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>📝 דוח</Press>}
               <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
             </div>
           </div>
         </div>
         <div style={{position:"fixed",right:12,left:12,bottom:12,zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",gap:8,overflowX:"auto",boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
-          {[["daily","📋 חלוקת עבודה"],["adminreport","📝 דוח ידני"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["treatments","🔢 מספר טיפולים"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"],["users","👤 משתמשים"]].map(([t,lbl])=>(
+          {adminTabs.map(([t,lbl])=>(
             <Press key={t} onClick={()=>{setAdminTab(t);if(t==="treatments") void loadTreatmentCounts();haptic();}} style={{padding:"10px 15px",borderRadius:18,border:"none",fontSize:12,fontWeight:900,flexShrink:0,background:adminTab===t?adminPrimaryGradient:"rgba(241,245,249,0.76)",color:adminTab===t?"#fff":C.muted,boxShadow:adminTab===t?"0 12px 28px rgba(79,70,229,0.26)":"none",transition:"all 0.2s"}}>{lbl}</Press>
           ))}
         </div>
