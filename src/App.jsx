@@ -2125,6 +2125,12 @@ const [screen,setScreen] = useState(() => {
     showToast("✅ עוזר מפעיל אושר למילוי דוחות");
     haptic("success");
   };
+  const revokeSubOperatorApproval = (date, opName, subUsername) => {
+    localStorage.removeItem(subOperatorApprovalKey(date, opName, subUsername));
+    setSubOperatorRefresh(x=>x+1);
+    showToast("הרשאת העריכה בוטלה");
+    haptic("medium");
+  };
   const todayReported = [
     ...reports.filter(r=>r.reportDate===dailyDate&&r.operator===(dailyOwnerName(dailyDate)||user?.name)).map(r=>r.client),
     ...completedReports
@@ -2161,7 +2167,7 @@ const [screen,setScreen] = useState(() => {
     const saved = getLocalAdminOrderEntries(date, opName);
     if (saved.length) return saved;
     const fromTasks = getSheetAdminOrderEntries(date, opName);
-    return fromTasks.length ? fromTasks : baseOperatorClients(date, opName);
+    return fromTasks;
   };
   const getLocalAdminOrderEntries = (date, opName) => readLocalArray(adminOrderKey(date, opName))
       .filter(x=>x?.client)
@@ -3058,7 +3064,7 @@ const report = {
           </Press>
         </div>
         <InstallAppCard/>
-        <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:16,marginBottom:0,letterSpacing:"0.05em",fontWeight:800}}>POOLMANG.BY.OR2026 {APP_VERSION}</p>
+        <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:16,marginBottom:0,letterSpacing:"0.05em",fontWeight:800}}>POOLMANG.BY.OR2026 {APP_VERSION} · CREATED BY OR MUSA 2026-all rights reserved</p>
       </div>
       <Toast msg={toast.msg} visible={toast.visible}/>
     </div>
@@ -3225,7 +3231,10 @@ const report = {
             <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>אישור עוזר מפעיל לדוחות</div>
             {linkedSubOperators.map(su=>{ const approved=isSubOperatorApproved(dailyDate,user?.name,su.username); return <div key={su.username} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
               <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:900,color:C.text}}>{su.name||su.username}</div><div style={{fontSize:11,fontWeight:800,color:approved?C.green:C.muted}}>{approved?"מאושר למילוי דוחות":"צפייה בלבד"}</div></div>
-              <Press onClick={()=>approveSubOperator(dailyDate,user?.name,su.username)} style={{padding:"7px 11px",borderRadius:12,background:approved?"#e8f5e9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:approved?C.green:"#fff",fontSize:12,fontWeight:900}}>{approved?"מאושר":"אשר עריכה"}</Press>
+              <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                <Press onClick={()=>approveSubOperator(dailyDate,user?.name,su.username)} style={{padding:"7px 11px",borderRadius:12,background:approved?"#e8f5e9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:approved?C.green:"#fff",fontSize:12,fontWeight:900}}>{approved?"מאושר":"אשר עריכה"}</Press>
+                {approved&&<Press onClick={()=>revokeSubOperatorApproval(dailyDate,user?.name,su.username)} style={{padding:"7px 11px",borderRadius:12,background:"#ffebee",color:C.red,fontSize:12,fontWeight:900,border:"1px solid rgba(185,28,28,0.18)"}}>בטל הרשאה</Press>}
+              </div>
             </div>;})}
           </div>}
           {dayTasks.length>0&&<div style={{...card(),padding:"14px 18px",marginBottom:4}}><PBar done={done} total={dayTasks.length}/></div>}
@@ -3762,10 +3771,9 @@ const report = {
   if(screen==="admin") {
     const progressDate = adminTab==="daily" ? taskDate : dailyDate;
     const progressData = operatorUsers.map(op=>{
-      const savedOrder = readLocalArray(adminOrderKey(progressDate, op.name)).filter(x=>x?.client);
-      const baseOrder = savedOrder.length ? savedOrder : baseOperatorClients(progressDate, op.name);
-      const total = baseOrder.length;
-      const done = baseOrder.filter(x=>taskDoneForClient(progressDate, x.client, op.name)).length;
+      const adminOrder = getAdminOrderEntries(progressDate, op.name);
+      const total = adminOrder.length;
+      const done = adminOrder.filter(x=>taskDoneForClient(progressDate, x.client, op.name)).length;
       return {op,total,done,pending:Math.max(0,total-done)};
     });
     const activeAdminOperator = selectedAdminOperator || operatorUsers[0]?.name || "";
