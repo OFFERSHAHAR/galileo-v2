@@ -483,19 +483,19 @@ function WelcomeMediaModal({media,onClose}) {
   if (!media) return null;
   const title = media.type === "video" || media.type === "iframe" ? "וידאו / עדכון" : media.type === "image" ? "תמונה / עדכון" : "קישור / עדכון";
   return (
-    <div dir="rtl" style={{position:"fixed",inset:0,zIndex:1400,background:"rgba(0,0,0,0.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(6px)"}} onClick={onClose}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,maxHeight:"88vh",overflowY:"auto",background:"#fff",borderRadius:18,boxShadow:"0 24px 80px rgba(0,0,0,0.35)",padding:14}}>
+    <div dir="rtl" style={{position:"fixed",inset:0,zIndex:1400,background:"rgba(15,23,42,0.38)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,maxHeight:"88vh",overflowY:"auto",background:"rgba(255,255,255,0.82)",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)",borderRadius:26,boxShadow:"0 28px 90px rgba(15,23,42,0.20), 0 1px 0 rgba(255,255,255,0.86) inset",border:"1px solid rgba(148,163,184,0.24)",padding:14}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:10}}>
           <div style={{fontSize:15,fontWeight:900,color:C.text}}>{title}</div>
-          <Press onClick={onClose} style={{width:34,height:34,borderRadius:10,background:"#f0f4f8",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
+          <Press onClick={onClose} style={{width:34,height:34,borderRadius:12,background:"rgba(241,245,249,0.84)",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
         </div>
         {media.type === "image" && <img src={media.url} alt="" style={{width:"100%",maxHeight:"64vh",objectFit:"contain",borderRadius:14,background:"#f5f9ff",border:`1px solid ${C.border}`}}/>}
         {media.type === "video" && <video src={media.url} controls playsInline style={{width:"100%",maxHeight:"64vh",borderRadius:14,background:"#000"}}/>}
         {media.type === "iframe" && <iframe src={media.embedUrl} title="welcome-media" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen style={{width:"100%",aspectRatio:"16 / 9",border:0,borderRadius:14,background:"#000"}}/>}
         {media.type === "link" && (
-          <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:14,padding:16}}>
+          <div style={{background:"rgba(255,255,255,0.66)",border:`1px solid ${C.border}`,borderRadius:18,padding:16}}>
             <div style={{fontSize:13,fontWeight:800,color:C.text,marginBottom:10,wordBreak:"break-word"}}>{media.url}</div>
-            <a href={media.url} target="_blank" rel="noreferrer" style={{display:"block",textAlign:"center",padding:"12px 16px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:14,textDecoration:"none"}}>פתח קישור</a>
+            <a href={media.url} target="_blank" rel="noreferrer" style={{display:"block",textAlign:"center",padding:"12px 16px",borderRadius:16,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:14,textDecoration:"none",boxShadow:"0 14px 32px rgba(79,70,229,0.22)"}}>פתח קישור</a>
           </div>
         )}
       </div>
@@ -525,14 +525,14 @@ function DailyBriefingModal({tasks,workStart,supplyDB,onStartWork,onConfirm,onCl
   }, { acid: [], phUpSupply: [], saltBags: [] });
   const hasMaterials = materials.acid || materials.phUpSupply || materials.saltBags;
   return (
-    <div dir="rtl" style={{position:"fixed",inset:0,zIndex:1300,background:"rgba(0,0,0,0.58)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(6px)"}}>
-      <div style={{width:"100%",maxWidth:420,maxHeight:"88vh",overflowY:"auto",background:"#fff",borderRadius:20,boxShadow:"0 24px 80px rgba(0,0,0,0.35)",padding:16}}>
+    <div dir="rtl" style={{position:"fixed",inset:0,zIndex:1300,background:"rgba(15,23,42,0.38)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
+      <div style={{width:"100%",maxWidth:420,maxHeight:"88vh",overflowY:"auto",background:"rgba(255,255,255,0.82)",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)",borderRadius:28,boxShadow:"0 28px 90px rgba(15,23,42,0.20), 0 1px 0 rgba(255,255,255,0.86) inset",border:"1px solid rgba(148,163,184,0.24)",padding:16}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
           <div>
             <div style={{fontSize:18,fontWeight:900,color:C.text}}>פותחים יום</div>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginTop:2}}>סדר היום שהוכן לך</div>
           </div>
-          <Press onClick={onClose || onConfirm} style={{width:34,height:34,borderRadius:10,background:"#f0f4f8",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
+          <Press onClick={onClose || onConfirm} style={{width:34,height:34,borderRadius:12,background:"rgba(241,245,249,0.84)",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
           <div style={{background:"#e3f2fd",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
@@ -545,7 +545,7 @@ function DailyBriefingModal({tasks,workStart,supplyDB,onStartWork,onConfirm,onCl
           </div>
         </div>
         {!workStart&&(
-          <Press onClick={onStartWork} style={{padding:"12px 14px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",marginBottom:12,boxShadow:"0 4px 14px rgba(21,101,192,0.28)"}}>
+          <Press onClick={onStartWork} style={{padding:"12px 14px",borderRadius:16,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",marginBottom:12,boxShadow:"0 14px 32px rgba(79,70,229,0.22)"}}>
             הפעל שעון
           </Press>
         )}
@@ -583,7 +583,7 @@ function DailyBriefingModal({tasks,workStart,supplyDB,onStartWork,onConfirm,onCl
           ))}
           {list.length>12&&<div style={{padding:10,textAlign:"center",fontSize:12,fontWeight:800,color:C.muted,background:"#f5f9ff"}}>ועוד {list.length-12} בריכות</div>}
         </div>
-        <Press onClick={onConfirm} style={{padding:"13px 16px",borderRadius:14,background:"#e8f5e9",color:C.green,fontWeight:900,fontSize:14,textAlign:"center",border:"1px solid #c8e6c9"}}>
+        <Press onClick={onConfirm} style={{padding:"13px 16px",borderRadius:16,background:"rgba(21,128,61,0.10)",color:C.green,fontWeight:900,fontSize:14,textAlign:"center",border:"1px solid rgba(21,128,61,0.18)"}}>
           אישרתי, עבור לעמוד הבית
         </Press>
       </div>
@@ -593,24 +593,24 @@ function DailyBriefingModal({tasks,workStart,supplyDB,onStartWork,onConfirm,onCl
 
 function WorkClockReminderModal({workStart,onStop,onClose}) {
   return (
-    <div dir="rtl" style={{position:"fixed",inset:0,zIndex:1350,background:"rgba(0,0,0,0.58)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(6px)"}}>
-      <div style={{width:"100%",maxWidth:380,background:"#fff",borderRadius:20,boxShadow:"0 24px 80px rgba(0,0,0,0.35)",padding:18}}>
+    <div dir="rtl" style={{position:"fixed",inset:0,zIndex:1350,background:"rgba(15,23,42,0.38)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
+      <div style={{width:"100%",maxWidth:380,background:"rgba(255,255,255,0.82)",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)",borderRadius:28,boxShadow:"0 28px 90px rgba(15,23,42,0.20), 0 1px 0 rgba(255,255,255,0.86) inset",border:"1px solid rgba(148,163,184,0.24)",padding:18}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
           <div>
             <div style={{fontSize:19,fontWeight:900,color:C.text}}>זוכר לסגור שעון?</div>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,marginTop:3}}>השעה 12:30 והשעון עדיין פעיל</div>
           </div>
-          <Press onClick={onClose} style={{width:34,height:34,borderRadius:10,background:"#f0f4f8",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
+          <Press onClick={onClose} style={{width:34,height:34,borderRadius:12,background:"rgba(241,245,249,0.84)",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
         </div>
         <div style={{background:"#fff8e1",border:"1px solid #ffe082",borderRadius:14,padding:"12px 14px",marginBottom:14}}>
           <div style={{fontSize:12,fontWeight:800,color:C.orange,marginBottom:4}}>שעון פעיל מ:</div>
           <div style={{fontSize:24,fontWeight:900,color:C.orange}}>{workStart || "--:--"}</div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-          <Press onClick={onStop} style={{padding:"13px 14px",borderRadius:14,background:`linear-gradient(135deg,#c62828,#ef5350)`,color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 4px 14px rgba(198,40,40,0.28)"}}>
+          <Press onClick={onStop} style={{padding:"13px 14px",borderRadius:16,background:`linear-gradient(135deg,#b91c1c,#ef4444)`,color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 14px 32px rgba(185,28,28,0.22)"}}>
             עצור ושמור שעות
           </Press>
-          <Press onClick={onClose} style={{padding:"13px 14px",borderRadius:14,background:"#f0f4f8",color:C.muted,fontWeight:900,fontSize:14,textAlign:"center"}}>
+          <Press onClick={onClose} style={{padding:"13px 14px",borderRadius:16,background:"rgba(241,245,249,0.84)",color:C.muted,fontWeight:900,fontSize:14,textAlign:"center"}}>
             אזכיר לעצמי
           </Press>
         </div>
@@ -625,11 +625,11 @@ function BottomSheet({children,onClose,title}) {
   const close = () => { setVis(false); setTimeout(onClose,350); };
   return (
     <div style={{position:"fixed",inset:0,zIndex:200,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
-      <div onClick={close} style={{position:"absolute",inset:0,background:`rgba(0,0,0,${vis?0.45:0})`,transition:"background 0.3s",backdropFilter:"blur(4px)"}}/>
-      <div style={{position:"relative",background:"#fff",borderRadius:"24px 24px 0 0",transform:vis?"translateY(0)":"translateY(100%)",transition:"transform 0.4s cubic-bezier(0.34,1.2,0.64,1)",maxHeight:"85vh",overflowY:"auto"}}>
-        <div style={{padding:"16px 20px 8px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #f0f4f8",position:"sticky",top:0,background:"#fff",zIndex:1}}>
+      <div onClick={close} style={{position:"absolute",inset:0,background:`rgba(15,23,42,${vis?0.36:0})`,transition:"background 0.3s",backdropFilter:"blur(8px)"}}/>
+      <div style={{position:"relative",background:"rgba(255,255,255,0.86)",backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:"28px 28px 0 0",boxShadow:"0 -24px 70px rgba(15,23,42,0.16), 0 1px 0 rgba(255,255,255,0.86) inset",transform:vis?"translateY(0)":"translateY(100%)",transition:"transform 0.4s cubic-bezier(0.34,1.2,0.64,1)",maxHeight:"85vh",overflowY:"auto"}}>
+        <div style={{padding:"16px 20px 8px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(148,163,184,0.16)",position:"sticky",top:0,background:"rgba(232,241,253,0.82)",backdropFilter:"blur(18px)",zIndex:1}}>
           <h2 style={{margin:0,fontSize:17,fontWeight:900,color:"#0d47a1"}}>{title}</h2>
-          <Press onClick={close} style={{width:32,height:32,borderRadius:"50%",background:"#f0f4f8",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#546e7a"}}>✕</Press>
+          <Press onClick={close} style={{width:34,height:34,borderRadius:12,background:"rgba(241,245,249,0.84)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#546e7a"}}>✕</Press>
         </div>
         <div style={{padding:"16px 20px 32px"}}>{children}</div>
       </div>
@@ -637,10 +637,10 @@ function BottomSheet({children,onClose,title}) {
   );
 }
 
-const C = {blue:"#1565c0",lightBlue:"#42a5f5",bg:"#f0f7ff",white:"#fff",card:"#fff",text:"#1a237e",muted:"#90a4ae",border:"#e3f2fd",green:"#2e7d32",orange:"#e65100",red:"#c62828"};
-const inp = {width:"100%",background:"#f5f9ff",border:"2px solid #e3f2fd",borderRadius:14,padding:"12px 14px",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"'Plus Jakarta Sans',sans-serif",color:C.text};
-const sel = {...inp,background:"#f5f9ff"};
-const card = (extra={}) => ({background:C.white,borderRadius:16,padding:16,boxShadow:"0 2px 12px rgba(0,0,0,0.06)",border:"1px solid "+C.border,...extra});
+const C = {blue:"#1d4ed8",lightBlue:"#3b82f6",bg:"#dbeafe",white:"rgba(241,247,255,0.86)",card:"rgba(232,241,253,0.80)",text:"#0f1f38",muted:"#52657f",border:"rgba(100,116,139,0.28)",green:"#15803d",orange:"#c2410c",red:"#b91c1c"};
+const inp = {width:"100%",background:"rgba(226,237,250,0.78)",border:"1px solid rgba(148,163,184,0.24)",borderRadius:16,padding:"12px 14px",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"'Plus Jakarta Sans',sans-serif",color:C.text,boxShadow:"inset 0 1px 0 rgba(255,255,255,0.75)"};
+const sel = {...inp,background:"rgba(226,237,250,0.78)"};
+const card = (extra={}) => ({background:C.card,backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderRadius:22,padding:16,boxShadow:"0 18px 45px rgba(30,64,175,0.12), 0 1px 0 rgba(255,255,255,0.75) inset",border:"1px solid "+C.border,...extra});
 
 function Badge({label,col="#1565c0",bg}) {
   return <span style={{background:bg||col+"18",color:col,border:`1px solid ${col}33`,borderRadius:99,padding:"3px 11px",fontSize:11,fontWeight:800}}>{label}</span>;
@@ -864,13 +864,13 @@ function QRScanner({ onResult, onClose }) {
     onResult(file.name.replace(/\.[^.]+$/, ""));
   };
   return (
-    <div style={{position:"fixed",inset:0,background:"#000",zIndex:300,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+    <div style={{position:"fixed",inset:0,background:"linear-gradient(180deg,#0f172a 0%,#1e3a5f 52%,#eef6ff 100%)",zIndex:300,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
       <div style={{position:"absolute",top:16,right:16,zIndex:10}}>
-        <Press onClick={onClose} style={{width:40,height:40,borderRadius:"50%",background:"rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:18}}>✕</Press>
+        <Press onClick={onClose} style={{width:40,height:40,borderRadius:"50%",background:"rgba(255,255,255,0.22)",border:"1px solid rgba(255,255,255,0.32)",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:18}}>✕</Press>
       </div>
       <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,fontWeight:600,marginBottom:16,textAlign:"center",padding:"0 20px"}}>כוון את המצלמה ל-QR Code של הלקוח</p>
       <div style={{position:"relative",width:280,height:280,marginBottom:24}}>
-        <video ref={videoRef} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:16}} playsInline muted/>
+        <video ref={videoRef} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:24,boxShadow:"0 24px 60px rgba(15,23,42,0.28)",border:"1px solid rgba(255,255,255,0.32)"}} playsInline muted/>
         <canvas ref={canvasRef} style={{display:"none"}}/>
         <div style={{position:"absolute",inset:0,borderRadius:16,border:"2px solid rgba(255,255,255,0.3)"}}>
           {[["top","left"],["top","right"],["bottom","left"],["bottom","right"]].map(([v,h])=>(
@@ -882,7 +882,7 @@ function QRScanner({ onResult, onClose }) {
       {error && <p style={{color:"#ef5350",fontSize:13,marginBottom:16}}>{error}</p>}
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
         <p style={{color:"rgba(255,255,255,0.5)",fontSize:12}}>או בחר תמונה של QR:</p>
-        <label style={{background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"10px 20px",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer"}}>
+        <label style={{background:"rgba(255,255,255,0.22)",border:"1px solid rgba(255,255,255,0.32)",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)",borderRadius:16,padding:"10px 20px",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer"}}>
           📁 העלה תמונה
           <input type="file" accept="image/*" style={{display:"none"}} onChange={handleFile}/>
         </label>
@@ -936,31 +936,31 @@ function LicenseScreen({ onDone, onSuperAdmin }) {
     }
   };
   return (
-    <div dir="rtl" style={{minHeight:"100vh",background:`linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)`,fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+    <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}#onesignal-bell-container{display:none!important}`}</style>
       <div style={{width:"100%",maxWidth:380}}>
         <div style={{textAlign:"center",marginBottom:36}}>
-          <div style={{fontSize:64,marginBottom:12,filter:"drop-shadow(0 0 24px rgba(255,255,255,0.3))"}}>🌊</div>
-          <h1 style={{color:"#fff",fontSize:26,fontWeight:900,margin:"0 0 6px",letterSpacing:"-0.5px"}}>POOLMANG.BY.OR2026</h1>
-          <p style={{color:"rgba(255,255,255,0.55)",fontSize:14,margin:0}}>מערכת ניהול בריכות מקצועית</p>
+          <div style={{width:92,height:92,margin:"0 auto 14px",borderRadius:28,background:"rgba(232,241,253,0.82)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:52,boxShadow:"0 24px 60px rgba(37,99,235,0.14), 0 1px 0 rgba(255,255,255,0.8) inset",border:"1px solid rgba(148,163,184,0.22)",backdropFilter:"blur(18px)"}}>🌊</div>
+          <h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:"0 0 6px",letterSpacing:"-0.5px"}}>POOLMANG.BY.OR2026</h1>
+          <p style={{color:C.muted,fontSize:14,margin:0,fontWeight:700}}>מערכת ניהול בריכות מקצועית</p>
         </div>
-        <div style={{background:"rgba(255,255,255,0.1)",backdropFilter:"blur(20px)",borderRadius:24,padding:28,border:"1px solid rgba(255,255,255,0.2)",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+        <div style={{background:"rgba(226,237,250,0.78)",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)",borderRadius:28,padding:28,border:"1px solid rgba(148,163,184,0.24)",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.86) inset"}}>
           <div style={{textAlign:"center",marginBottom:24}}>
             <div style={{fontSize:32,marginBottom:8}}>🔑</div>
-            <h2 style={{color:"#fff",fontSize:18,fontWeight:900,margin:"0 0 6px"}}>הזן מפתח רישיון</h2>
-            <p style={{color:"rgba(255,255,255,0.55)",fontSize:13,margin:0}}>קיבלת מפתח? הזן אותו כאן</p>
+            <h2 style={{color:C.text,fontSize:20,fontWeight:900,margin:"0 0 6px"}}>הזן מפתח רישיון</h2>
+            <p style={{color:C.muted,fontSize:13,margin:0,fontWeight:700}}>קיבלת מפתח? הזן אותו כאן</p>
           </div>
           <input value={key} onChange={e=>{setKey(formatKey(e.target.value));setErr("");}}
             placeholder="PSP-XXXX-XXXX-XXXX" maxLength={19} onKeyDown={e=>e.key==="Enter"&&validate()}
-            style={{width:"100%",background:"rgba(255,255,255,0.15)",border:"2px solid rgba(255,255,255,0.3)",borderRadius:14,padding:"14px 16px",fontSize:18,outline:"none",color:"#fff",fontFamily:"'Courier New',monospace",textAlign:"center",letterSpacing:"0.15em",caretColor:"#fff",backdropFilter:"blur(8px)",boxSizing:"border-box"}}/>
-          {err&&<div style={{background:"rgba(198,40,40,0.3)",borderRadius:10,padding:"10px 14px",marginTop:12,color:"#ffcdd2",fontSize:13,fontWeight:700,textAlign:"center",border:"1px solid rgba(198,40,40,0.4)"}}>{err}</div>}
-          <Press onClick={validate} style={{marginTop:16,padding:16,borderRadius:14,background:loading?"rgba(255,255,255,0.1)":"linear-gradient(135deg,rgba(255,255,255,0.25),rgba(255,255,255,0.15))",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",border:"1px solid rgba(255,255,255,0.3)",boxShadow:loading?"none":"0 6px 20px rgba(0,0,0,0.2)"}}>
+            style={{width:"100%",background:"rgba(232,241,253,0.82)",border:"1px solid rgba(148,163,184,0.28)",borderRadius:16,padding:"14px 16px",fontSize:18,outline:"none",color:C.text,fontFamily:"'Courier New',monospace",textAlign:"center",letterSpacing:"0.15em",caretColor:C.blue,boxSizing:"border-box",boxShadow:"inset 0 1px 0 rgba(232,241,253,0.82)"}}/>
+          {err&&<div style={{background:"rgba(185,28,28,0.10)",borderRadius:12,padding:"10px 14px",marginTop:12,color:C.red,fontSize:13,fontWeight:800,textAlign:"center",border:"1px solid rgba(185,28,28,0.18)"}}>{err}</div>}
+          <Press onClick={validate} style={{marginTop:16,padding:16,borderRadius:18,background:loading?"rgba(148,163,184,0.24)":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",border:"1px solid rgba(255,255,255,0.36)",boxShadow:loading?"none":"0 16px 36px rgba(79,70,229,0.24)"}}>
             {loading?"⏳ בודק מפתח...":"אמת מפתח →"}
           </Press>
         </div>
-        <p style={{textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.25)",marginTop:16,letterSpacing:"0.05em"}}>POOLMANG.BY.OR2026 {APP_VERSION}</p>
+        <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:16,letterSpacing:"0.05em",fontWeight:800}}>POOLMANG.BY.OR2026 {APP_VERSION}</p>
       </div>
-      <div onClick={onSuperAdmin} style={{position:"fixed",bottom:16,left:16,fontSize:28,opacity:0.22,padding:10,zIndex:10,WebkitTapHighlightColor:"transparent",cursor:"pointer"}}>⚙️</div>
+      <div onClick={onSuperAdmin} style={{position:"fixed",bottom:16,left:16,fontSize:28,opacity:0.35,padding:10,zIndex:10,WebkitTapHighlightColor:"transparent",cursor:"pointer",color:C.muted}}>⚙️</div>
     </div>
   );
 }
@@ -1432,7 +1432,8 @@ const [screen,setScreen] = useState(() => {
   const [editingReport,setEditingReport] = useState(null);
   const [supplySearch,setSupplySearch] = useState({date:"",type:""});
   const [freeClients,setFreeClients] = useState([]);
-  const [newClient,setNewClient] = useState({name:"",phone:"",address:"",regularOperator:"",poolType:"מלח"});
+  const [newClient,setNewClient] = useState({name:"",phone:"",address:"",gateCode:"",regularDays:"",regularOperator:"",poolType:"מלח"});
+  const [editingAdminClient,setEditingAdminClient] = useState(null);
   const [clientListSearch,setClientListSearch] = useState("");
   const [adminClientSearch,setAdminClientSearch] = useState("");
   const [selectedAdminOperator,setSelectedAdminOperator] = useState("");
@@ -1505,6 +1506,36 @@ const [screen,setScreen] = useState(() => {
       ].map(v=>String(v||"").toLowerCase());
       return fields.some(v=>v.includes(q));
     });
+  };
+  const adminClientRequiredFields = [
+    ["name", "שם לקוח"],
+    ["phone", "טלפון"],
+    ["address", "כתובת"],
+    ["gateCode", "קוד שער"],
+    ["poolType", "סוג בריכה"],
+    ["regularDays", "ימים קבועים"],
+    ["regularOperator", "מפעיל קבוע"],
+  ];
+  const adminClientMissingFields = (c = {}) => adminClientRequiredFields.filter(([key]) => !String(c?.[key] || "").trim()).map(([, label]) => label);
+  const adminClientDraft = (c = {}) => ({
+    ...c,
+    name: String(c.name || ""),
+    phone: String(c.phone || ""),
+    address: String(c.address || ""),
+    gateCode: String(c.gateCode || ""),
+    regularDays: String(c.regularDays || ""),
+    regularOperator: String(c.regularOperator || ""),
+    poolType: String(c.poolType || "מלח"),
+  });
+  const saveAdminClientDetails = async (originalName, draft) => {
+    const next = adminClientDraft(draft);
+    if (!next.name.trim()) { showToast("⚠️ נא להזין שם לקוח"); return; }
+    const updated = clients.map(c => c.name === originalName ? next : c);
+    setClients(updated);
+    setEditingAdminClient(null);
+    if (sheetId) await sheetCall("saveClients", { clients: updated });
+    showToast("✅ פרטי לקוח נשמרו");
+    haptic("success");
   };
   const completedReportKey = (date, clientName, operatorName) => [date, normalizeName(clientName), normalizeName(operatorName)].join("|");
   const rememberCompletedReport = (report) => {
@@ -2575,35 +2606,35 @@ const report = {
   );
 
   if(screen==="login") return (
-    <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+    <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#1565c0;box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}#onesignal-bell-container{display:none!important}`}</style>
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
       <div style={{width:"100%",maxWidth:360}}>
         <div style={{textAlign:"center",marginBottom:36}} onPointerDown={()=>{ logoLongPress.current = setTimeout(()=>{ haptic("success"); setShowSetup(true); }, 3000); }} onPointerUp={()=>clearTimeout(logoLongPress.current)} onPointerLeave={()=>clearTimeout(logoLongPress.current)}>
-          {(()=>{ const logoUrl = normalizeBranding(getCompany()).logoUrl; return logoUrl ? (<div style={{width:112,height:112,margin:"0 auto 12px",padding:6,borderRadius:24,background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center",filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))",overflow:"visible"}}><img src={logoUrl} alt="logo" style={{width:"100%",height:"100%",objectFit:"contain",display:"block"}}/></div>) : (<div style={{fontSize:60,marginBottom:12,filter:"drop-shadow(0 0 20px rgba(255,255,255,0.3))",cursor:"pointer",userSelect:"none"}}>🌊</div>); })()}
-          <h1 style={{color:"#fff",fontSize:24,fontWeight:900,margin:"0 0 6px",letterSpacing:"-0.5px"}}>{companyName}</h1>
-          <p style={{color:"rgba(255,255,255,0.6)",fontSize:14,margin:0}}>מערכת ניהול בריכות</p>
+          {(()=>{ const logoUrl = normalizeBranding(getCompany()).logoUrl; return logoUrl ? (<div style={{width:112,height:112,margin:"0 auto 12px",padding:6,borderRadius:28,background:"rgba(232,241,253,0.82)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 24px 60px rgba(37,99,235,0.14), 0 1px 0 rgba(255,255,255,0.8) inset",border:"1px solid rgba(148,163,184,0.22)",overflow:"visible"}}><img src={logoUrl} alt="logo" style={{width:"100%",height:"100%",objectFit:"contain",display:"block"}}/></div>) : (<div style={{width:92,height:92,margin:"0 auto 14px",borderRadius:28,background:"rgba(232,241,253,0.82)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:52,boxShadow:"0 24px 60px rgba(37,99,235,0.14), 0 1px 0 rgba(255,255,255,0.8) inset",cursor:"pointer",userSelect:"none"}}>🌊</div>); })()}
+          <h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:"0 0 6px",letterSpacing:"-0.5px"}}>{companyName}</h1>
+          <p style={{color:C.muted,fontSize:14,margin:0,fontWeight:800}}>מערכת ניהול בריכות</p>
           {clientPlan.plan&&(
             <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12}}>
-              <span style={{background:"rgba(255,255,255,0.2)",borderRadius:99,padding:"4px 14px",fontSize:12,fontWeight:800,color:"#fff"}}>{clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}</span>
-              <span style={{background:clientPlan.status==="פעיל"?"rgba(46,125,50,0.5)":"rgba(198,40,40,0.5)",borderRadius:99,padding:"4px 14px",fontSize:12,fontWeight:800,color:"#fff"}}>{clientPlan.status==="פעיל"?"✅ פעיל":"⛔ "+clientPlan.status}</span>
+              <span style={{background:"rgba(30,64,175,0.14)",border:"1px solid rgba(37,99,235,0.18)",borderRadius:99,padding:"4px 14px",fontSize:12,fontWeight:900,color:C.blue}}>{clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}</span>
+              <span style={{background:clientPlan.status==="פעיל"?"rgba(21,128,61,0.10)":"rgba(185,28,28,0.10)",borderRadius:99,padding:"4px 14px",fontSize:12,fontWeight:900,color:clientPlan.status==="פעיל"?C.green:C.red}}>{clientPlan.status==="פעיל"?"✅ פעיל":"⛔ "+clientPlan.status}</span>
             </div>
           )}
         </div>
-        <div style={{background:"#fff",borderRadius:24,padding:24,boxShadow:"0 20px 60px rgba(0,0,0,0.25)"}}>
-          <h2 style={{fontSize:18,fontWeight:900,color:C.text,margin:"0 0 20px",textAlign:"center"}}>כניסה למערכת</h2>
+        <div style={{background:"rgba(226,237,250,0.78)",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)",borderRadius:28,padding:24,boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.86) inset",border:"1px solid rgba(148,163,184,0.24)"}}>
+          <h2 style={{fontSize:20,fontWeight:900,color:C.text,margin:"0 0 20px",textAlign:"center"}}>כניסה למערכת</h2>
           <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>שם משתמש</label><input value={loginUser} onChange={e=>setLoginUser(e.target.value)} placeholder="הכנס שם משתמש" style={inp} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
           <div style={{marginBottom:loginErr?12:20}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>סיסמה</label><input type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} placeholder="הכנס סיסמה" style={inp} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
           {loginErr&&<div style={{background:"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:16,color:C.red,fontSize:13,fontWeight:700,textAlign:"center"}}>⚠️ {loginErr}</div>}
-          <Press onClick={handleLogin} style={{padding:16,borderRadius:14,background:loginLoading?"#90caf9":`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:loginLoading?"none":"0 6px 20px rgba(21,101,192,0.4)"}}>
+          <Press onClick={handleLogin} style={{padding:16,borderRadius:18,background:loginLoading?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:loginLoading?"none":"0 16px 36px rgba(79,70,229,0.24)"}}>
             {actionLabel("login",{idle:"כניסה →",loading:"⏳ מתחבר...",success:"✅ התחברת",error:"⚠️ נסה שוב"})}
           </Press>
-          <Press onClick={()=>enablePushForUsername(loginUser)} style={{marginTop:10,padding:13,borderRadius:14,background:"#e3f2fd",border:`1px solid ${C.lightBlue}`,color:C.blue,fontWeight:900,fontSize:14,textAlign:"center"}}>
+          <Press onClick={()=>enablePushForUsername(loginUser)} style={{marginTop:10,padding:13,borderRadius:18,background:"rgba(30,64,175,0.12)",border:"1px solid rgba(37,99,235,0.18)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center"}}>
             {actionLabel("push",{idle:"🔔 הפעל התראות",loading:"⏳ מפעיל התראות...",success:"✅ התראות הופעלו",error:"⚠️ נסה שוב"})}
           </Press>
         </div>
         <InstallAppCard/>
-        <p style={{textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.35)",marginTop:16,marginBottom:0,letterSpacing:"0.05em"}}>POOLMANG.BY.OR2026 {APP_VERSION}</p>
+        <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:16,marginBottom:0,letterSpacing:"0.05em",fontWeight:800}}>POOLMANG.BY.OR2026 {APP_VERSION}</p>
       </div>
       <Toast msg={toast.msg} visible={toast.visible}/>
     </div>
@@ -2641,8 +2672,11 @@ const report = {
       return acc;
     }, { acid:[], phUpSupply:[], saltBags:[] });
     const hasDailySupply = dailySupplySummary.acid || dailySupplySummary.phUpSupply || dailySupplySummary.saltBags;
+    const operatorShellBg = "linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)";
+    const operatorHeroBg = "linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))";
+    const operatorPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     return (
-      <div dir="rtl" style={{minHeight:"100vh",background:C.bg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:90}}>
+      <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} workStart={workStart} supplyDB={supplyDB} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
@@ -2672,43 +2706,42 @@ const report = {
           );
         })()}
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}#onesignal-bell-container{display:none!important}`}</style>
-        <div style={{background:`linear-gradient(145deg,#0d47a1,${C.blue},${C.lightBlue})`,padding:"28px 20px 44px",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",top:-50,left:-50,width:200,height:200,borderRadius:"50%",background:"rgba(255,255,255,0.05)"}}/>
+        <div style={{margin:"12px 14px 0",background:operatorHeroBg,border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px 24px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
           <div style={{position:"relative",display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
             <div>
-              <p style={{color:"rgba(255,255,255,0.65)",fontSize:12,fontWeight:600,margin:"0 0 4px"}}>{fmtDate(dailyDate)} 🌊</p>
-              <h1 style={{color:"#fff",fontSize:24,fontWeight:900,margin:0,lineHeight:1.1}}>שלום, {user?.name}! {user?.icon}</h1>
-              <p style={{color:"rgba(255,255,255,0.7)",fontSize:13,margin:"4px 0 0"}}>{greeting || user?.welcomeMessage}</p>
+              <p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px",letterSpacing:"0.04em"}}>{fmtDate(dailyDate)} 🌊</p>
+              <h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>שלום, {user?.name || user?.username || "מפעיל"}! {user?.icon}</h1>
+              <p style={{color:C.muted,fontSize:13,margin:"5px 0 0",fontWeight:700}}>{greeting || user?.welcomeMessage}</p>
               {clientPlan.plan&&(
                 <div style={{display:"flex",gap:6,marginTop:8}}>
-                  <span style={{background:"rgba(255,255,255,0.2)",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,color:"#fff"}}>{clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}</span>
-                  <span style={{background:clientPlan.status==="פעיל"?"rgba(46,125,50,0.4)":"rgba(198,40,40,0.4)",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,color:"#fff"}}>{clientPlan.status==="פעיל"?"✅ פעיל":"⛔ "+clientPlan.status}</span>
+                  <span style={{background:"rgba(30,64,175,0.14)",border:"1px solid rgba(37,99,235,0.18)",borderRadius:99,padding:"4px 11px",fontSize:11,fontWeight:900,color:C.blue}}>{clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}</span>
+                  <span style={{background:clientPlan.status==="פעיל"?"rgba(21,128,61,0.10)":"rgba(185,28,28,0.10)",borderRadius:99,padding:"4px 11px",fontSize:11,fontWeight:900,color:clientPlan.status==="פעיל"?C.green:C.red}}>{clientPlan.status==="פעיל"?"✅ פעיל":"⛔ "+clientPlan.status}</span>
                 </div>
               )}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <div onPointerDown={()=>{logoLongPress.current=setTimeout(()=>{haptic("success");setShowSetup(true);},3000);}} onPointerUp={()=>clearTimeout(logoLongPress.current)} onPointerLeave={()=>clearTimeout(logoLongPress.current)} style={{fontSize:18,cursor:"pointer",userSelect:"none",padding:"4px 6px",color:"rgba(255,255,255,0.4)"}}>⚙️</div>
-              <Press onClick={handleLogout} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>יציאה</Press>
+              <div onPointerDown={()=>{logoLongPress.current=setTimeout(()=>{haptic("success");setShowSetup(true);},3000);}} onPointerUp={()=>clearTimeout(logoLongPress.current)} onPointerLeave={()=>clearTimeout(logoLongPress.current)} style={{fontSize:18,cursor:"pointer",userSelect:"none",padding:"4px 6px",color:C.muted}}>⚙️</div>
+              <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,position:"relative"}}>
             {[[`${done}/${dayTasks.length}`,"משימות","📋"],[`${dayTasks.length>0?Math.round((done/dayTasks.length)*100):0}%`,"הושלם","✅"],[workStart?workStart:"--:--","התחלה","⏱️"]].map(([n,l,ic])=>(
-              <div key={l} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",borderRadius:14,padding:"12px 8px",textAlign:"center",border:"1px solid rgba(255,255,255,0.2)"}}>
+              <div key={l} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:"1px solid rgba(148,163,184,0.20)",boxShadow:"0 12px 28px rgba(30,64,175,0.12)"}}>
                 <div style={{fontSize:16,marginBottom:2}}>{ic}</div>
-                <div style={{color:"#fff",fontSize:18,fontWeight:900,lineHeight:1}}>{n}</div>
-                <div style={{color:"rgba(255,255,255,0.65)",fontSize:10,fontWeight:600,marginTop:2}}>{l}</div>
+                <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{n}</div>
+                <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>{l}</div>
               </div>
             ))}
           </div>
         </div>
-        <div style={{margin:"-20px 16px 0",position:"relative",zIndex:10}}>
+        <div style={{margin:"14px 16px 0",position:"relative",zIndex:10}}>
           <InstallAppCard compact/>
           <div style={{...card({marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}),padding:"14px 18px"}}>
             <div>
               <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4}}>שעון עבודה</div>
               <div style={{fontSize:16,fontWeight:800,color:workStart?C.blue:C.muted}}>{workStart?`▶ פעיל מ-${workStart}`:"לא התחיל"}</div>
             </div>
-            <Press onClick={workStart?handleEndWork:handleStartWork} style={{padding:"11px 18px",borderRadius:12,border:"none",color:"#fff",fontWeight:800,fontSize:13,background:workStart?`linear-gradient(135deg,#c62828,#ef5350)`:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,boxShadow:`0 4px 14px ${workStart?"rgba(198,40,40,0.3)":"rgba(21,101,192,0.35)"}`}}>
+            <Press onClick={workStart?handleEndWork:handleStartWork} style={{padding:"11px 18px",borderRadius:16,border:"none",color:"#fff",fontWeight:900,fontSize:13,background:workStart?`linear-gradient(135deg,#b91c1c,#ef4444)`:operatorPrimaryGradient,boxShadow:`0 14px 32px ${workStart?"rgba(185,28,28,0.22)":"rgba(79,70,229,0.24)"}`}}>
               {workStart?"⏹ סיום":"▶ התחלה"}
             </Press>
           </div>
@@ -2967,11 +3000,11 @@ const report = {
             </div>
           )}
         </div>
-        <div style={{position:"fixed",bottom:0,right:0,left:0,background:C.white,borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"space-around",padding:"10px 0 20px",boxShadow:"0 -4px 20px rgba(0,0,0,0.06)"}}>
+        <div style={{position:"fixed",right:12,left:12,bottom:12,zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",justifyContent:"space-around",gap:8,boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
           {[["🏠","בית",0],["📋","משימות",1],["📅","עתידי",2]].map(([ic,lb,idx])=>(
-            <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 10px",borderRadius:12,background:navTab===idx?"#e3f2fd":"transparent"}}>
+            <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"7px 16px",borderRadius:18,background:navTab===idx?operatorPrimaryGradient:"rgba(241,245,249,0.50)",boxShadow:navTab===idx?"0 12px 28px rgba(79,70,229,0.22)":"none"}}>
               <span style={{fontSize:22}}>{ic}</span>
-              <span style={{fontSize:10,fontWeight:800,color:navTab===idx?C.blue:C.muted}}>{lb}</span>
+              <span style={{fontSize:10,fontWeight:900,color:navTab===idx?"#fff":C.muted}}>{lb}</span>
             </Press>
           ))}
         </div>
@@ -3041,16 +3074,15 @@ const report = {
   }
 
   if(screen==="form") return (
-    <div dir="rtl" style={{minHeight:"100vh",background:C.bg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:100}}>
+    <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:100}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:8px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}select option{background:#fff}#onesignal-bell-container{display:none!important}`}</style>
-      <div style={{background:`linear-gradient(145deg,#0d47a1,${C.blue},${C.lightBlue})`,padding:"24px 20px 28px",position:"relative",overflow:"hidden"}}>
-        <div style={{position:"absolute",top:-40,left:-40,width:160,height:160,borderRadius:"50%",background:"rgba(255,255,255,0.05)"}}/>
+      <div style={{margin:"12px 14px 0",background:"linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))",border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
-          <div><p style={{color:"rgba(255,255,255,0.65)",fontSize:12,fontWeight:600,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:"בחר לקוח"}</p><h1 style={{color:"#fff",fontSize:22,fontWeight:900,margin:0}}>📝 דוח טיפול</h1></div>
-          <Press onClick={()=>setScreen("daily")} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 14px",color:"rgba(255,255,255,0.8)",fontSize:13,fontWeight:700}}>← חזרה</Press>
+          <div><p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:"בחר לקוח"}</p><h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>📝 דוח טיפול</h1></div>
+          <Press onClick={()=>setScreen("daily")} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 14px",color:C.muted,fontSize:13,fontWeight:900}}>← חזרה</Press>
         </div>
       </div>
-      <div style={{padding:"20px 16px 0"}}>
+      <div style={{padding:"18px 16px 0"}}>
         <Sec icon="📋" title="פרטים">
           <div style={{...card(),marginBottom:12}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
@@ -3198,8 +3230,8 @@ const report = {
             <Press onClick={syncPendingReports} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח הכל",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
           </div>
         )}
-        <Press onClick={handleSubmit} disabled={!client||syncing||isActionLoading("submitReport")} style={{padding:"18px",borderRadius:16,background:actionStatus.submitReport==="success"?C.green:actionStatus.submitReport==="local"?C.orange:syncing||!client?"#90caf9":`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 8px 24px rgba(21,101,192,0.4)",marginBottom:8}}>{actionLabel("submitReport",{idle:"שלח דוח ⚡",loading:"⏳ שולח דוח...",success:"✅ נשלח",local:"⚠️ נשמר מקומית",error:"⚠️ שגיאה"})}</Press>
-        <Press onClick={()=>setScreen("daily")} style={{padding:"14px",borderRadius:14,border:`2px solid ${C.border}`,background:C.white,color:C.muted,fontWeight:700,fontSize:14,textAlign:"center"}}>← ביטול</Press>
+        <Press onClick={handleSubmit} disabled={!client||syncing||isActionLoading("submitReport")} style={{padding:"18px",borderRadius:18,background:actionStatus.submitReport==="success"?C.green:actionStatus.submitReport==="local"?C.orange:syncing||!client?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 16px 36px rgba(79,70,229,0.24)",marginBottom:8}}>{actionLabel("submitReport",{idle:"שלח דוח ⚡",loading:"⏳ שולח דוח...",success:"✅ נשלח",local:"⚠️ נשמר מקומית",error:"⚠️ שגיאה"})}</Press>
+        <Press onClick={()=>setScreen("daily")} style={{padding:"14px",borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.muted,fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>← ביטול</Press>
       </div>
       {chemicalRestrictionPrompt&&(
         <BottomSheet title={"\u05d4\u05d2\u05d1\u05dc\u05ea \u05e9\u05d9\u05de\u05d5\u05e9"} onClose={()=>setChemicalRestrictionPrompt(null)}>
@@ -3216,11 +3248,11 @@ const report = {
   if(screen==="done") {
     const last = reports[reports.length-1];
     return (
-      <div dir="rtl" style={{minHeight:"100vh",background:`linear-gradient(145deg,#e3f2fd,${C.bg})`,fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,textAlign:"center"}}>
+      <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,textAlign:"center",color:C.text}}>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}@keyframes pop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}#onesignal-bell-container{display:none!important}`}</style>
-        <div style={{fontSize:72,marginBottom:16,animation:"pop 0.5s cubic-bezier(0.34,1.56,0.64,1)"}}>✅</div>
+        <div style={{width:104,height:104,borderRadius:32,background:"rgba(232,241,253,0.82)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(37,99,235,0.12), 0 1px 0 rgba(232,241,253,0.82) inset",display:"flex",alignItems:"center",justifyContent:"center",fontSize:58,marginBottom:18,animation:"pop 0.5s cubic-bezier(0.34,1.56,0.64,1)"}}>✅</div>
         <h1 style={{fontSize:26,fontWeight:900,color:C.text,margin:"0 0 8px"}}>הדוח נשלח!</h1>
-        <p style={{color:C.lightBlue,fontSize:15,margin:"0 0 28px",fontWeight:600}}>הלקוח יקבל הודעת WhatsApp עכשיו 💬</p>
+        <p style={{color:C.muted,fontSize:15,margin:"0 0 28px",fontWeight:700}}>הלקוח יקבל הודעת WhatsApp עכשיו 💬</p>
         {last&&(
           <div style={{...card({width:"100%",maxWidth:340,marginBottom:20,textAlign:"right"})}}>
             <div style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>סיכום הדוח</div>
@@ -3230,11 +3262,11 @@ const report = {
           </div>
         )}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,width:"100%",maxWidth:340,marginBottom:10}}>
-          <Press onClick={()=>{setEditingReport(null);setForm(blank());setScreen("form");haptic();}} style={{padding:14,borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.35)"}}>+ דוח חדש</Press>
-          <Press onClick={()=>setScreen("daily")} style={{padding:14,borderRadius:14,border:`2px solid ${C.border}`,background:C.white,color:C.blue,fontWeight:800,fontSize:14,textAlign:"center"}}>🏠 לוח יומי</Press>
+          <Press onClick={()=>{setEditingReport(null);setForm(blank());setScreen("form");haptic();}} style={{padding:14,borderRadius:18,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>+ דוח חדש</Press>
+          <Press onClick={()=>setScreen("daily")} style={{padding:14,borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>🏠 לוח יומי</Press>
         </div>
         {reports.length>0&&(
-          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:12,border:`2px solid ${C.orange}`,background:"#fff8e1",color:C.orange,fontWeight:800,fontSize:13,textAlign:"center",width:"100%",maxWidth:340}}>✏️ ערוך דוח אחרון</Press>
+          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:18,border:`1px solid rgba(194,65,12,0.24)`,background:"rgba(255,247,237,0.82)",color:C.orange,fontWeight:900,fontSize:13,textAlign:"center",width:"100%",maxWidth:340,boxShadow:"0 10px 24px rgba(194,65,12,0.08)"}}>✏️ ערוך דוח אחרון</Press>
         )}
       </div>
     );
@@ -3259,8 +3291,15 @@ const report = {
     const dayTasks = tasks.filter(t=>t.date===taskDate);
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
     const criticalAdminIssue = criticalAdminIssueIndex >= 0 ? operatorIssues[criticalAdminIssueIndex] : null;
+    const adminShellBg = "linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)";
+    const adminHeroBg = "linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))";
+    const adminHeroText = {color:"#10233f"};
+    const adminSoftText = {color:"#64748b"};
+    const adminPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
+    const adminGlass = (extra={}) => card({background:"rgba(226,237,250,0.78)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(30,64,175,0.14), 0 1px 0 rgba(255,255,255,0.76) inset",...extra});
+    const adminDisplayName = user?.name || user?.username || "מנהל";
     return (
-      <div dir="rtl" style={{minHeight:"100vh",background:C.bg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:30}}>
+      <div dir="rtl" style={{minHeight:"100vh",background:adminShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {criticalAdminIssue&&(()=>{
           const [id, operator, clientName, desc, priority, status, response, date] = criticalAdminIssue;
@@ -3304,32 +3343,31 @@ const report = {
           </div>
         )}
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}select option{background:#fff}#onesignal-bell-container{display:none!important}`}</style>
-        <div style={{background:`linear-gradient(145deg,#0d47a1,${C.blue},${C.lightBlue})`,padding:"28px 20px 24px",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",top:-50,left:-50,width:200,height:200,borderRadius:"50%",background:"rgba(255,255,255,0.05)"}}/>
+        <div style={{margin:"12px 14px 0",background:adminHeroBg,border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px 20px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <div>
-              <p style={{color:"rgba(255,255,255,0.65)",fontSize:12,fontWeight:600,margin:"0 0 4px"}}>פאנל ניהול 👔</p>
-              <h1 style={{color:"#fff",fontSize:22,fontWeight:900,margin:0}}>שלום, {user?.name}</h1>
+              <p style={{...adminSoftText,fontSize:12,fontWeight:800,margin:"0 0 4px",letterSpacing:"0.04em"}}>פאנל ניהול 👔</p>
+              <h1 style={{...adminHeroText,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>שלום, {adminDisplayName}</h1>
               {clientPlan.plan&&(
                 <div style={{display:"flex",gap:6,marginTop:6}}>
-                  <span style={{background:"rgba(255,255,255,0.2)",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,color:"#fff"}}>{clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}</span>
-                  <span style={{background:clientPlan.status==="פעיל"?"rgba(46,125,50,0.4)":"rgba(198,40,40,0.4)",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800,color:"#fff"}}>{clientPlan.status==="פעיל"?"✅ פעיל":"⛔ "+clientPlan.status}</span>
+                  <span style={{background:"rgba(30,64,175,0.14)",border:"1px solid rgba(37,99,235,0.18)",borderRadius:99,padding:"4px 11px",fontSize:11,fontWeight:900,color:C.blue}}>{clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}</span>
+                  <span style={{background:clientPlan.status==="פעיל"?"rgba(21,128,61,0.10)":"rgba(185,28,28,0.10)",borderRadius:99,padding:"4px 11px",fontSize:11,fontWeight:900,color:clientPlan.status==="פעיל"?C.green:C.red}}>{clientPlan.status==="פעיל"?"✅ פעיל":"⛔ "+clientPlan.status}</span>
                 </div>
               )}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <Press onClick={()=>{setAdminTab("daily");window.scrollTo(0,0);haptic();}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📋</Press>
-          <Press onClick={()=>{setEditingReport(null);setForm({...blank(),adminReport:true});setScreen("form");haptic("medium");}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>📝 דוח</Press>
-              <Press onClick={handleLogout} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"rgba(255,255,255,0.8)",fontSize:12,fontWeight:700}}>יציאה</Press>
+              <Press onClick={()=>{setAdminTab("daily");window.scrollTo(0,0);haptic();}} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.blue,fontSize:12,fontWeight:900,boxShadow:"0 10px 26px rgba(30,64,175,0.14)"}}>📋</Press>
+          <Press onClick={()=>{setEditingReport(null);setForm({...blank(),adminReport:true});setScreen("form");haptic("medium");}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>📝 דוח</Press>
+              <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
             </div>
           </div>
         </div>
-        <div style={{background:C.white,padding:"8px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",gap:6,overflowX:"auto",position:"sticky",top:0,zIndex:50,boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
+        <div style={{position:"fixed",right:12,left:12,bottom:12,zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",gap:8,overflowX:"auto",boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
           {[["daily","📋 חלוקת עבודה"],["adminreport","📝 דוח ידני"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["treatments","🔢 מספר טיפולים"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"],["users","👤 משתמשים"]].map(([t,lbl])=>(
-            <Press key={t} onClick={()=>{setAdminTab(t);if(t==="treatments") void loadTreatmentCounts();haptic();}} style={{padding:"9px 14px",borderRadius:99,border:"none",fontSize:12,fontWeight:800,flexShrink:0,background:adminTab===t?`linear-gradient(135deg,${C.blue},${C.lightBlue})`:"#f0f4f8",color:adminTab===t?"#fff":C.muted,boxShadow:adminTab===t?"0 4px 12px rgba(21,101,192,0.3)":"none",transition:"all 0.2s"}}>{lbl}</Press>
+            <Press key={t} onClick={()=>{setAdminTab(t);if(t==="treatments") void loadTreatmentCounts();haptic();}} style={{padding:"10px 15px",borderRadius:18,border:"none",fontSize:12,fontWeight:900,flexShrink:0,background:adminTab===t?adminPrimaryGradient:"rgba(241,245,249,0.76)",color:adminTab===t?"#fff":C.muted,boxShadow:adminTab===t?"0 12px 28px rgba(79,70,229,0.26)":"none",transition:"all 0.2s"}}>{lbl}</Press>
           ))}
         </div>
-        <div style={{padding:"20px 16px 0"}}>
+        <div style={{padding:"18px 16px 0"}}>
           <InstallAppCard compact/>
           {adminTab==="adminreport"&&(
             <div>
@@ -3576,28 +3614,74 @@ const report = {
                 <h3 style={{fontSize:14,fontWeight:800,color:C.text,margin:"0 0 14px"}}>➕ לקוח חדש</h3>
                 <div style={{marginBottom:10}}><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>שם לקוח *</label><input value={newClient.name} onChange={e=>setNewClient(c=>({...c,name:e.target.value}))} placeholder="משפחת כהן" style={inp}/></div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>טלפון</label><input value={newClient.phone} onChange={e=>setNewClient(c=>({...c,phone:e.target.value}))} placeholder="05XXXXXXXX" style={inp} type="tel"/></div>
-                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>כתובת</label><input value={newClient.address} onChange={e=>setNewClient(c=>({...c,address:e.target.value}))} placeholder="רחוב הים 1" style={inp}/></div>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>טלפון *</label><input value={newClient.phone} onChange={e=>setNewClient(c=>({...c,phone:e.target.value}))} placeholder="05XXXXXXXX" style={inp} type="tel"/></div>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>כתובת *</label><input value={newClient.address} onChange={e=>setNewClient(c=>({...c,address:e.target.value}))} placeholder="רחוב הים 1" style={inp}/></div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>מפעיל קבוע</label><select value={newClient.regularOperator} onChange={e=>setNewClient(c=>({...c,regularOperator:e.target.value}))} style={sel}><option value="">ללא שיוך</option>{opNames.map(n=><option key={n}>{n}</option>)}</select></div>
-                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>סוג בריכה</label><select value={primaryPoolType(newClient.poolType)} onChange={e=>setNewClient(c=>({...c,poolType:setPoolTypePart(c.poolType,e.target.value)}))} style={sel}><option>מלח</option><option>כלור</option></select></div>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>קוד שער *</label><input value={newClient.gateCode} onChange={e=>setNewClient(c=>({...c,gateCode:e.target.value}))} placeholder="1234#" style={inp}/></div>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>ימים קבועים *</label><input value={newClient.regularDays} onChange={e=>setNewClient(c=>({...c,regularDays:e.target.value}))} placeholder="ראשון, שלישי" style={inp}/></div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>מפעיל קבוע *</label><select value={newClient.regularOperator} onChange={e=>setNewClient(c=>({...c,regularOperator:e.target.value}))} style={sel}><option value="">ללא שיוך</option>{opNames.map(n=><option key={n}>{n}</option>)}</select></div>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>סוג בריכה *</label><select value={primaryPoolType(newClient.poolType)} onChange={e=>setNewClient(c=>({...c,poolType:setPoolTypePart(c.poolType,e.target.value)}))} style={sel}><option>מלח</option><option>כלור</option></select></div>
                 </div>
                 <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
                   {["סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={()=>setNewClient(c=>({...c,poolType:setPoolTypePart(c.poolType,pt)}))} style={{padding:"6px 12px",borderRadius:99,fontSize:12,fontWeight:800,background:secondaryPoolType(newClient.poolType)===pt?C.blue:"#f0f4f8",color:secondaryPoolType(newClient.poolType)===pt?"#fff":C.muted}}>{pt}</Press>))}
                 </div>
-                <Press onClick={async()=>{ if(!newClient.name.trim()){showToast("⚠️ נא להזין שם לקוח");return;} const updated=[...clients,{name:newClient.name.trim(),phone:newClient.phone.trim(),address:newClient.address.trim(),qrUrl:"",poolType:newClient.poolType||"מלח",regularOperator:newClient.regularOperator||""}]; setClients(updated); setNewClient({name:"",phone:"",address:"",regularOperator:"",poolType:"מלח"}); if(sheetId) await sheetCall("saveClients",{clients:updated}); showToast("✅ לקוח נוסף"); haptic("success"); }} style={{padding:"13px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:`0 4px 14px rgba(21,101,192,0.3)`}}>➕ הוסף לקוח</Press>
+                <Press onClick={async()=>{ if(!newClient.name.trim()){showToast("⚠️ נא להזין שם לקוח");return;} const clientToAdd={name:newClient.name.trim(),phone:newClient.phone.trim(),address:newClient.address.trim(),gateCode:newClient.gateCode.trim(),qrUrl:"",poolType:newClient.poolType||"מלח",regularDays:newClient.regularDays.trim(),regularOperator:newClient.regularOperator||""}; const updated=[...clients,clientToAdd]; setClients(updated); setNewClient({name:"",phone:"",address:"",gateCode:"",regularDays:"",regularOperator:"",poolType:"מלח"}); if(sheetId) await sheetCall("saveClients",{clients:updated}); showToast("✅ לקוח נוסף"); haptic("success"); }} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>➕ הוסף לקוח</Press>
               </div>
               <h3 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:"0 0 12px"}}>לקוחות קיימים — {clients.length}</h3>
               <div style={{position:"relative",marginBottom:12}}>
                 <input value={clientListSearch} onChange={e=>setClientListSearch(e.target.value)} placeholder="🔍 חפש לקוח לפי שתי אותיות ראשונות..." style={{...inp,fontSize:13}}/>
               </div>
-              {(clientListSearch.trim().length>=2?filterClientOptions(clients, clientListSearch):sortByClientName(clients)).map((c,i)=>(
-                <div key={i} style={{...card({marginBottom:10})}}>
-                  <div style={{display:"flex",alignItems:"center",gap:12}}><div style={{width:40,height:40,borderRadius:12,background:"#e3f2fd",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{poolIconForType(c.poolType)}</div><div style={{flex:1}}><div style={{fontWeight:800,fontSize:14,color:C.text}}>{c.name.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{c.phone} · {c.address}</div><div style={{fontSize:11,color:C.blue,fontWeight:800,marginTop:3}}>{formatPoolType(c.poolType)}{clientMetaLine(c)?` · ${clientMetaLine(c)}`:""}</div></div>{c.phone&&<a href={`tel:${c.phone}`} style={{color:C.blue,fontSize:18,textDecoration:"none"}}>📞</a>}</div>
-                  <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>{["מלח","כלור","סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={async()=>{ const nextType=setPoolTypePart(c.poolType,pt); const updated=clients.map(x=>x.name===c.name?{...x,poolType:nextType}:x); setClients(updated); await sheetCall("saveClientPoolType",{clientName:c.name,poolType:nextType}); showToast(`✅ ${c.name.split(" - ")[0]} — ${formatPoolType(nextType)}`); haptic(); }} style={{padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:800,background:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?C.blue:"#f0f4f8",color:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?"#fff":C.muted}}>{pt}</Press>))}</div>
+              {(clientListSearch.trim().length>=2?filterClientOptions(clients, clientListSearch):sortByClientName(clients)).map((c,i)=>{ const missing=adminClientMissingFields(c); const isEditing=editingAdminClient?.originalName===c.name; const draft=isEditing?editingAdminClient.draft:null; return (
+                <div key={c.name+"-"+i} style={{...card({marginBottom:10,border:missing.length?"1px solid rgba(194,65,12,0.28)":"1px solid "+C.border})}}>
+                  {!isEditing&&<>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+                      <div style={{width:42,height:42,borderRadius:14,background:"rgba(219,234,254,0.86)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{poolIconForType(c.poolType)}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+                          <div style={{fontWeight:900,fontSize:15,color:C.text}}>{clientDisplayName(c)}</div>
+                          {missing.length>0&&<span style={{background:"rgba(255,247,237,0.9)",border:"1px solid rgba(194,65,12,0.24)",color:C.orange,borderRadius:99,padding:"3px 9px",fontSize:10,fontWeight:900}}>פרטים חסרים</span>}
+                        </div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:4}}>
+                          {[["טלפון",c.phone],["כתובת",c.address],["קוד שער",c.gateCode],["יום קבוע",c.regularDays],["מפעיל קבוע",c.regularOperator],["סוג בריכה",formatPoolType(c.poolType)]].map(([label,value])=>(
+                            <div key={label} style={{background:"rgba(241,247,255,0.62)",border:"1px solid "+C.border,borderRadius:12,padding:"7px 8px",minWidth:0}}>
+                              <div style={{fontSize:10,color:C.muted,fontWeight:800,marginBottom:2}}>{label}</div>
+                              <div style={{fontSize:12,color:value?C.text:C.orange,fontWeight:900,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{value||"חסר"}</div>
+                            </div>
+                          ))}
+                        </div>
+                        {missing.length>0&&<div style={{fontSize:11,color:C.orange,fontWeight:800,marginTop:8}}>חסר: {missing.join(", ")}</div>}
+                      </div>
+                      {c.phone&&<a href={"tel:"+c.phone} style={{color:C.blue,fontSize:18,textDecoration:"none",paddingTop:4}}>📞</a>}
+                    </div>
+                    <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap",alignItems:"center"}}>
+                      {["מלח","כלור","סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={async()=>{ const nextType=setPoolTypePart(c.poolType,pt); const updated=clients.map(x=>x.name===c.name?{...x,poolType:nextType}:x); setClients(updated); await sheetCall("saveClientPoolType",{clientName:c.name,poolType:nextType}); showToast("✅ "+clientDisplayName(c)+" — "+formatPoolType(nextType)); haptic(); }} style={{padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:800,background:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?C.blue:"#f0f4f8",color:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?"#fff":C.muted}}>{pt}</Press>))}
+                      <Press onClick={()=>{setEditingAdminClient({originalName:c.name,draft:adminClientDraft(c)});haptic();}} style={{marginInlineStart:"auto",padding:"6px 12px",borderRadius:12,background:"rgba(219,234,254,0.86)",border:"1px solid "+C.border,color:C.blue,fontSize:12,fontWeight:900}}>✏️ עריכה</Press>
+                    </div>
+                  </>}
+                  {isEditing&&<>
+                    <div style={{fontSize:13,fontWeight:900,color:C.text,marginBottom:10}}>עריכת פרטי לקוח</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                      <div><label style={{fontSize:10,fontWeight:800,color:C.muted,display:"block",marginBottom:5}}>שם לקוח *</label><input value={draft.name} onChange={e=>setEditingAdminClient(x=>({...x,draft:{...x.draft,name:e.target.value}}))} style={inp}/></div>
+                      <div><label style={{fontSize:10,fontWeight:800,color:C.muted,display:"block",marginBottom:5}}>טלפון *</label><input value={draft.phone} onChange={e=>setEditingAdminClient(x=>({...x,draft:{...x.draft,phone:e.target.value}}))} style={inp} type="tel"/></div>
+                      <div><label style={{fontSize:10,fontWeight:800,color:C.muted,display:"block",marginBottom:5}}>כתובת *</label><input value={draft.address} onChange={e=>setEditingAdminClient(x=>({...x,draft:{...x.draft,address:e.target.value}}))} style={inp}/></div>
+                      <div><label style={{fontSize:10,fontWeight:800,color:C.muted,display:"block",marginBottom:5}}>קוד שער *</label><input value={draft.gateCode} onChange={e=>setEditingAdminClient(x=>({...x,draft:{...x.draft,gateCode:e.target.value}}))} style={inp}/></div>
+                      <div><label style={{fontSize:10,fontWeight:800,color:C.muted,display:"block",marginBottom:5}}>ימים קבועים *</label><input value={draft.regularDays} onChange={e=>setEditingAdminClient(x=>({...x,draft:{...x.draft,regularDays:e.target.value}}))} style={inp}/></div>
+                      <div><label style={{fontSize:10,fontWeight:800,color:C.muted,display:"block",marginBottom:5}}>מפעיל קבוע *</label><select value={draft.regularOperator} onChange={e=>setEditingAdminClient(x=>({...x,draft:{...x.draft,regularOperator:e.target.value}}))} style={sel}><option value="">ללא שיוך</option>{opNames.map(n=><option key={n}>{n}</option>)}</select></div>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                      <div><label style={{fontSize:10,fontWeight:800,color:C.muted,display:"block",marginBottom:5}}>סוג בריכה *</label><select value={primaryPoolType(draft.poolType)} onChange={e=>setEditingAdminClient(x=>({...x,draft:{...x.draft,poolType:setPoolTypePart(x.draft.poolType,e.target.value)}}))} style={sel}><option>מלח</option><option>כלור</option></select></div>
+                      <div style={{display:"flex",gap:6,alignItems:"end"}}>{["סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={()=>setEditingAdminClient(x=>({...x,draft:{...x.draft,poolType:setPoolTypePart(x.draft.poolType,pt)}}))} style={{flex:1,padding:"10px 6px",borderRadius:12,fontSize:11,fontWeight:900,background:secondaryPoolType(draft.poolType)===pt?C.blue:"#f0f4f8",color:secondaryPoolType(draft.poolType)===pt?"#fff":C.muted}}>{pt}</Press>))}</div>
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <Press onClick={()=>saveAdminClientDetails(editingAdminClient.originalName,draft)} style={{flex:1,padding:"11px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontSize:13,fontWeight:900,textAlign:"center"}}>שמור</Press>
+                      <Press onClick={()=>{setEditingAdminClient(null);haptic();}} style={{padding:"11px 14px",borderRadius:14,background:"rgba(241,247,255,0.72)",border:"1px solid "+C.border,color:C.muted,fontSize:13,fontWeight:900}}>ביטול</Press>
+                    </div>
+                  </>}
                 </div>
-              ))}
+              );})}
             </div>
           )}
           {adminTab==="treatments"&&(
