@@ -1514,10 +1514,13 @@ const [screen,setScreen] = useState(() => {
   const clientPhone = (n) => (clients.find(c=>c.name===n)||{}).phone||"";
   const clientAddress = (n) => (clients.find(c=>c.name===n)||{}).address||"";
   const clientGateCode = (n) => (clients.find(c=>c.name===n)||{}).gateCode||"";
-  const operatorUsers = allUsers.filter(u=>u.role==="operator");
-  const opNames = operatorUsers.map(u=>u.name);
   const normalizeDate = (d) => String(d||"").trim().slice(0,10);
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
+  const isAdminRole = (role) => ["admin", "מנהל", "אדמין"].includes(String(role || "").trim().toLowerCase());
+  const isOperatorRole = (role) => ["operator", "op", "מפעיל", "מפעיל קבוע", "מפעיל_קבוע"].includes(String(role || "").trim().toLowerCase());
+  const isSubOperatorRole = (role) => ["sub_operator", "suboperator", "sub_admin", "subadmin", "עוזר מפעיל", "עוזר_מפעיל"].includes(String(role || "").trim().toLowerCase());
+  const operatorUsers = allUsers.filter(u=>isOperatorRole(u.role));
+  const opNames = operatorUsers.map(u=>u.name);
   const applyFetchedUsers = (users=[]) => {
     if (!Array.isArray(users)) return;
     setAllUsers(users);
@@ -1530,8 +1533,6 @@ const [screen,setScreen] = useState(() => {
       return merged;
     });
   };
-  const isAdminRole = (role) => ["admin", "מנהל", "אדמין"].includes(String(role || "").trim().toLowerCase());
-  const isSubOperatorRole = (role) => ["sub_operator", "suboperator", "sub_admin", "subadmin", "עוזר מפעיל", "עוזר_מפעיל"].includes(String(role || "").trim().toLowerCase());
   const subOperatorUsers = allUsers.filter(u=>isSubOperatorRole(u.role));
   const isAdminPanelRole = (role) => isAdminRole(role);
   const clientDisplayName = (c) => String(c?.name || c || "").split(" - ")[0].trim();
@@ -1780,7 +1781,7 @@ const [screen,setScreen] = useState(() => {
 
   const notifyOperatorIssueAcknowledged = async (issue, note) => {
     const operatorName = normalizeName(issue?.[1] || "");
-    const opUser = allUsers.find(u => u.role === "operator" && u.username && normalizeName(u.name) === operatorName);
+    const opUser = allUsers.find(u => isOperatorRole(u.role) && u.username && normalizeName(u.name) === operatorName);
     if (!opUser?.username) {
       console.warn("OneSignal: operator user not found for critical issue ack", issue?.[1]);
       return false;
@@ -1807,7 +1808,7 @@ const [screen,setScreen] = useState(() => {
   const sendNotificationToOperators = async (operatorNames, title, message) => {
     const names = [...new Set((operatorNames || []).filter(Boolean).map(normalizeName))];
     const targets = allUsers.filter(u =>
-      u.role === "operator" &&
+      isOperatorRole(u.role) &&
       u.username &&
       names.includes(normalizeName(u.name))
     );
@@ -1975,7 +1976,30 @@ const [screen,setScreen] = useState(() => {
   const subOperatorAssignKey = (date, opName) => localKey("galileo_sub_operator", date, opName);
   const subOperatorApprovalKey = (date, opName, subUsername) => localKey("galileo_sub_operator_approval", date, opName, subUsername);
   const lockedClientsKey = (username, date) => localKey("galileo_locked_clients", username, date);
-  const getAssignedSubOperator = (date, opName) => String(localStorage.getItem(subOperatorAssignKey(date, opName)) || "");
+  const rawLinkedOperatorValue = (u) => String(
+    u?.linkedOperator ||
+    u?.assignedOperator ||
+    u?.parentOperator ||
+    u?.regularOperator ||
+    u?.operator ||
+    u?.["מפעיל משויך"] ||
+    u?.["מפעיל_משויך"] ||
+    u?.["מפעיל קבוע"] ||
+    u?.["מפעיל_קבוע"] ||
+    ""
+  ).trim();
+  const resolveOperatorName = (value) => {
+    const v = normalizeName(value);
+    if (!v) return "";
+    const match = operatorUsers.find(op => normalizeName(op.name) === v || normalizeName(op.username) === v);
+    return String(match?.name || value || "").trim();
+  };
+  const getAssignedSubOperator = (date, opName) => {
+    const local = String(localStorage.getItem(subOperatorAssignKey(date, opName)) || "");
+    if (local) return local;
+    const fromUsers = subOperatorUsers.find(su => normalizeName(resolveOperatorName(rawLinkedOperatorValue(su))) === normalizeName(opName));
+    return String(fromUsers?.username || "");
+  };
   const updateSubOperatorUserCache = (username, opName) => {
     if (!username) return;
     setAllUsers(prev => {
@@ -2034,7 +2058,7 @@ const [screen,setScreen] = useState(() => {
     } catch {}
     return "";
   };
-  const linkedOperatorName = (u=user, date=dailyDate) => String(u?.linkedOperator || u?.parentOperator || u?.operator || u?.regularOperator || u?.assignedOperator || u?.["מפעיל משויך"] || u?.["מפעיל_משויך"] || u?.["מפעיל קבוע"] || u?.["מפעיל_קבוע"] || findAssignedOperatorForSub(date, u) || "").trim();
+  const linkedOperatorName = (u=user, date=dailyDate) => resolveOperatorName(rawLinkedOperatorValue(u) || findAssignedOperatorForSub(date, u));
   const dailyOwnerName = (date=dailyDate) => isSubOperatorRole(user?.role) ? (linkedOperatorName(user, date) || user?.name || "") : (user?.name || "");
   const isSubOperatorApproved = (date=dailyDate, opName=dailyOwnerName(date), subUsername=user?.username) => localStorage.getItem(subOperatorApprovalKey(date, opName, subUsername)) === "yes";
   const approveSubOperator = (date, opName, subUsername) => {
