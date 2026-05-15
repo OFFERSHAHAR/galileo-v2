@@ -1,0 +1,14 @@
+dist/
+*.log
+dev-server*.log
+green-probe.json
+green-status-probe.json
+node_modules/.vite/
+node_modules/node_modules/
+android-chrome-*.png
+apple-touch-icon.png
+favicon-*.png
+maskable-icon-512x512.png
+mstile-150x150.png
+manifest.json
+*-preview.svg
