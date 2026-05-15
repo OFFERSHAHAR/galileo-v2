@@ -456,15 +456,23 @@ const drivePreviewUrl = (url) => {
   return id ? `https://drive.google.com/file/d/${id}/preview` : "";
 };
 
+const instagramEmbedUrl = (url) => {
+  const clean = String(url || "").split("?")[0].replace(/\/+$/, "");
+  if (!/instagram\.com\/(p|reel|tv)\//i.test(clean)) return "";
+  return `${clean}/embed`;
+};
+
 const classifyWelcomeMedia = (item) => {
   if (!item?.url) return null;
   const url = item.url;
   const clean = url.split("?")[0].toLowerCase();
   const yt = youtubeEmbedUrl(url);
   const drive = drivePreviewUrl(url);
+  const instagram = instagramEmbedUrl(url);
   const vimeo = url.match(/vimeo\.com\/(\d+)/i)?.[1];
   if (yt) return {...item, type:"iframe", embedUrl:yt};
   if (drive) return {...item, type:"iframe", embedUrl:drive};
+  if (instagram) return {...item, type:"iframe", embedUrl:instagram};
   if (vimeo) return {...item, type:"iframe", embedUrl:`https://player.vimeo.com/video/${vimeo}`};
   if (/\.(mp4|webm|ogg|m4v|mov)$/i.test(clean)) return {...item, type:"video"};
   if (/\.(png|jpe?g|gif|webp|svg)$/i.test(clean)) return {...item, type:"image"};
@@ -1296,6 +1304,8 @@ export default function App() {
   const [companyName, setCompanyName] = useState(company.name||DEFAULT_APP_NAME);
   const [user,setUser] = useState(()=>{ try { return JSON.parse(localStorage.getItem("galileo_user")||"null"); } catch { return null; } });
   const [welcomeMedia,setWelcomeMedia] = useState(null);
+  const [localWelcomeMedia,setLocalWelcomeMedia] = useState(()=>{ try{return JSON.parse(localStorage.getItem("galileo_local_welcome_media")||"null");}catch{return null;} });
+  const [welcomeMediaLink,setWelcomeMediaLink] = useState("");
   const [showDailyBriefing,setShowDailyBriefing] = useState(false);
   const [greeting, setGreeting] = useState(()=>{
     try {
@@ -1417,6 +1427,7 @@ const [screen,setScreen] = useState(() => {
   const [chemicalRestrictionPrompt,setChemicalRestrictionPrompt] = useState(null);
   const logoLongPress = useRef();
   const longPressTimers = useRef({});
+  const welcomeMediaFileRef = useRef();
   const fileRef = useRef();
   const toastTimer = useRef();
 
@@ -1572,6 +1583,47 @@ const [screen,setScreen] = useState(() => {
     if (res?.issues) setOperatorIssues(res.issues);
     if (!silent) showToast(`✅ ${res?.issues?.length||0} תקלות`);
     return res?.issues || [];
+  };
+  const saveLocalWelcomeMedia = (media) => {
+    localStorage.setItem("galileo_local_welcome_media", JSON.stringify(media));
+    setLocalWelcomeMedia(media);
+    setWelcomeMediaLink("");
+  };
+  const clearLocalWelcomeMedia = () => {
+    localStorage.removeItem("galileo_local_welcome_media");
+    setLocalWelcomeMedia(null);
+    setWelcomeMediaLink("");
+    showToast("🗑️ המדיה נמחקה מהמכשיר");
+    haptic("success");
+  };
+  const uploadLocalWelcomeImage = (file) => {
+    if (!file) return;
+    if (!file.type?.startsWith("image/")) {
+      showToast("⚠️ בחר קובץ תמונה בלבד");
+      return;
+    }
+    if (file.size > 2800 * 1024) {
+      showToast("⚠️ התמונה גדולה מדי. עדיף עד 2.8MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      saveLocalWelcomeMedia({url:String(reader.result || ""), source:"localUpload", name:file.name, savedAt:Date.now()});
+      showToast("✅ התמונה נשמרה מקומית");
+      haptic("success");
+    };
+    reader.onerror = () => showToast("⚠️ לא הצלחתי לקרוא את התמונה");
+    reader.readAsDataURL(file);
+  };
+  const saveLocalWelcomeLink = () => {
+    const url = extractFirstUrl(welcomeMediaLink);
+    if (!url) {
+      showToast("⚠️ הדבק לינק תקין");
+      return;
+    }
+    saveLocalWelcomeMedia({url, source:"localLink", savedAt:Date.now()});
+    showToast("✅ הלינק נשמר מקומית");
+    haptic("success");
   };
   const saveInternalNoteForClient = async () => {
     if (!internalNoteEdit?.client) return;
@@ -2061,7 +2113,9 @@ const [screen,setScreen] = useState(() => {
   const _doLogin = (found) => {
     setUser(found);
     setGreeting(getDailyGreeting(found.username||""));
-    setWelcomeMedia(classifyWelcomeMedia(mediaUrlFromUser(found)));
+    let localMedia = null;
+    try { localMedia = JSON.parse(localStorage.getItem("galileo_local_welcome_media") || "null"); } catch {}
+    setWelcomeMedia(classifyWelcomeMedia(localMedia || mediaUrlFromUser(found)));
     setShowDailyBriefing(found.role !== "admin");
     localStorage.setItem("galileo_user", JSON.stringify(found));
     setScreen(found.role === "admin" ? "admin" : "daily");
@@ -3539,6 +3593,37 @@ const report = {
           )}
           {adminTab==="users"&&(
             <div>
+              <div style={{...card({marginBottom:14})}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:12}}>
+                  <div>
+                    <div style={{fontWeight:900,fontSize:15,color:C.text}}>מדיה קופצת אחרי התחברות</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.muted,marginTop:3}}>נשמר מקומית במכשיר הזה בלבד</div>
+                  </div>
+                  {localWelcomeMedia&&<Badge label="פעיל" col={C.green}/>}
+                </div>
+                {localWelcomeMedia&&(
+                  <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:14,padding:10,marginBottom:12}}>
+                    {(()=>{ const m=classifyWelcomeMedia(localWelcomeMedia); return (
+                      <div>
+                        {m?.type==="image"&&<img src={m.url} alt="" style={{width:"100%",maxHeight:180,objectFit:"contain",borderRadius:10,background:"#fff",marginBottom:8}}/>}
+                        {m?.type==="video"&&<video src={m.url} controls playsInline style={{width:"100%",maxHeight:180,borderRadius:10,background:"#000",marginBottom:8}}/>}
+                        {m?.type==="iframe"&&<iframe src={m.embedUrl} title="local-welcome-preview" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen style={{width:"100%",aspectRatio:"16 / 9",border:0,borderRadius:10,background:"#000",marginBottom:8}}/>}
+                        {m?.type==="link"&&<div style={{fontSize:12,fontWeight:800,color:C.blue,wordBreak:"break-word",marginBottom:8}}>{m.url}</div>}
+                        <div style={{fontSize:11,fontWeight:800,color:C.muted}}>מקור: {localWelcomeMedia.source==="localUpload"?"תמונה שהועלתה":"לינק"}</div>
+                      </div>
+                    ); })()}
+                  </div>
+                )}
+                <input ref={welcomeMediaFileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{uploadLocalWelcomeImage(e.target.files?.[0]); e.target.value="";}}/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                  <Press onClick={()=>welcomeMediaFileRef.current?.click()} style={{padding:"11px 12px",borderRadius:12,background:"#e3f2fd",color:C.blue,fontWeight:900,fontSize:13,textAlign:"center"}}>העלה תמונה</Press>
+                  <Press onClick={clearLocalWelcomeMedia} style={{padding:"11px 12px",borderRadius:12,background:"#ffebee",color:C.red,fontWeight:900,fontSize:13,textAlign:"center",opacity:localWelcomeMedia?1:0.5}}>מחק</Press>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8}}>
+                  <input value={welcomeMediaLink} onChange={e=>setWelcomeMediaLink(e.target.value)} placeholder="לינק ישיר / YouTube / Instagram..." style={{...inp,marginBottom:0}}/>
+                  <Press onClick={saveLocalWelcomeLink} style={{padding:"11px 14px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center",whiteSpace:"nowrap"}}>שמור</Press>
+                </div>
+              </div>
               {allUsers.map(u=>(<div key={u.username} style={{...card({marginBottom:10,display:"flex",alignItems:"center",gap:12})}}><span style={{fontSize:30}}>{u.icon}</span><div style={{flex:1}}><div style={{fontWeight:800,fontSize:15,color:C.text}}>{u.name}</div><div style={{color:C.muted,fontSize:12,marginTop:2}}>{u.username} · {u.phone}</div><div style={{color:"#b0bec5",fontSize:11,marginTop:2}}>"{u.welcomeMessage}"</div></div><Badge label={u.role==="admin"?"מנהל":"מפעיל"} col={u.role==="admin"?C.orange:C.blue}/></div>))}
               <div style={{marginTop:24}}><Press onClick={()=>setShowReportIssue(true)} style={{...card({background:"#fff8e1",border:"1px solid #ffe082",display:"flex",alignItems:"center",gap:12}),padding:"14px 16px"}}><span style={{fontSize:22}}>🔧</span><div><div style={{fontWeight:800,fontSize:14,color:C.orange}}>דווח על תקלה</div><div style={{fontSize:12,color:C.muted}}>שלח דיווח ישירות למפתח</div></div></Press></div>
             </div>
