@@ -2288,6 +2288,41 @@ const [screen,setScreen] = useState(() => {
     setSubOperatorRefresh(x=>x+1);
     return clean;
   };
+  const syncAdminOrderTasks = async (date, opName, entries) => {
+    const clean = saveAdminOrderEntries(date, opName, entries);
+    const cleanNames = new Set(clean.map(entry => normalizeName(entry.client)));
+    const existingByClient = new Map(tasks
+      .filter(t => normalizeDate(t.date) === date && (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)))
+      .map(t => [normalizeName(t.client), t])
+    );
+    const orderTasks = clean.map((entry, i) => {
+      const existing = existingByClient.get(normalizeName(entry.client));
+      return {
+        ...(existing || {}),
+        id: existing?.id || `admin-order-${date}-${normalizeName(opName)}-${normalizeName(entry.client)}`,
+        date,
+        client: entry.client,
+        operators: [opName],
+        status: existing?.status || "pending",
+        changeLog: existing?.changeLog || [{at:nowStr(),note:"סדר יום עודכן",by:user?.name,needsAck:true,ackedBy:[]}],
+        orderIndex: i + 1,
+        adminNote: entry.note || "",
+        createdByAdminOrder: true
+      };
+    });
+    const cleanedTasks = tasks.filter(t => !(
+      normalizeDate(t.date) === date &&
+      (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)) &&
+      (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0 || cleanNames.has(normalizeName(t.client)))
+    ));
+    const nextTasks = [...cleanedTasks, ...orderTasks];
+    setTasks(nextTasks);
+    if (sheetId) {
+      const res = await sheetCall("saveTasks", {tasks: nextTasks});
+      if (!res?.success) return {success:false, clean, error:res?.error || "saveTasks failed"};
+    }
+    return {success:true, clean};
+  };
   const loadAdminOrderDraft = (date, opName) => {
     const entries = opName ? getAdminOrderEntries(date, opName) : [];
     setAdminOrderDraft(entries);
@@ -4032,7 +4067,7 @@ const report = {
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10}}>
                       <div style={{fontSize:13,fontWeight:900,color:C.blue}}>סדר עבודה: {activeAdminOperator}</div>
-                      <Press onClick={()=>{const clean=saveAdminOrderEntries(taskDate, activeAdminOperator, adminOrderList);setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);showToast("סדר נשמר");haptic("success");void sendNotificationToOperators([activeAdminOperator], "סדר היום עודכן", `${clean.length} בריכות לתאריך ${fmtDate(taskDate)}`).catch(e=>console.warn("Admin order operator notification failed", e));const assignedSub=subOperatorUsers.find(su=>isSameSubOperator(getAssignedSubOperator(taskDate, activeAdminOperator), su));if(assignedSub?.username) void sendNotificationToSubOperators([assignedSub], "סדר היום עודכן", `סדר היום של ${activeAdminOperator} עודכן לתאריך ${fmtDate(taskDate)}`).catch(e=>console.warn("Admin order sub notification failed", e));}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר"}</Press>
+                      <Press onClick={async()=>{const sync=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);if(!sync.success){showToast("השמירה לגיליון נכשלה");haptic("medium");return;}const clean=sync.clean;setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);const opSent=await sendNotificationToOperators([activeAdminOperator], "סדר היום עודכן", `${clean.length} בריכות לתאריך ${fmtDate(taskDate)}`);const assignedSub=subOperatorUsers.find(su=>isSameSubOperator(getAssignedSubOperator(taskDate, activeAdminOperator), su));let subSent=0;if(assignedSub?.username) subSent=await sendNotificationToSubOperators([assignedSub], "סדר היום עודכן", `סדר היום של ${activeAdminOperator} עודכן לתאריך ${fmtDate(taskDate)}`);showToast(opSent>0||subSent>0?"סדר נשמר והתראה נשלחה":"סדר נשמר, התראה לא נשלחה");haptic(opSent>0||subSent>0?"success":"medium");}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר"}</Press>
                     </div>
                     {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
                       <label style={{fontSize:11,fontWeight:900,color:C.muted,display:"block",marginBottom:6}}>שיוך SUB_OPERATOR למפעיל זה</label>
