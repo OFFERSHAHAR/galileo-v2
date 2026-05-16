@@ -63,6 +63,30 @@ function rememberPushEnabled(username) {
 const CITY = "ישראל";
 const wazeUrl = (a) => `https://waze.com/ul?q=${encodeURIComponent(a+", "+CITY)}&navigate=yes`;
 const todayStr = () => new Date().toISOString().slice(0,10);
+const LOGIN_DAY_KEY = "galileo_login_day";
+const localDayKey = (date = new Date()) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+function getStoredUserForToday() {
+  try {
+    const saved = localStorage.getItem("galileo_user");
+    if (!saved) return null;
+    const loginDay = localStorage.getItem(LOGIN_DAY_KEY);
+    const today = localDayKey();
+    if (loginDay && loginDay !== today) {
+      localStorage.removeItem("galileo_user");
+      localStorage.removeItem(LOGIN_DAY_KEY);
+      return null;
+    }
+    if (!loginDay) localStorage.setItem(LOGIN_DAY_KEY, today);
+    return JSON.parse(saved || "null");
+  } catch {
+    return null;
+  }
+}
 const fmtDate = s => {
   if(!s) return "";
   if(s instanceof Date && !isNaN(s)) return `${s.getDate()}/${s.getMonth()+1}/${s.getFullYear()}`;
@@ -1371,7 +1395,7 @@ export default function App() {
     return true;
   });
   const [companyName, setCompanyName] = useState(company.name||DEFAULT_APP_NAME);
-  const [user,setUser] = useState(()=>{ try { return JSON.parse(localStorage.getItem("galileo_user")||"null"); } catch { return null; } });
+  const [user,setUser] = useState(()=>getStoredUserForToday());
   const [welcomeMedia,setWelcomeMedia] = useState(null);
   const [showDailyBriefing,setShowDailyBriefing] = useState(false);
   const [greeting, setGreeting] = useState(()=>{
@@ -1439,7 +1463,7 @@ useEffect(() => {
 
 const [screen,setScreen] = useState(() => {
   try {
-    const u = JSON.parse(localStorage.getItem("galileo_user") || "null");
+    const u = getStoredUserForToday();
     const role = String(u?.role || "").trim().toLowerCase();
     const isAdminPanel = ["admin", "מנהל", "אדמין"].includes(role);
     return u ? (isAdminPanel ? "admin" : "daily") : "login";
@@ -1447,6 +1471,35 @@ const [screen,setScreen] = useState(() => {
     return "login";
   }
 });
+
+useEffect(() => {
+  const enforceDailyProfileLogin = () => {
+    if (!localStorage.getItem("galileo_user")) return;
+    const loginDay = localStorage.getItem(LOGIN_DAY_KEY);
+    const today = localDayKey();
+    if (!loginDay) {
+      localStorage.setItem(LOGIN_DAY_KEY, today);
+      return;
+    }
+    if (loginDay === today) return;
+    localStorage.removeItem("galileo_user");
+    localStorage.removeItem(LOGIN_DAY_KEY);
+    setUser(null);
+    setLoginPass("");
+    setScreen("login");
+    setLoginErr("עבר יום חדש, נא להתחבר מחדש");
+  };
+  enforceDailyProfileLogin();
+  const timer = setInterval(enforceDailyProfileLogin, 60 * 1000);
+  window.addEventListener("focus", enforceDailyProfileLogin);
+  document.addEventListener("visibilitychange", enforceDailyProfileLogin);
+  return () => {
+    clearInterval(timer);
+    window.removeEventListener("focus", enforceDailyProfileLogin);
+    document.removeEventListener("visibilitychange", enforceDailyProfileLogin);
+  };
+}, []);
+
   const [syncing,setSyncing] = useState(false);
   const [actionStatus, setActionStatus] = useState({});
   const [pushCardOpen, setPushCardOpen] = useState(true);
@@ -1499,6 +1552,7 @@ const [screen,setScreen] = useState(() => {
   const [selectedAdminOperator,setSelectedAdminOperator] = useState("");
   const [adminOrderDraft,setAdminOrderDraft] = useState([]);
   const [adminOrderClientSearch,setAdminOrderClientSearch] = useState("");
+  const [adminOrderRemovedClients,setAdminOrderRemovedClients] = useState([]);
   const [adminOrderSavedPulse,setAdminOrderSavedPulse] = useState(false);
   const [operatorEditOrder,setOperatorEditOrder] = useState(false);
   const [operatorOrderDraft,setOperatorOrderDraft] = useState([]);
@@ -2412,7 +2466,7 @@ const [screen,setScreen] = useState(() => {
       return next;
     });
   };
-  const handleLogout = () => { localStorage.removeItem("galileo_user"); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
+  const handleLogout = () => { localStorage.removeItem("galileo_user"); localStorage.removeItem(LOGIN_DAY_KEY); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
 
   const showToast = (msg) => { clearTimeout(toastTimer.current); setToast({msg,visible:true}); toastTimer.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2500); };
 
@@ -2617,6 +2671,7 @@ const [screen,setScreen] = useState(() => {
     setWelcomeMedia(classifyWelcomeMedia(mediaUrlFromUser(found)));
     setShowDailyBriefing(!isAdminPanelRole(found.role));
     localStorage.setItem("galileo_user", JSON.stringify(found));
+    localStorage.setItem(LOGIN_DAY_KEY, localDayKey());
     setScreen(isAdminPanelRole(found.role) ? "admin" : "daily");
     haptic("medium");
     connectSheets(true);
@@ -2630,6 +2685,7 @@ const [screen,setScreen] = useState(() => {
           if (myRecord && myRecord[6]==="מושהה") {
             setUser(null);
             localStorage.removeItem("galileo_user");
+            localStorage.removeItem(LOGIN_DAY_KEY);
             setScreen("login");
             setLoginErr("⛔ המנוי שלך מושהה. לפרטים צור קשר עם מנהל המערכת.");
           }
@@ -3977,7 +4033,24 @@ const report = {
     const adminOrderSearchPool = adminOrderSearchActive ? allOrderClients : [...adminOrderEligibleMap.values()];
     const adminOrderEligibleClients = filterClientOptions(sortByClientName(adminOrderSearchPool), adminOrderClientSearch);
     const selectedAdminOrderEntries = adminOrderList.filter(entry => !adminOrderClientSearch || filterClientOptions([{name:entry.client, ...(adminOrderClientMap.get(entry.client)||{})}], adminOrderClientSearch).length);
-    const unselectedAdminOrderClients = adminOrderEligibleClients.filter(c=>!adminOrderNames.has(c.name));
+    const unselectedAdminOrderClientsBase = adminOrderEligibleClients.filter(c=>!adminOrderNames.has(c.name));
+    const removedVisibleClients = adminOrderRemovedClients
+      .map(name => adminOrderClientMap.get(name) || {name})
+      .filter(c => c?.name && !adminOrderNames.has(c.name));
+    const unselectedAdminOrderClients = sortByClientName([
+      ...unselectedAdminOrderClientsBase,
+      ...removedVisibleClients.filter(c=>!unselectedAdminOrderClientsBase.some(x=>x.name===c.name))
+    ]);
+    const addClientToAdminOrder = (clientName) => {
+      setAdminOrderDraft(prev=>[...adminOrderList,{client:clientName,note:"",orderIndex:adminOrderList.length+1}]);
+      setAdminOrderRemovedClients(prev=>prev.filter(name=>name!==clientName));
+      setAdminOrderClientSearch("");
+      haptic();
+    };
+    const removeClientFromAdminOrder = (entry, index) => {
+      setAdminOrderRemovedClients(prev=>prev.includes(entry.client) ? prev : [...prev, entry.client]);
+      setAdminOrderDraft(adminOrderList.filter((_,idx)=>idx!==index).map((x,idx)=>({...x,orderIndex:idx+1})));
+    };
     const loadDefaultAdminOrder = () => {
       const defaults = baseOperatorClients(taskDate, activeAdminOperator);
       if (!defaults.length) {
@@ -3994,11 +4067,12 @@ const report = {
         if (!loaded.some(x=>x.client===entry.client)) loaded.push({...entry, orderIndex:loaded.length + 1});
       });
       setAdminOrderDraft(loaded);
+      setAdminOrderRemovedClients([]);
       setAdminOrderClientSearch("");
       showToast(`נטענו ${defaults.length} בריכות ברירת מחדל`);
       haptic("success");
     };
-    const taskClientOptions = clientsForOperatorsAndDate(clients, taskDate, taskOps);
+    const taskClientOptions = sortByClientName(clients);
     const dayTasks = tasks.filter(t=>normalizeDate(t.date)===taskDate && !t.createdByAdminOrder && Number(t.orderIndex || 0) <= 0);
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
     const criticalAdminIssue = criticalAdminIssueIndex >= 0 ? operatorIssues[criticalAdminIssueIndex] : null;
@@ -4118,11 +4192,11 @@ const report = {
                     <h3 style={{fontSize:14,fontWeight:900,color:C.text,margin:"0 0 3px"}}>חדר בקרה יומי</h3>
                     <div style={{fontSize:11,color:C.muted,fontWeight:700}}>סדר נשמר ומסתנכרן למפעיל דרך Google Sheets</div>
                   </div>
-                  <input type="date" value={taskDate} onChange={e=>{setTaskDate(e.target.value); if(activeAdminOperator) loadAdminOrderDraft(e.target.value, activeAdminOperator);}} style={{...inp,maxWidth:132,fontSize:12,margin:0,color:C.blue,fontWeight:800}}/>
+                  <input type="date" value={taskDate} onChange={e=>{setTaskDate(e.target.value);setAdminOrderRemovedClients([]); if(activeAdminOperator) loadAdminOrderDraft(e.target.value, activeAdminOperator);}} style={{...inp,maxWidth:132,fontSize:12,margin:0,color:C.blue,fontWeight:800}}/>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8,marginBottom:12}}>
                   {progressData.map(({op,total,done,pending})=>(
-                    <Press key={op.name} onClick={()=>{setSelectedAdminOperator(op.name);loadAdminOrderDraft(taskDate, op.name);haptic();}} style={{padding:"10px 12px",borderRadius:12,background:activeAdminOperator===op.name?"#e3f2fd":"#f5f9ff",border:`2px solid ${activeAdminOperator===op.name?C.lightBlue:C.border}`,textAlign:"right"}}>
+                    <Press key={op.name} onClick={()=>{setSelectedAdminOperator(op.name);setAdminOrderRemovedClients([]);loadAdminOrderDraft(taskDate, op.name);haptic();}} style={{padding:"10px 12px",borderRadius:12,background:activeAdminOperator===op.name?"#e3f2fd":"#f5f9ff",border:`2px solid ${activeAdminOperator===op.name?C.lightBlue:C.border}`,textAlign:"right"}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                         <span style={{fontSize:20}}>{op.icon}</span>
                         <span style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{op.name}</span>
@@ -4165,7 +4239,7 @@ const report = {
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
                           <div style={{width:28,height:28,borderRadius:"50%",background:"#e3f2fd",color:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,flexShrink:0}}>{i+1}</div>
                           <div style={{flex:1,minWidth:0,fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{entry.client.split(" - ")[0]}</div>
-                          <Press onClick={()=>setAdminOrderDraft(adminOrderList.filter((_,idx)=>idx!==i).map((x,idx)=>({...x,orderIndex:idx+1})))} style={{padding:"5px 9px",borderRadius:8,background:"#ffebee",color:C.red,fontSize:12,fontWeight:900}}>הסר</Press>
+                          <Press onClick={()=>removeClientFromAdminOrder(entry, i)} style={{padding:"5px 9px",borderRadius:8,background:"#ffebee",color:C.red,fontSize:12,fontWeight:900}}>הסר</Press>
                         </div>
                         <input value={entry.note || ""} onChange={e=>setAdminOrderDraft(adminOrderList.map((x,idx)=>idx===i?{...x,note:e.target.value}:x))} placeholder="הערה למפעיל לבריכה זו..." style={{...inp,fontSize:12,padding:"8px 10px",margin:0}}/>
                       </div>
@@ -4174,18 +4248,21 @@ const report = {
                       <span style={{position:"absolute",right:0,top:-10,background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:99,padding:"2px 10px",fontSize:10,fontWeight:900,color:C.muted}}>לא נבחרו לסדר היום</span>
                     </div>
                     {unselectedAdminOrderClients.length===0&&<div style={{padding:16,borderRadius:12,background:"#f8fafc",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700}}>אין בריכות נוספות ליום הזה</div>}
-                    {unselectedAdminOrderClients.map(c=>(
-                      <Press key={c.name} onClick={()=>{setAdminOrderDraft(prev=>[...adminOrderList,{client:c.name,note:"",orderIndex:adminOrderList.length+1}]);setAdminOrderClientSearch("");haptic();}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",border:`1px solid ${C.border}`,borderRadius:12,background:"#fff",marginBottom:8}}>
+                    {unselectedAdminOrderClients.map(c=>{
+                      const removed = adminOrderRemovedClients.includes(c.name);
+                      return (
+                      <Press key={c.name} onClick={()=>addClientToAdminOrder(c.name)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",border:`1px solid ${removed?"#fbbf24":C.border}`,borderRadius:12,background:removed?"#fffbeb":"#fff",marginBottom:8}}>
                         <div style={{minWidth:0}}>
                           <div style={{fontSize:13,fontWeight:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</div>
                           {c.address&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>}
                           <div style={{fontSize:11,color:C.blue,fontWeight:800,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>
                             {clientMetaLine(c) || "ללא שיוך קבוע"}
                           </div>
+                          {removed&&<div style={{fontSize:10,color:C.orange,fontWeight:900,marginTop:2}}>הוסר מהסדר ולא יישלח למפעיל</div>}
                         </div>
-                        <Badge label="הוסף" col={C.blue}/>
+                        <Badge label={removed?"החזר":"הוסף"} col={removed?C.orange:C.blue}/>
                       </Press>
-                    ))}
+                    )})}
                   </div>
                 )}
               </div>
@@ -4199,14 +4276,18 @@ const report = {
                 {!editTaskId&&(
                   <div style={{marginBottom:10}}>
                     <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>לקוחות <span style={{color:C.blue}}>({taskClients.length} נבחרו)</span></label>
-                    <div style={{position:"relative",marginBottom:8}}><input value={taskClientSearch} onChange={e=>setTaskClientSearch(e.target.value)} placeholder="🔍 חפש וסמן לקוחות..." style={inp} autoComplete="off"/></div>
+                    <div style={{position:"relative",marginBottom:8}}><input value={taskClientSearch} onChange={e=>setTaskClientSearch(e.target.value)} placeholder="🔍 חפש מכל הלקוחות..." style={inp} autoComplete="off"/></div>
                     <div style={{maxHeight:200,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#f5f9ff"}}>
                       {filterClientOptions(taskClientOptions, taskClientSearch).map(c=>{
                         const selected = taskClients.find(x=>x.name===c.name);
                         return (
                           <Press key={c.name} onClick={()=>{ haptic(); setTaskClients(prev=>selected?prev.filter(x=>x.name!==c.name):[...prev,{name:c.name,note:""}]); }} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:`1px solid ${C.border}`,background:selected?"#e3f2fd":"transparent"}}>
                             <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${selected?C.blue:C.border}`,background:selected?C.blue:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{selected&&<span style={{color:"#fff",fontSize:13,fontWeight:900}}>✓</span>}</div>
-                            <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13,color:selected?C.blue:C.text}}>{c.name.split(" - ")[0]}</div>{c.address&&<div style={{fontSize:11,color:C.muted}}>{c.address}</div>}</div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontWeight:700,fontSize:13,color:selected?C.blue:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</div>
+                              <div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{clientMetaLine(c) || "ללא שיוך יום ומפעיל"}</div>
+                              {c.address&&<div style={{fontSize:10,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",opacity:0.78}}>{c.address}</div>}
+                            </div>
                           </Press>
                         );
                       })}
