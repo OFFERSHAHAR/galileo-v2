@@ -2330,10 +2330,9 @@ useEffect(() => {
     return [...names].filter(Boolean).map((clientName, index) => ({client: clientName, note: "", orderIndex: index + 1}));
   };
   const getAdminOrderEntries = (date, opName) => {
-    const saved = getLocalAdminOrderEntries(date, opName);
-    if (saved.length) return saved;
     const fromTasks = getSheetAdminOrderEntries(date, opName);
-    return fromTasks;
+    if (fromTasks.length) return fromTasks;
+    return getLocalAdminOrderEntries(date, opName);
   };
   const getLocalAdminOrderEntries = (date, opName) => readLocalArray(adminOrderKey(date, opName))
       .filter(x=>x?.client)
@@ -2354,18 +2353,14 @@ useEffect(() => {
       .sort((a,b)=>a.orderIndex-b.orderIndex);
   };
   const getEffectiveAdminOrderEntries = (date, opName) => {
-    const local = getLocalAdminOrderEntries(date, opName);
-    if (local.length) return local.sort((a,b)=>a.orderIndex-b.orderIndex);
-    return getSheetAdminOrderEntries(date, opName);
+    const fromSheet = getSheetAdminOrderEntries(date, opName);
+    if (fromSheet.length) return fromSheet;
+    return getLocalAdminOrderEntries(date, opName).sort((a,b)=>a.orderIndex-b.orderIndex);
   };
-  const saveAdminOrderEntries = (date, opName, entries) => {
-    const clean = (entries || []).filter(x=>x?.client).map((x, i)=>({client:x.client, note:x.note || "", orderIndex:i + 1}));
-    writeLocalArray(adminOrderKey(date, opName), clean);
-    setSubOperatorRefresh(x=>x+1);
-    return clean;
-  };
+  const prepareAdminOrderEntries = (entries) =>
+    (entries || []).filter(x=>x?.client).map((x, i)=>({client:x.client, note:x.note || "", orderIndex:i + 1}));
   const syncAdminOrderTasks = async (date, opName, entries) => {
-    const clean = saveAdminOrderEntries(date, opName, entries);
+    const clean = prepareAdminOrderEntries(entries);
     const existingByClient = new Map(adminOrders
       .filter(o => normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName))
       .map(o => [normalizeName(o.client), o])
@@ -2386,11 +2381,12 @@ useEffect(() => {
     });
     const cleanedOrders = adminOrders.filter(o => !(normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName)));
     const nextOrders = [...cleanedOrders, ...orderRows];
+    if (!sheetId) return {success:false, clean, error:"missing sheetId"};
+    const res = await sheetCall("saveAdminOrders", {adminOrders: nextOrders});
+    if (!res?.success) return {success:false, clean, error:res?.error || "saveAdminOrders failed"};
     setAdminOrders(nextOrders);
-    if (sheetId) {
-      const res = await sheetCall("saveAdminOrders", {adminOrders: nextOrders});
-      if (!res?.success) return {success:false, clean, error:res?.error || "saveAdminOrders failed"};
-    }
+    writeLocalArray(adminOrderKey(date, opName), clean);
+    setSubOperatorRefresh(x=>x+1);
     return {success:true, clean};
   };
   const loadAdminOrderDraft = (date, opName) => {
@@ -2439,7 +2435,9 @@ useEffect(() => {
     const opName = dailyOwnerName(date);
     if (isSubOperatorRole(user?.role)) {
       const sharedEntries = getSharedSubOrderEntries(date, opName, user?.username || user?.name);
-      return sharedEntries.length ? entriesToDailyTasks(date, opName, sharedEntries, "shared") : [];
+      if (sharedEntries.length) return entriesToDailyTasks(date, opName, sharedEntries, "shared");
+      const adminEntries = getEffectiveAdminOrderEntries(date, opName);
+      return adminEntries.length ? entriesToDailyTasks(date, opName, adminEntries, "admin-sub") : [];
     }
     const adminEntries = getEffectiveAdminOrderEntries(date, opName);
     let list;
