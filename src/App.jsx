@@ -2790,6 +2790,10 @@ useEffect(() => {
     }
   };
 
+  const openDatePicker = (e) => {
+    try { e.currentTarget.showPicker?.(); } catch {}
+  };
+
   const ackChange = async (taskId,logIdx) => {
     const originalTask = tasks.find(t=>t.id===taskId);
     if (!originalTask) {
@@ -3305,6 +3309,73 @@ const report = {
       const lastLog = t.changeLog?.[t.changeLog.length - 1];
       return lastLog?.needsAck && !(lastLog?.ackedBy || []).includes(user?.name);
     });
+    const ackAllDailyChanges = async () => {
+      const ackName = user?.name;
+      if (!ackName) return;
+      const visibleIds = new Set(orderedDayTasks.map(t=>t.id).filter(Boolean));
+      const visibleClients = new Set(orderedDayTasks.map(t=>t.client).filter(Boolean));
+      let taskChanged = false;
+      const newTasks = tasks.map(t => {
+        const visible = visibleIds.has(t.id) || (
+          normalizeDate(t.date) === dailyDate &&
+          visibleClients.has(t.client) &&
+          (t.operators || []).some(op => normalizeName(op) === normalizeName(currentDailyOwner) || normalizeName(op) === normalizeName(user?.name))
+        );
+        if (!visible || !Array.isArray(t.changeLog)) return t;
+        let changed = false;
+        const changeLog = t.changeLog.map(entry => {
+          if (!entry?.needsAck || (entry.ackedBy || []).includes(ackName)) return entry;
+          changed = true;
+          return {...entry, ackedBy:[...(entry.ackedBy || []), ackName]};
+        });
+        if (changed) taskChanged = true;
+        return changed ? {...t, changeLog} : t;
+      });
+      let orderChanged = false;
+      const newOrders = adminOrders.map(o => {
+        const visible = visibleIds.has(o.id) || (
+          normalizeDate(o.date) === dailyDate &&
+          normalizeName(o.operator) === normalizeName(currentDailyOwner) &&
+          visibleClients.has(o.client)
+        );
+        if (!visible || !Array.isArray(o.changeLog)) return o;
+        let changed = false;
+        const changeLog = o.changeLog.map(entry => {
+          if (!entry?.needsAck || (entry.ackedBy || []).includes(ackName)) return entry;
+          changed = true;
+          return {...entry, ackedBy:[...(entry.ackedBy || []), ackName]};
+        });
+        if (changed) orderChanged = true;
+        return changed ? {...o, changeLog} : o;
+      });
+      if (!taskChanged && !orderChanged) {
+        showToast("אין שינויים לאישור");
+        haptic("medium");
+        return;
+      }
+      try {
+        if (taskChanged) {
+          const res = await sheetCall("saveTasks", {tasks:newTasks});
+          if (!res?.success) throw new Error(res?.error || "saveTasks failed");
+        }
+        if (orderChanged) {
+          const res = await sheetCall("saveAdminOrders", {adminOrders:newOrders});
+          if (!res?.success) throw new Error(res?.error || "saveAdminOrders failed");
+        }
+        if (taskChanged) setTasks(newTasks);
+        if (orderChanged) setAdminOrders(newOrders);
+        void sendNotificationToAdmins(
+          "✅ מפעיל אישר את כל העדכונים",
+          `${user?.name || "מפעיל"} אישר את כל העדכונים לתאריך ${fmtDate(dailyDate)}`
+        ).catch(e=>console.warn("Ack all notification failed", e));
+        showToast("קיבלתי הכל נשמר");
+        haptic("success");
+      } catch(e) {
+        console.warn("Ack all changes failed", e);
+        showToast("שמירת האישור נכשלה");
+        haptic("medium");
+      }
+    };
     const shareOrderWithSubOperators = () => {
       if (isSubOperator) return;
       const subs = assignedSubOperators || [];
@@ -3527,7 +3598,10 @@ const report = {
               {!isSubOperator&&assignedSubOperators.length>0&&<Press onClick={shareOrderWithSubOperators} style={{padding:"6px 10px",borderRadius:10,background:"#e8f5e9",color:C.green,fontSize:11,fontWeight:900,border:"1px solid #c8e6c9"}}>
                 שתף סדר
               </Press>}
-              <input type="date" value={dailyDate} onChange={e=>{setDailyDate(e.target.value);setOperatorEditOrder(false);}} style={{fontSize:12,fontWeight:700,color:C.blue,border:"none",background:"transparent",outline:"none",cursor:"pointer",maxWidth:112}}/>
+              <Press onClick={ackAllDailyChanges} disabled={!hasTaskChanges} style={{padding:"6px 10px",borderRadius:10,background:hasTaskChanges?"#e8f5e9":"#f0f4f8",color:hasTaskChanges?C.green:C.muted,fontSize:11,fontWeight:900,border:`1px solid ${hasTaskChanges?"#c8e6c9":C.border}`,opacity:hasTaskChanges?1:0.68}}>
+                קיבלתי הכל
+              </Press>
+              <input type="date" value={dailyDate} onClick={openDatePicker} onFocus={openDatePicker} onChange={e=>{setDailyDate(e.target.value);setOperatorEditOrder(false);}} style={{fontSize:12,fontWeight:700,color:C.blue,border:"none",background:"transparent",outline:"none",cursor:"pointer",maxWidth:112}}/>
             </div>
           </div>
           {canSubOperatorReport&&<div style={{marginBottom:12,position:"relative"}}>
@@ -4189,7 +4263,7 @@ const report = {
                     <h3 style={{fontSize:14,fontWeight:900,color:C.text,margin:"0 0 3px"}}>חדר בקרה יומי</h3>
                     <div style={{fontSize:11,color:C.muted,fontWeight:700}}>סדר נשמר ומסתנכרן למפעיל דרך Google Sheets</div>
                   </div>
-                  <input type="date" value={taskDate} onChange={e=>{setTaskDate(e.target.value);setAdminOrderRemovedClients([]); if(activeAdminOperator) loadAdminOrderDraft(e.target.value, activeAdminOperator);}} style={{...inp,maxWidth:132,fontSize:12,margin:0,color:C.blue,fontWeight:800}}/>
+                  <input type="date" value={taskDate} onClick={openDatePicker} onFocus={openDatePicker} onChange={e=>{setTaskDate(e.target.value);setAdminOrderRemovedClients([]); if(activeAdminOperator) loadAdminOrderDraft(e.target.value, activeAdminOperator);}} style={{...inp,maxWidth:132,fontSize:12,margin:0,color:C.blue,fontWeight:800,cursor:"pointer"}}/>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8,marginBottom:12}}>
                   {progressData.map(({op,total,done,pending})=>(
