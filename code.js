@@ -48,7 +48,7 @@
         if(status==="מושהה") return json({ valid:false, reason:"⛔ המנוי מושהה — צור קשר עם מנהל המערכת" });
         const expiry = row[5] ? (row[5] instanceof Date ? Utilities.formatDate(row[5],"Asia/Jerusalem","dd/MM/yyyy") : String(row[5])) : "";
         const branding = getClientBrandingBySheetId_(String(row[2] || ""));
-        return json({ valid:true, company:String(row[1]), sheetId:String(row[2]), plan:String(row[3]||"PRO"), status, expiry, adminEmail:String(row[6]||""), ...branding });
+        return json({ valid:true, company:String(branding.company || row[1] || ""), sheetId:String(row[2]), plan:String(row[3]||"PRO"), status, expiry, adminEmail:String(row[6]||""), ...branding });
       }
 
       if (action === "getLicenses") {
@@ -127,6 +127,7 @@
           }
         }
         if(!found) sheet.appendRow(data.row);
+        syncLicenseCompanyFromClient_(ss, data.row);
         return json({ success: true });
       }
 
@@ -1479,6 +1480,24 @@ function normalizeReportValue_(value) {
   return s;
 }
 
+function syncLicenseCompanyFromClient_(ss, row) {
+  try {
+    const company = String(row && row[1] || "").trim();
+    const sheetId = String(row && row[7] || "").trim();
+    if (!company || !sheetId) return;
+    const sheet = ss.getSheetByName("רישיונות");
+    if (!sheet) return;
+    const rows = sheet.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][2] || "").trim() === sheetId) {
+        sheet.getRange(i + 1, 2).setValue(company);
+      }
+    }
+  } catch(e) {
+    Logger.log("License company sync failed: " + e);
+  }
+}
+
 function normalizeAdminOrderDate_(value) {
   if (value instanceof Date) return Utilities.formatDate(value, "Asia/Jerusalem", "yyyy-MM-dd");
   return String(value || "").trim().slice(0, 10);
@@ -1901,6 +1920,7 @@ function getClientBrandingBySheetId_(sheetId) {
     const icon512Url = String(row[19] || icon192Url || logoUrl).trim();
 
     return {
+      company: String(row[1] || "").trim(),
       logoUrl,
       appName: String(row[16] || row[1] || "").trim(),
       shortName: String(row[17] || row[16] || row[1] || "").trim(),
