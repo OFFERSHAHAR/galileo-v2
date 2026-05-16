@@ -2359,6 +2359,12 @@ useEffect(() => {
   };
   const prepareAdminOrderEntries = (entries) =>
     (entries || []).filter(x=>x?.client).map((x, i)=>({client:x.client, note:x.note || "", orderIndex:i + 1}));
+  const adminOrderDedupeKey = (o) => [normalizeDate(o?.date), normalizeName(o?.operator), normalizeName(o?.client)].join("|");
+  const dedupeAdminOrders = (orders) => {
+    const map = new Map();
+    (orders || []).filter(o=>o?.date && o?.operator && o?.client).forEach(o => map.set(adminOrderDedupeKey(o), o));
+    return [...map.values()];
+  };
   const syncAdminOrderTasks = async (date, opName, entries) => {
     const clean = prepareAdminOrderEntries(entries);
     const existingByClient = new Map(adminOrders
@@ -2380,7 +2386,7 @@ useEffect(() => {
       };
     });
     const cleanedOrders = adminOrders.filter(o => !(normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName)));
-    const nextOrders = [...cleanedOrders, ...orderRows];
+    const nextOrders = dedupeAdminOrders([...cleanedOrders, ...orderRows]);
     const res = await sheetCall("saveAdminOrders", {adminOrders: nextOrders});
     if (!res?.success) return {success:false, clean, error:res?.error || "saveAdminOrders failed"};
     setAdminOrders(nextOrders);
@@ -3332,7 +3338,7 @@ const report = {
         return changed ? {...t, changeLog} : t;
       });
       let orderChanged = false;
-      const newOrders = adminOrders.map(o => {
+      const newOrders = dedupeAdminOrders(adminOrders.map(o => {
         const visible = visibleIds.has(o.id) || (
           normalizeDate(o.date) === dailyDate &&
           normalizeName(o.operator) === normalizeName(currentDailyOwner) &&
@@ -3347,7 +3353,7 @@ const report = {
         });
         if (changed) orderChanged = true;
         return changed ? {...o, changeLog} : o;
-      });
+      }));
       if (!taskChanged && !orderChanged) {
         showToast("אין שינויים לאישור");
         haptic("medium");

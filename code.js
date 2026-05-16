@@ -1479,6 +1479,36 @@ function normalizeReportValue_(value) {
   return s;
 }
 
+function normalizeAdminOrderDate_(value) {
+  if (value instanceof Date) return Utilities.formatDate(value, "Asia/Jerusalem", "yyyy-MM-dd");
+  return String(value || "").trim().slice(0, 10);
+}
+
+function adminOrderKey_(o) {
+  return [
+    normalizeAdminOrderDate_(o && o.date),
+    normalizeReportValue_(o && o.operator).toLowerCase(),
+    normalizeReportValue_(o && o.client).toLowerCase()
+  ].join("|");
+}
+
+function dedupeAdminOrders_(adminOrders) {
+  const map = {};
+  (adminOrders || []).filter(o => o && o.date && o.operator && o.client).forEach(o => {
+    map[adminOrderKey_(o)] = {
+      id: o.id || adminOrderKey_(o),
+      date: normalizeAdminOrderDate_(o.date),
+      operator: String(o.operator || ""),
+      client: String(o.client || ""),
+      orderIndex: Number(o.orderIndex || 0),
+      adminNote: String(o.adminNote || ""),
+      status: String(o.status || "pending"),
+      changeLog: Array.isArray(o.changeLog) ? o.changeLog : []
+    };
+  });
+  return Object.keys(map).map(k => map[k]);
+}
+
 function getUsers_(ss) {
   const sheet = ss.getSheetByName("Users");
   if (!sheet) return [];
@@ -1734,7 +1764,7 @@ function getAdminOrders_(ss) {
   }
 
   const legacySheet = ss.getSheetByName("משימות");
-  if (!legacySheet) return orders;
+  if (!legacySheet) return dedupeAdminOrders_(orders);
   const rows = legacySheet.getDataRange().getValues();
   let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
   if (hi === -1) hi = 2;
@@ -1768,7 +1798,7 @@ function getAdminOrders_(ss) {
     const key = [o.date, normalizeReportValue_(o.operator), normalizeReportValue_(o.client)].join("|");
     if (!existingKeys[key]) orders.push(o);
   });
-  return orders;
+  return dedupeAdminOrders_(orders);
 }
 
 function saveAdminOrders_(ss, adminOrders) {
@@ -1785,7 +1815,7 @@ function saveAdminOrders_(ss, adminOrders) {
   const dataStart = hi + 2;
   const last = sheet.getLastRow();
   if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
-  (adminOrders || []).filter(o => o && o.client).forEach(o => {
+  dedupeAdminOrders_(adminOrders).filter(o => o && o.client).forEach(o => {
     sheet.appendRow([
       o.id,
       o.date,
