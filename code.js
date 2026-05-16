@@ -192,6 +192,7 @@
         users: getUsers_(ss),
         clients: getClients_(ss),
         tasks: getTasks_(ss),
+        adminOrders: getAdminOrders_(ss),
         supplyDB: getSupplyDB_(ss),
         lastReadings: getLastReadings_(ss),
         unassignedClients: getUnassignedClients_(ss)
@@ -274,30 +275,7 @@
       }
 
       if (action === "getTasks") {
-        const sheet = ss.getSheetByName("משימות");
-        const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
-        if (hi === -1) hi = 2;
-        const tasks = rows.slice(hi + 1).filter(r => r[0]).map(r => {
-          // Normalize date — remove timestamp if present
-          let date = r[1];
-          if (date instanceof Date) {
-            date = Utilities.formatDate(date, "Asia/Jerusalem", "yyyy-MM-dd");
-          } else {
-            date = String(date).slice(0,10);
-          }
-          return {
-            id: r[0], date,
-            client: r[2],
-            operators: r[3] ? String(r[3]).split(",").map(x => x.trim()) : [],
-            status: r[4],
-            changeLog: r[5] ? JSON.parse(String(r[5])) : [],
-            orderIndex: Number(r[6] || 0),
-            adminNote: String(r[7] || ""),
-            createdByAdminOrder: String(r[8] || "").toLowerCase() === "true" || r[8] === true
-          };
-        });
-        return json({ tasks });
+        return json({ tasks: getTasks_(ss) });
       }
 
       if (action === "saveTasks") {
@@ -308,9 +286,18 @@
         const dataStart = hi + 2;
         const last = sheet.getLastRow();
         if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
-        data.tasks.forEach(t => {
+        (data.tasks || []).filter(t => !isAdminOrderTask_(t)).forEach(t => {
           sheet.appendRow([t.id, t.date, t.client, t.operators.join(","), t.status, JSON.stringify(t.changeLog), t.orderIndex || 0, t.adminNote || "", t.createdByAdminOrder === true]);
         });
+        return json({ success: true });
+      }
+
+      if (action === "getAdminOrders") {
+        return json({ adminOrders: getAdminOrders_(ss) });
+      }
+
+      if (action === "saveAdminOrders") {
+        saveAdminOrders_(ss, data.adminOrders || []);
         return json({ success: true });
       }
 
@@ -593,6 +580,17 @@
     if(!s) {
       s = clientSS.insertSheet("משימות");
       s.appendRow(["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"]);
+    } else {
+      ensureColumns(s, ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"]);
+    }
+
+    // ── חלוקת_עבודה ──
+    s = clientSS.getSheetByName("חלוקת_עבודה");
+    if(!s) {
+      s = clientSS.insertSheet("חלוקת_עבודה");
+      s.appendRow(["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"]);
+    } else {
+      ensureColumns(s, ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"]);
     }
     
     // ── ציוד_לקוחות ──
@@ -619,6 +617,13 @@
     }
     
     Logger.log("✅ Client sheet setup complete: " + clientSS.getName());
+  }
+
+  function ensureSeparatedWorkSheets(sheetId) {
+    const id = sheetId || "1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no";
+    const ss = SpreadsheetApp.openById(id);
+    setupClientSheet(ss);
+    Logger.log("✅ נוצרו/עודכנו גיליונות נפרדים: משימות, חלוקת_עבודה");
   }
 
   function ensureColumns(sheet, requiredHeaders) {
@@ -649,6 +654,7 @@
       if (sheetName === "Users" && row.some(c => c.toLowerCase() === "username")) return i;
       if (sheetName === "דוחות" && row.some(c => c.includes("תאריך"))) return i;
       if (sheetName === "משימות" && row.some(c => c.toUpperCase() === "ID")) return i;
+      if (sheetName === "חלוקת_עבודה" && row.some(c => c.toUpperCase() === "ID")) return i;
     }
 
     return 0;
@@ -1693,6 +1699,103 @@ function getTasks_(ss) {
       adminNote: String(r[7] || ""),
       createdByAdminOrder: String(r[8] || "").toLowerCase() === "true" || r[8] === true
     };
+  }).filter(t => !isAdminOrderTask_(t));
+}
+
+function isAdminOrderTask_(t) {
+  return !!(t && (t.createdByAdminOrder === true || Number(t.orderIndex || 0) > 0));
+}
+
+function getAdminOrders_(ss) {
+  const sheet = ss.getSheetByName("חלוקת_עבודה");
+  let orders = [];
+  if (sheet) {
+    const rows = sheet.getDataRange().getValues();
+    let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
+    if (hi === -1) hi = 0;
+    orders = rows.slice(hi + 1).filter(r => r[0]).map(r => {
+      let date = r[1];
+      if (date instanceof Date) {
+        date = Utilities.formatDate(date, "Asia/Jerusalem", "yyyy-MM-dd");
+      } else {
+        date = String(date || "").slice(0,10);
+      }
+      return {
+        id: r[0],
+        date,
+        operator: String(r[2] || ""),
+        client: String(r[3] || ""),
+        orderIndex: Number(r[4] || 0),
+        adminNote: String(r[5] || ""),
+        status: String(r[6] || "pending"),
+        changeLog: r[7] ? JSON.parse(String(r[7])) : []
+      };
+    });
+  }
+
+  const legacySheet = ss.getSheetByName("משימות");
+  if (!legacySheet) return orders;
+  const rows = legacySheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
+  if (hi === -1) hi = 2;
+  const existingKeys = {};
+  orders.forEach(o => {
+    existingKeys[[o.date, normalizeReportValue_(o.operator), normalizeReportValue_(o.client)].join("|")] = true;
+  });
+  const legacyOrders = rows.slice(hi + 1).filter(r => r[0]).map(r => {
+    let date = r[1];
+    if (date instanceof Date) {
+      date = Utilities.formatDate(date, "Asia/Jerusalem", "yyyy-MM-dd");
+    } else {
+      date = String(date || "").slice(0,10);
+    }
+    const orderIndex = Number(r[6] || 0);
+    const createdByAdminOrder = String(r[8] || "").toLowerCase() === "true" || r[8] === true;
+    if (!createdByAdminOrder && orderIndex <= 0) return null;
+    const operators = r[3] ? String(r[3]).split(",").map(x => x.trim()).filter(Boolean) : [];
+    return {
+      id: r[0],
+      date,
+      operator: operators[0] || "",
+      client: String(r[2] || ""),
+      orderIndex,
+      adminNote: String(r[7] || ""),
+      status: String(r[4] || "pending"),
+      changeLog: r[5] ? JSON.parse(String(r[5])) : []
+    };
+  }).filter(Boolean);
+  legacyOrders.forEach(o => {
+    const key = [o.date, normalizeReportValue_(o.operator), normalizeReportValue_(o.client)].join("|");
+    if (!existingKeys[key]) orders.push(o);
+  });
+  return orders;
+}
+
+function saveAdminOrders_(ss, adminOrders) {
+  let sheet = ss.getSheetByName("חלוקת_עבודה");
+  if (!sheet) {
+    sheet = ss.insertSheet("חלוקת_עבודה");
+    sheet.appendRow(["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"]);
+  } else {
+    ensureColumns(sheet, ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"]);
+  }
+  const rows = sheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
+  if (hi === -1) hi = 0;
+  const dataStart = hi + 2;
+  const last = sheet.getLastRow();
+  if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
+  (adminOrders || []).filter(o => o && o.client).forEach(o => {
+    sheet.appendRow([
+      o.id,
+      o.date,
+      o.operator || "",
+      o.client,
+      Number(o.orderIndex || 0),
+      o.adminNote || "",
+      o.status || "pending",
+      JSON.stringify(o.changeLog || [])
+    ]);
   });
 }
 

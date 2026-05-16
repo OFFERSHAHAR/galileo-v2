@@ -1391,6 +1391,7 @@ export default function App() {
   const [allUsers,setAllUsers] = useState(DEMO_USERS);
   const [clients,setClients] = useState(DEMO_CLIENTS);
   const [tasks,setTasks] = useState([]);
+  const [adminOrders,setAdminOrders] = useState([]);
   const [supplyDB,setSupplyDB] = useState({});
   const [lastReadings,setLastReadings] = useState({});
 const [reports,setReports] = useState([]);
@@ -1749,13 +1750,11 @@ const [screen,setScreen] = useState(() => {
   };
 
   const dayClientProfiles = (date=dailyDate, opName=dailyOwnerName(date) || user?.name) => {
-    const existing = myTasks(date);
-    const fromDays = myDayClients(date, opName).filter(c=>!existing.find(t=>t.client===c.name));
-    const dayProfiles = fromDays.map(c=>({id:`day-${c.name}`,client:c.name,operators:[opName],date,status:"pending",changeLog:[],_dayProfile:true}));
-    return [...existing, ...dayProfiles];
+    return myDayClients(date, opName).map(c=>({id:`day-${c.name}`,client:c.name,operators:[opName],date,status:"pending",changeLog:[],_dayProfile:true}));
   };
 
   const myTasks = (date=dailyDate) => tasks.filter(t=>{
+    if (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0) return false;
     const tDate = normalizeDate(t.date);
     const tDate2 = tDate.includes("T") ? tDate.split("T")[0] : tDate;
     const dateMatch = tDate2 === date;
@@ -2015,8 +2014,9 @@ const [screen,setScreen] = useState(() => {
     if(!user) return;
     setGreeting(getDailyGreeting(user.username || ""));
     const refresh = async() => {
-      const [tR, uR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers")]);
+      const [tR, uR, oR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers"), sheetCall("getAdminOrders")]);
       if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
+      if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
       if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
       try {
         const cached = localStorage.getItem("galileo_cache");
@@ -2024,6 +2024,7 @@ const [screen,setScreen] = useState(() => {
         localStorage.setItem("galileo_cache", JSON.stringify({
           ...c,
           tasks:Array.isArray(tR?.tasks) ? tR.tasks : c.tasks,
+          adminOrders:Array.isArray(oR?.adminOrders) ? oR.adminOrders : c.adminOrders,
           users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
           cachedAt:Date.now()
         }));
@@ -2175,6 +2176,11 @@ const [screen,setScreen] = useState(() => {
     const exact = operatorUsers.find(op => isSameSubOperator(getAssignedSubOperator(date, op.name), subUser))?.name;
     if (exact) return exact;
     const subValues = subOperatorValues(subUser);
+    const orderMatch = adminOrders.find(o =>
+      normalizeDate(o.date) === date &&
+      subValues.includes(normalizeName(o.subOperator || ""))
+    );
+    if (orderMatch?.operator) return resolveOperatorName(orderMatch.operator);
     const taskMatch = tasks.find(t =>
       normalizeDate(t.date) === date &&
       (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0) &&
@@ -2267,9 +2273,6 @@ const [screen,setScreen] = useState(() => {
       const dayMatch = days.some(d=>d === dayName);
       if (opMatch && dayMatch) names.add(c.name);
     });
-    tasks.forEach(t => {
-      if (normalizeDate(t.date) === date && (t.operators || []).some(op => normalizeName(op) === normalizeName(opName))) names.add(t.client);
-    });
     return [...names].filter(Boolean).map((clientName, index) => ({client: clientName, note: "", orderIndex: index + 1}));
   };
   const getAdminOrderEntries = (date, opName) => {
@@ -2281,14 +2284,21 @@ const [screen,setScreen] = useState(() => {
   const getLocalAdminOrderEntries = (date, opName) => readLocalArray(adminOrderKey(date, opName))
       .filter(x=>x?.client)
       .map((x, i)=>({client:x.client, note:x.note || "", orderIndex:Number(x.orderIndex || i + 1)}));
-  const getSheetAdminOrderEntries = (date, opName) => tasks
-    .filter(t =>
-      normalizeDate(t.date) === date &&
-      (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)) &&
-      (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0)
-    )
-    .map((t, i)=>({client:t.client, note:t.adminNote || "", orderIndex:Number(t.orderIndex || i + 1)}))
-    .sort((a,b)=>a.orderIndex-b.orderIndex);
+  const getSheetAdminOrderEntries = (date, opName) => {
+    const fromOrders = adminOrders
+      .filter(o => normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName))
+      .map((o, i)=>({id:o.id, client:o.client, note:o.adminNote || "", orderIndex:Number(o.orderIndex || i + 1), status:o.status || "pending", changeLog:o.changeLog || []}))
+      .sort((a,b)=>a.orderIndex-b.orderIndex);
+    if (fromOrders.length) return fromOrders;
+    return tasks
+      .filter(t =>
+        normalizeDate(t.date) === date &&
+        (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)) &&
+        (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0)
+      )
+      .map((t, i)=>({id:t.id, client:t.client, note:t.adminNote || "", orderIndex:Number(t.orderIndex || i + 1), status:t.status || "pending", changeLog:t.changeLog || []}))
+      .sort((a,b)=>a.orderIndex-b.orderIndex);
+  };
   const getEffectiveAdminOrderEntries = (date, opName) => {
     const local = getLocalAdminOrderEntries(date, opName);
     if (local.length) return local.sort((a,b)=>a.orderIndex-b.orderIndex);
@@ -2302,36 +2312,30 @@ const [screen,setScreen] = useState(() => {
   };
   const syncAdminOrderTasks = async (date, opName, entries) => {
     const clean = saveAdminOrderEntries(date, opName, entries);
-    const cleanNames = new Set(clean.map(entry => normalizeName(entry.client)));
-    const existingByClient = new Map(tasks
-      .filter(t => normalizeDate(t.date) === date && (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)))
-      .map(t => [normalizeName(t.client), t])
+    const existingByClient = new Map(adminOrders
+      .filter(o => normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName))
+      .map(o => [normalizeName(o.client), o])
     );
-    const orderTasks = clean.map((entry, i) => {
+    const orderRows = clean.map((entry, i) => {
       const existing = existingByClient.get(normalizeName(entry.client));
       return {
         ...(existing || {}),
         id: existing?.id || `admin-order-${date}-${normalizeName(opName)}-${normalizeName(entry.client)}`,
         date,
+        operator: opName,
         client: entry.client,
-        operators: [opName],
         status: existing?.status || "pending",
         changeLog: existing?.changeLog || [{at:nowStr(),note:"סדר יום עודכן",by:user?.name,needsAck:true,ackedBy:[]}],
         orderIndex: i + 1,
-        adminNote: entry.note || "",
-        createdByAdminOrder: true
+        adminNote: entry.note || ""
       };
     });
-    const cleanedTasks = tasks.filter(t => !(
-      normalizeDate(t.date) === date &&
-      (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)) &&
-      (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0 || cleanNames.has(normalizeName(t.client)))
-    ));
-    const nextTasks = [...cleanedTasks, ...orderTasks];
-    setTasks(nextTasks);
+    const cleanedOrders = adminOrders.filter(o => !(normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName)));
+    const nextOrders = [...cleanedOrders, ...orderRows];
+    setAdminOrders(nextOrders);
     if (sheetId) {
-      const res = await sheetCall("saveTasks", {tasks: nextTasks});
-      if (!res?.success) return {success:false, clean, error:res?.error || "saveTasks failed"};
+      const res = await sheetCall("saveAdminOrders", {adminOrders: nextOrders});
+      if (!res?.success) return {success:false, clean, error:res?.error || "saveAdminOrders failed"};
     }
     return {success:true, clean};
   };
@@ -2347,11 +2351,8 @@ const [screen,setScreen] = useState(() => {
   const entriesToDailyTasks = (date, opName, entries, idPrefix="order") => (entries || [])
     .filter(entry=>entry?.client)
     .map((entry, i) => {
-      const existing = taskForClientOperator(date, entry.client, opName);
       const orderIndex = Number(entry.orderIndex || i + 1);
-      return existing
-        ? {...existing, orderIndex, adminNote:entry.note || existing.adminNote || ""}
-        : {id:`${idPrefix}-${date}-${entry.client}`, client:entry.client, operators:[opName], date, status:"pending", changeLog:[], orderIndex, adminNote:entry.note || "", _dayProfile:true};
+      return {id:entry.id || `${idPrefix}-${date}-${entry.client}`, client:entry.client, operators:[opName], date, status:entry.status || "pending", changeLog:entry.changeLog || [], orderIndex, adminNote:entry.note || entry.adminNote || "", createdByAdminOrder:true, _adminOrder:true};
     })
     .sort((a,b)=>Number(a.orderIndex||999)-Number(b.orderIndex||999));
   const moveAdminOrderItem = (from, to) => {
@@ -2515,7 +2516,7 @@ const [screen,setScreen] = useState(() => {
 
   useEffect(()=>{
     applyTenantBranding(getCompany());
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); } } catch {}
     const checkLicense = async () => {
       const lic = getLicense(); if(!lic.key) return;
       try { const res = await mgmtCall("validateLicense",{key:lic.key}); if(res?.valid){ const company = companyFromLicenseResponse(res); saveLicense({...lic, plan:res.plan, status:res.status, expiry:res.expiry, logoUrl:res.logoUrl||"", appName:company.appName, shortName:company.shortName, icon192Url:company.icon192Url, icon512Url:company.icon512Url, appleIconUrl:company.appleIconUrl, themeColor:company.themeColor, backgroundColor:company.backgroundColor}); saveCompany(company); setClientPlan({plan:res.plan, status:res.status}); if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId); } else { localStorage.removeItem("galileo_user"); localStorage.removeItem("galileo_license"); setUser(null); setShowSetup(true); } } catch {}
@@ -2545,22 +2546,23 @@ const [screen,setScreen] = useState(() => {
   },[user?.username, user?.role]);
 
   const connectSheets = async (bg=false) => {
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); if(!bg) return; } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
       let boot = await sheetCall("getBootstrapData");
       let u=boot?.users?.length?boot.users:null;
       let c=boot?.clients?.length?boot.clients:null;
       let t=Array.isArray(boot?.tasks)?boot.tasks:null;
+      let ord=Array.isArray(boot?.adminOrders)?boot.adminOrders:null;
       let s=boot?.supplyDB?boot.supplyDB:null;
       let lr=boot?.lastReadings?boot.lastReadings:null;
       let uc=boot?.unassignedClients?.length?boot.unassignedClients:null;
-      if(!u && !c && !t && !s && !lr){
-        const [uR,cR,tR,sR,rR,ucR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients")]);
-        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null;
+      if(!u && !c && !t && !ord && !s && !lr){
+        const [uR,cR,tR,oR,sR,rR,ucR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients")]);
+        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null;
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
-      if(c)setClients(c); if(t)setTasks(t); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc);
-      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],supplyDB:s||{},lastReadings:lr||{},cachedAt:Date.now()}));
+      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc);
+      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
     } catch {}
@@ -2737,6 +2739,19 @@ const [screen,setScreen] = useState(() => {
 
   const ackChange = async (taskId,logIdx) => {
     const originalTask = tasks.find(t=>t.id===taskId);
+    if (!originalTask) {
+      const originalOrder = adminOrders.find(o=>o.id===taskId);
+      if (!originalOrder) return;
+      const originalOrderLog = originalOrder?.changeLog?.[logIdx];
+      const newOrders=adminOrders.map(o=>{ if(o.id!==taskId)return o; const newLog=(o.changeLog||[]).map((e,i)=>{ if(i!==logIdx)return e; const ackedBy=[...(e.ackedBy||[])]; if(!ackedBy.includes(user?.name))ackedBy.push(user?.name); return{...e,ackedBy}; }); return{...o,changeLog:newLog}; });
+      setAdminOrders(newOrders); if(sheetId) await sheetCall("saveAdminOrders",{adminOrders:newOrders});
+      await sendNotificationToAdmins(
+        "✅ מפעיל אישר סדר יום",
+        `${user?.name || "מפעיל"} אישר: ${originalOrder?.client?.split(" - ")[0] || "בריכה"}${originalOrderLog?.note ? ` — ${originalOrderLog.note}` : ""}`
+      );
+      showToast("✓ קיבלת אישור נשלח");
+      return;
+    }
     const originalLog = originalTask?.changeLog?.[logIdx];
     const newTasks=tasks.map(t=>{ if(t.id!==taskId)return t; const newLog=t.changeLog.map((e,i)=>{ if(i!==logIdx)return e; const ackedBy=[...(e.ackedBy||[])]; if(!ackedBy.includes(user?.name))ackedBy.push(user?.name); return{...e,ackedBy}; }); return{...t,changeLog:newLog}; });
     setTasks(newTasks); if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
@@ -3670,9 +3685,9 @@ const report = {
           ))}
         </div>
         {navTab===1&&(
-          <BottomSheet title="📋 משימות היום" onClose={()=>setNavTab(0)}>
+          <BottomSheet title="📋 משימות ידניות היום" onClose={()=>setNavTab(0)}>
             {(()=>{
-              const todayTasks = orderedDayTasks;
+              const todayTasks = myTasks(dailyDate);
               if(todayTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות להיום</div></div>;
               return todayTasks.map(t=>(
                 <div key={t.id} style={{...card({marginBottom:10})}}>
@@ -3692,7 +3707,7 @@ const report = {
           <BottomSheet title="📅 משימות עתידיות" onClose={()=>setNavTab(0)}>
             {(()=>{
               const today = todayStr();
-              const futureTasks = tasks.filter(t=>{ const d = normalizeDate(t.date); const ownerName = isSubOperator ? dailyOwnerName(d) : user?.name; return d > today && (t.operators||[]).some(op=>normalizeName(op)===normalizeName(ownerName)); }).sort((a,b)=>normalizeDate(a.date).localeCompare(normalizeDate(b.date)));
+              const futureTasks = tasks.filter(t=>{ if (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0) return false; const d = normalizeDate(t.date); const ownerName = isSubOperator ? dailyOwnerName(d) : user?.name; return d > today && (t.operators||[]).some(op=>normalizeName(op)===normalizeName(ownerName)); }).sort((a,b)=>normalizeDate(a.date).localeCompare(normalizeDate(b.date)));
               if(futureTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות עתידיות</div></div>;
               const grouped = {};
               futureTasks.forEach(t=>{ const d = normalizeDate(t.date); if(!grouped[d]) grouped[d]=[]; grouped[d].push(t); });
@@ -3951,7 +3966,7 @@ const report = {
     const allOrderClients = [...clients, ...unassignedClients.filter(uc=>!clients.find(c=>c.name===uc.name))];
     const filteredOrderClients = filterClientOptions(allOrderClients, adminOrderClientSearch);
     const taskClientOptions = clientsForOperatorsAndDate(clients, taskDate, taskOps);
-    const dayTasks = tasks.filter(t=>t.date===taskDate);
+    const dayTasks = tasks.filter(t=>normalizeDate(t.date)===taskDate && !t.createdByAdminOrder && Number(t.orderIndex || 0) <= 0);
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
     const criticalAdminIssue = criticalAdminIssueIndex >= 0 ? operatorIssues[criticalAdminIssueIndex] : null;
     const adminShellBg = "linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)";
