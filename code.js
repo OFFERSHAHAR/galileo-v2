@@ -159,7 +159,7 @@
           sheet = ss.getSheetByName("לקוחות");
           if(!sheet) return json({ clients:[] });
           const rows = sheet.getDataRange().getValues();
-          let hi = rows.findIndex(r => String(r[0]).includes("שם_לקוח") || String(r[0]).includes("שם לקוח"));
+          let hi = rows.findIndex(r => isClientNameHeader_(r[0]));
           if(hi===-1) hi=0;
           const clients = rows.slice(hi+1).filter(r=>r[0]).map(r=>({
             name:String(r[0]), phone:String(r[1]), address:String(r[2])
@@ -259,7 +259,7 @@
       if (action === "getClients") {
         const sheet = ss.getSheetByName("לקוחות");
         const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => String(r[0]).includes("שם_לקוח") || String(r[0]).includes("שם לקוח"));
+        let hi = rows.findIndex(r => isClientNameHeader_(r[0]));
         if (hi === -1) hi = 2;
         const headers = (rows[hi] || []).map(h => String(h || "").trim());
         const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
@@ -645,7 +645,7 @@
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i].map(c => String(c || "").trim());
       if (requiredHeaders.some(h => row.includes(h))) return i;
-      if (sheetName === "לקוחות" && row.some(c => c.includes("שם_לקוח") || c.includes("שם לקוח"))) return i;
+      if (sheetName === "לקוחות" && row.some(c => isClientNameHeader_(c))) return i;
       if (sheetName === "Users" && row.some(c => c.toLowerCase() === "username")) return i;
       if (sheetName === "דוחות" && row.some(c => c.includes("תאריך"))) return i;
       if (sheetName === "משימות" && row.some(c => c.toUpperCase() === "ID")) return i;
@@ -1381,6 +1381,11 @@
     return 0;
   }
 
+  function isClientNameHeader_(value) {
+    const h = String(value || "").trim();
+    return h === "שם" || h === "שם_לקוח" || h === "שם לקוח" || h === "לקוח" || h === "שם הלקוח";
+  }
+
   function findDuplicateReportRow_(sheet, report) {
     if (!sheet || sheet.getLastRow() < 2) return 0;
 
@@ -1529,7 +1534,7 @@ function getClients_(ss) {
   const sheet = ss.getSheetByName("לקוחות");
   if (!sheet) return [];
   const rows = sheet.getDataRange().getValues();
-  let hi = rows.findIndex(r => String(r[0]).includes("שם_לקוח") || String(r[0]).includes("שם לקוח"));
+  let hi = rows.findIndex(r => isClientNameHeader_(r[0]));
   if (hi === -1) hi = 2;
   const headers = (rows[hi] || []).map(h => String(h || "").trim());
   const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
@@ -1540,7 +1545,7 @@ function getClients_(ss) {
 
 function saveClients_(sheet, clients) {
   if (!sheet) return { success:false, error:"clients sheet not found" };
-  const headerRowIndex = findHeaderRowIndex_(sheet, ["שם_לקוח", "שם לקוח"]);
+  const headerRowIndex = findHeaderRowIndex_(sheet, ["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח"]);
   const headerRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 3;
   ensureColumns(sheet, [
     "קוד_שער",
@@ -1558,8 +1563,8 @@ function saveClients_(sheet, clients) {
   const headerMap = {};
   headers.forEach((header, idx) => { if (header) headerMap[header] = idx; });
   const aliases = {
-    name: ["שם_לקוח", "שם לקוח"],
-    phone: ["טלפון"],
+    name: ["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח"],
+    phone: ["טלפון", "נייד", "מספר טלפון"],
     address: ["כתובת"],
     qrUrl: ["qr_url", "QR", "קישור_QR"],
     gateCode: ["קוד_שער", "קוד שער"],
@@ -1634,9 +1639,11 @@ function saveClients_(sheet, clients) {
   const numberOrZero = (value) => Number(value ?? 0) || 0;
   let updated = 0;
   let appended = 0;
+  let matched = 0;
   clients.filter(c => c && String(c.name || "").trim()).forEach(c => {
     const record = existing[normalizeReportValue_(c.originalName || c.name)] || existing[normalizeReportValue_(c.name)];
     if (record) {
+      matched++;
       managedKeys.forEach(key => {
         const idx = colOf(key);
         if (idx < 0) return;
@@ -1656,7 +1663,11 @@ function saveClients_(sheet, clients) {
     sheet.appendRow(row);
     appended++;
   });
-  return { success:true, count:clients.length, updated, appended };
+  const requestedExisting = clients.filter(c => c && String(c.originalName || c.name || "").trim()).length;
+  if (clients.length && requestedExisting && matched === 0 && appended === 0) {
+    return { success:false, error:"no matching client rows found", count:clients.length, updated, appended, matched };
+  }
+  return { success:true, count:clients.length, updated, appended, matched };
 }
 
 function getTasks_(ss) {
@@ -1734,7 +1745,7 @@ function getUnassignedClients_(ss) {
     sheet = ss.getSheetByName("לקוחות");
     if(!sheet) return [];
     const rows = sheet.getDataRange().getValues();
-    let hi = rows.findIndex(r => String(r[0]).includes("שם_לקוח") || String(r[0]).includes("שם לקוח"));
+    let hi = rows.findIndex(r => isClientNameHeader_(r[0]));
     if(hi===-1) hi=0;
     return rows.slice(hi+1).filter(r=>r[0]).map(r=>({
       name:String(r[0]), phone:String(r[1]), address:String(r[2])
@@ -1822,7 +1833,7 @@ function json(obj) {
     // ── טאב לקוחות: הוסף עמודות חסרות ──
     const clientSheet = ss.getSheetByName("לקוחות");
     if(clientSheet) {
-      const headerRowIndex = findHeaderRowIndex_(clientSheet, ["שם_לקוח", "שם לקוח"]);
+      const headerRowIndex = findHeaderRowIndex_(clientSheet, ["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח"]);
       const headerRow = headerRowIndex + 1;
       const headers = clientSheet.getRange(headerRow,1,1,clientSheet.getLastColumn()).getValues()[0];
       const needed = [
