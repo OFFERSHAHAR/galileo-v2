@@ -38,6 +38,28 @@ const getDailyGreeting = (username) => {
   return list[Math.floor(Math.random() * list.length)];
 };
 
+const PUSH_ENABLED_USERS_KEY = "galileo_push_enabled_users";
+const normalizePushUsername = (username) => String(username || "").trim().toLowerCase();
+function getRememberedPushUsers() {
+  try {
+    const value = JSON.parse(localStorage.getItem(PUSH_ENABLED_USERS_KEY) || "[]");
+    return Array.isArray(value) ? value.map(normalizePushUsername).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+function isPushRemembered(username) {
+  const key = normalizePushUsername(username);
+  return !!key && getRememberedPushUsers().includes(key);
+}
+function rememberPushEnabled(username) {
+  const key = normalizePushUsername(username);
+  if (!key) return;
+  const users = new Set(getRememberedPushUsers());
+  users.add(key);
+  localStorage.setItem(PUSH_ENABLED_USERS_KEY, JSON.stringify([...users]));
+}
+
 const CITY = "ישראל";
 const wazeUrl = (a) => `https://waze.com/ul?q=${encodeURIComponent(a+", "+CITY)}&navigate=yes`;
 const todayStr = () => new Date().toISOString().slice(0,10);
@@ -1908,6 +1930,7 @@ const [screen,setScreen] = useState(() => {
     });
 
     if (ok === true) {
+      rememberPushEnabled(externalId);
       setAction("push", "success", 1800);
       setPushCardOpen(false);
       showToast("✅ התראות הופעלו למשתמש");
@@ -1923,8 +1946,13 @@ const [screen,setScreen] = useState(() => {
     }
   };
 
-  const resetPushForCurrentUser = async () => {
-    if (!user?.username || isActionLoading("pushReset")) return;
+  const resetPushForUsername = async (username) => {
+    const externalId = String(username || "").trim();
+    if (!externalId) {
+      showToast("⚠️ הזן שם משתמש לפני איפוס התראות");
+      return;
+    }
+    if (isActionLoading("pushReset")) return;
     setAction("pushReset", "loading");
 
     const ok = await runOneSignal(async (OneSignal) => {
@@ -1935,7 +1963,7 @@ const [screen,setScreen] = useState(() => {
         if (OneSignal.Notifications?.permission !== true && OneSignal.Notifications?.requestPermission) {
           await OneSignal.Notifications.requestPermission();
         }
-        await OneSignal.login(user.username);
+        await OneSignal.login(externalId);
         return true;
       } catch (e) {
         console.warn("Push reset error:", e);
@@ -1944,6 +1972,7 @@ const [screen,setScreen] = useState(() => {
     });
 
     if (ok) {
+      rememberPushEnabled(externalId);
       setAction("pushReset", "success", 1800);
       setAction("push", "success", 1800);
       setPushCardOpen(false);
@@ -2026,6 +2055,8 @@ const [screen,setScreen] = useState(() => {
       return [];
     }
   };
+
+  const resetPushForCurrentUser = async () => resetPushForUsername(user?.username);
 
   const enablePushForCurrentUser = async () => enablePushForUsername(user?.username);
   const writeLocalArray = (key, value) => {
@@ -3125,7 +3156,10 @@ const report = {
     </>
   );
 
-  if(screen==="login") return (
+  if(screen==="login") {
+    const loginPushEnabled = isPushRemembered(loginUser);
+    const loginPushIdleLabel = loginPushEnabled ? "✅ מופעל" : "🔔 הפעל התראות";
+    return (
     <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#1565c0;box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}#onesignal-bell-container{display:none!important}`}</style>
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
@@ -3149,8 +3183,11 @@ const report = {
           <Press onClick={handleLogin} style={{padding:16,borderRadius:18,background:loginLoading?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:loginLoading?"none":"0 16px 36px rgba(79,70,229,0.24)"}}>
             {actionLabel("login",{idle:"כניסה →",loading:"⏳ מתחבר...",success:"✅ התחברת",error:"⚠️ נסה שוב"})}
           </Press>
+          <Press onClick={()=>resetPushForUsername(loginUser)} style={{marginTop:10,padding:13,borderRadius:18,background:"rgba(255,255,255,0.62)",border:"1px solid rgba(148,163,184,0.28)",color:C.muted,fontWeight:900,fontSize:14,textAlign:"center"}}>
+            {actionLabel("pushReset",{idle:"↻ אפס התראות",loading:"⏳ מאפס התראות...",success:"✅ אופס",error:"⚠️ נסה שוב"})}
+          </Press>
           <Press onClick={()=>enablePushForUsername(loginUser)} style={{marginTop:10,padding:13,borderRadius:18,background:"rgba(30,64,175,0.12)",border:"1px solid rgba(37,99,235,0.18)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center"}}>
-            {actionLabel("push",{idle:"🔔 הפעל התראות",loading:"⏳ מפעיל התראות...",success:"✅ התראות הופעלו",error:"⚠️ נסה שוב"})}
+            {actionLabel("push",{idle:loginPushIdleLabel,loading:"⏳ מפעיל התראות...",success:"✅ מופעל",error:"⚠️ נסה שוב"})}
           </Press>
         </div>
         <InstallAppCard/>
@@ -3159,6 +3196,7 @@ const report = {
       <Toast msg={toast.msg} visible={toast.visible}/>
     </div>
   );
+  }
 
   if(screen==="daily") {
     const isSubOperator = isSubOperatorRole(user?.role);
