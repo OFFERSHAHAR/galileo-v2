@@ -2387,7 +2387,7 @@ useEffect(() => {
         operator: opName,
         client: entry.client,
         status: existing?.status || "pending",
-        changeLog: existing?.changeLog || [{at:nowStr(),note:"סדר יום עודכן",by:user?.name,needsAck:true,ackedBy:[]}],
+        changeLog: existing?.changeLog || [{at:nowStr(),note:"סדר יום עודכן",by:user?.name,needsAck:false,ackedBy:[]}],
         orderIndex: i + 1,
         adminNote: entry.note || ""
       };
@@ -3320,75 +3320,8 @@ const report = {
     const dayTasks = (!isSubOperator && operatorEditOrder) ? operatorOrderDraft : activeDayTasks;
     const hasTaskChanges = orderedDayTasks.some(t => {
       const lastLog = t.changeLog?.[t.changeLog.length - 1];
-      return lastLog?.needsAck && !(lastLog?.ackedBy || []).includes(user?.name);
+      return !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy || []).includes(user?.name);
     });
-    const ackAllDailyChanges = async () => {
-      const ackName = user?.name;
-      if (!ackName) return;
-      const visibleIds = new Set(orderedDayTasks.map(t=>t.id).filter(Boolean));
-      const visibleClients = new Set(orderedDayTasks.map(t=>t.client).filter(Boolean));
-      let taskChanged = false;
-      const newTasks = tasks.map(t => {
-        const visible = visibleIds.has(t.id) || (
-          normalizeDate(t.date) === dailyDate &&
-          visibleClients.has(t.client) &&
-          (t.operators || []).some(op => normalizeName(op) === normalizeName(currentDailyOwner) || normalizeName(op) === normalizeName(user?.name))
-        );
-        if (!visible || !Array.isArray(t.changeLog)) return t;
-        let changed = false;
-        const changeLog = t.changeLog.map(entry => {
-          if (!entry?.needsAck || (entry.ackedBy || []).includes(ackName)) return entry;
-          changed = true;
-          return {...entry, ackedBy:[...(entry.ackedBy || []), ackName]};
-        });
-        if (changed) taskChanged = true;
-        return changed ? {...t, changeLog} : t;
-      });
-      let orderChanged = false;
-      const newOrders = dedupeAdminOrders(adminOrders.map(o => {
-        const visible = visibleIds.has(o.id) || (
-          normalizeDate(o.date) === dailyDate &&
-          normalizeName(o.operator) === normalizeName(currentDailyOwner) &&
-          visibleClients.has(o.client)
-        );
-        if (!visible || !Array.isArray(o.changeLog)) return o;
-        let changed = false;
-        const changeLog = o.changeLog.map(entry => {
-          if (!entry?.needsAck || (entry.ackedBy || []).includes(ackName)) return entry;
-          changed = true;
-          return {...entry, ackedBy:[...(entry.ackedBy || []), ackName]};
-        });
-        if (changed) orderChanged = true;
-        return changed ? {...o, changeLog} : o;
-      }));
-      if (!taskChanged && !orderChanged) {
-        showToast("אין שינויים לאישור");
-        haptic("medium");
-        return;
-      }
-      try {
-        if (taskChanged) {
-          const res = await sheetCall("saveTasks", {tasks:newTasks});
-          if (!res?.success) throw new Error(res?.error || "saveTasks failed");
-        }
-        if (orderChanged) {
-          const res = await sheetCall("saveAdminOrders", {adminOrders:newOrders});
-          if (!res?.success) throw new Error(res?.error || "saveAdminOrders failed");
-        }
-        if (taskChanged) setTasks(newTasks);
-        if (orderChanged) setAdminOrders(newOrders);
-        void sendNotificationToAdmins(
-          "✅ מפעיל אישר את כל העדכונים",
-          `${user?.name || "מפעיל"} אישר את כל העדכונים לתאריך ${fmtDate(dailyDate)}`
-        ).catch(e=>console.warn("Ack all notification failed", e));
-        showToast("קיבלתי הכל נשמר");
-        haptic("success");
-      } catch(e) {
-        console.warn("Ack all changes failed", e);
-        showToast("שמירת האישור נכשלה");
-        haptic("medium");
-      }
-    };
     const shareOrderWithSubOperators = () => {
       if (isSubOperator) return;
       const subs = assignedSubOperators || [];
@@ -3584,7 +3517,7 @@ const report = {
               <Press onClick={()=>setDismissed(true)} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
             </div>
           )}
-          {canSubOperatorReport&&<Press onClick={openManualReport} disabled={isActionLoading("openManualReport")} style={{...card({marginBottom:16,display:"flex",alignItems:"center",gap:12,border:`2px dashed ${C.lightBlue}`,background:isActionLoading("openManualReport")?"#e3f2fd":"#f5f9ff",opacity:isActionLoading("openManualReport")?0.75:1}),padding:"14px 18px"}}>
+          {!isSubOperator&&<Press onClick={openManualReport} disabled={isActionLoading("openManualReport")} style={{...card({marginBottom:16,display:"flex",alignItems:"center",gap:12,border:`2px dashed ${C.lightBlue}`,background:isActionLoading("openManualReport")?"#e3f2fd":"#f5f9ff",opacity:isActionLoading("openManualReport")?0.75:1}),padding:"14px 18px"}}>
             <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📝</div>
             <div><div style={{fontWeight:800,fontSize:15,color:C.blue}}>{isActionLoading("openManualReport")?"⏳ פותח דוח...":"+ פתח דוח חדש"}</div><div style={{fontSize:12,color:C.muted}}>דוח ידני — לקוח מכל הרשימה</div></div>
           </Press>}
@@ -3611,9 +3544,6 @@ const report = {
               {!isSubOperator&&assignedSubOperators.length>0&&<Press onClick={shareOrderWithSubOperators} style={{padding:"6px 10px",borderRadius:10,background:"#e8f5e9",color:C.green,fontSize:11,fontWeight:900,border:"1px solid #c8e6c9"}}>
                 שתף סדר
               </Press>}
-              <Press onClick={ackAllDailyChanges} disabled={!hasTaskChanges} style={{padding:"6px 10px",borderRadius:10,background:hasTaskChanges?"#e8f5e9":"#f0f4f8",color:hasTaskChanges?C.green:C.muted,fontSize:11,fontWeight:900,border:`1px solid ${hasTaskChanges?"#c8e6c9":C.border}`,opacity:hasTaskChanges?1:0.68}}>
-                קיבלתי הכל
-              </Press>
               <input type="date" value={dailyDate} onClick={openDatePicker} onFocus={openDatePicker} onChange={e=>{setDailyDate(e.target.value);setOperatorEditOrder(false);}} style={{fontSize:12,fontWeight:700,color:C.blue,border:"none",background:"transparent",outline:"none",cursor:"pointer",maxWidth:112}}/>
             </div>
           </div>
@@ -3638,7 +3568,7 @@ const report = {
             const isDoneOpen = !!openDoneTasks[doneKey];
             const supply = clientSupply(t.client);
             const lastLog = t.changeLog?.[t.changeLog.length-1];
-            const needsAck = lastLog?.needsAck && !(lastLog?.ackedBy||[]).includes(user?.name);
+            const needsAck = !isSubOperator && !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy||[]).includes(user?.name);
             const logIdx = t.changeLog?t.changeLog.length-1:-1;
             if(isDone && !isDoneOpen) {
               return (
@@ -3729,13 +3659,13 @@ const report = {
                     📝 {t.adminNote}
                   </div>
                 )}
-                {(()=>{const lr=lastReadings[t.client];if(!lr)return (
+                {(()=>{const lr=lastReadings[t.client];if(!lr)return !isSubOperator ? (
                   <div style={{marginBottom:10}}>
                     <Press onClick={()=>{setInternalNoteEdit({client:t.client,note:""});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11}}>
                       ✏️ הוסף הערה פנימית
                     </Press>
                   </div>
-                );
+                ) : null;
                   return (
                     <div style={{marginBottom:10}}>
                       <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
@@ -3754,9 +3684,9 @@ const report = {
                           {lr.customStatusText}
                         </div>
                       )}
-                      <Press onClick={()=>{setInternalNoteEdit({client:t.client,note:String(lr.customStatusText||"")});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11,marginBottom:6}}>
+                      {!isSubOperator&&<Press onClick={()=>{setInternalNoteEdit({client:t.client,note:String(lr.customStatusText||"")});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11,marginBottom:6}}>
                         ✏️ ערוך הערה פנימית
-                      </Press>
+                      </Press>}
                       {lr.missedTreatment&&(
                         <div style={{background:"#fff8e1",borderRadius:10,padding:"8px 12px",marginBottom:6,border:"1px solid #ffe082",fontSize:12,color:C.orange,fontWeight:800}}>
                           ⚠️ לא בוצע טיפול בתאריך {fmtDate(String(lr.date||"").slice(0,10))}
@@ -3787,9 +3717,9 @@ const report = {
                     {clientPhone(t.client)&&<a href={`tel:${clientPhone(t.client)}`} style={{padding:"10px 14px",borderRadius:12,background:"#f3e5f5",color:"#6a1b9a",fontWeight:800,fontSize:13,textDecoration:"none",textAlign:"center",border:"2px solid #e1bee7",display:"flex",alignItems:"center",gap:4}}>📞</a>}
                   </div>
                 )}
-                <div style={{marginTop:isDone?0:8}}>
+                {!isSubOperator&&<div style={{marginTop:isDone?0:8}}>
                   <Press onClick={()=>{setOpIssueClient(t.client);setShowOperatorIssue(true);haptic();}} style={{padding:"8px 14px",borderRadius:12,background:"#fff8e1",color:C.orange,fontWeight:800,fontSize:12,border:"1px solid #ffe082",display:"inline-flex",alignItems:"center",gap:6}}>🔧 דווח תקלה</Press>
-                </div>
+                </div>}
               </div>
             );
           })}
