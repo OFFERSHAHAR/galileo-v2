@@ -1914,6 +1914,16 @@ function json(obj) {
     });
     Logger.log(JSON.stringify(res));
   }
+
+  function testOneSignalToUser() {
+    const targetUsername = "admin";
+    const res = sendOneSignalToUser_({
+      externalUserId: targetUsername,
+      title: "בדיקת התראה",
+      message: "אם קיבלת את זה, החיבור להתראות תקין"
+    });
+    Logger.log(JSON.stringify(res));
+  }
   const DESIGN_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
 
   function designMySystemSheets() {

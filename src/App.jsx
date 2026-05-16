@@ -1883,6 +1883,16 @@ const [screen,setScreen] = useState(() => {
     }
     return sentCount;
   };
+  const sendNotificationToSubOperators = async (subUsers, title, message) => {
+    const targets = (subUsers || []).filter(u => u?.username);
+    let sentCount = 0;
+    for (const sub of targets) {
+      const sent = await sendOneSignalToUser(title, message, sub.username);
+      if (sent) sentCount++;
+    }
+    if (!targets.length) console.warn("OneSignal: no sub-operator users found for notification");
+    return sentCount;
+  };
 
   const enablePushForUsername = async (username) => {
     const externalId = String(username || "").trim();
@@ -2139,6 +2149,14 @@ const [screen,setScreen] = useState(() => {
         console.warn("Sub-operator assignment sync failed", e);
       }
     }
+    if (nextUser?.username) {
+      void sendOneSignalToUser("שיוך עוזר מפעיל", `שויכת למפעיל ${opName} לתאריך ${fmtDate(date)}`, nextUser.username)
+        .catch(e => console.warn("Sub-operator assignment notification failed", e));
+    }
+    if (previousUser?.username && previousUser.username !== nextUser?.username) {
+      void sendOneSignalToUser("שיוך עוזר מפעיל הוסר", `השיוך למפעיל ${opName} לתאריך ${fmtDate(date)} הוסר`, previousUser.username)
+        .catch(e => console.warn("Sub-operator unassignment notification failed", e));
+    }
   };
   const findAssignedOperatorForSub = (date, subUser=user) => {
     if (!subUser) return "";
@@ -2171,6 +2189,8 @@ const [screen,setScreen] = useState(() => {
   const approveSubOperator = (date, opName, subUsername) => {
     localStorage.setItem(subOperatorApprovalKey(date, opName, subUsername), "yes");
     setSubOperatorRefresh(x=>x+1);
+    void sendOneSignalToUser("אישור מילוי דוחות", `אושרת למילוי דוחות עבור ${opName} בתאריך ${fmtDate(date)}`, subUsername)
+      .catch(e => console.warn("Sub-operator approval notification failed", e));
     showToast("✅ עוזר מפעיל אושר למילוי דוחות");
     haptic("success");
   };
@@ -3184,6 +3204,8 @@ const report = {
         setOperatorEditOrder(false);
       }
       setSubOperatorRefresh(x=>x+1);
+      void sendNotificationToSubOperators(subs, "סדר יום שותף", `${opName} שיתף איתך ${sharedEntries.length} בריכות לתאריך ${fmtDate(dailyDate)}`)
+        .catch(e => console.warn("Shared order notification failed", e));
       showToast(`סדר שותף ל-${subs.length} עוזר מפעיל`);
       haptic("success");
     };
@@ -3366,6 +3388,7 @@ const report = {
                 if(operatorEditOrder) {
                   writeLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate), operatorOrderDraft.map(t=>t.client));
                   setOperatorEditOrder(false);
+                  void sendNotificationToAdmins("סדר יום נערך", `${user?.name || "מפעיל"} ערך סדר יום לתאריך ${fmtDate(dailyDate)} (${operatorOrderDraft.length} בריכות)`).catch(e=>console.warn("Operator order admin notification failed", e));
                   showToast("סדר מקומי נשמר");
                 } else {
                   setOperatorOrderDraft(activeDayTasks);
@@ -4009,7 +4032,7 @@ const report = {
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10}}>
                       <div style={{fontSize:13,fontWeight:900,color:C.blue}}>סדר עבודה: {activeAdminOperator}</div>
-                      <Press onClick={()=>{const clean=saveAdminOrderEntries(taskDate, activeAdminOperator, adminOrderList);setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);showToast("סדר נשמר");haptic("success");}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר"}</Press>
+                      <Press onClick={()=>{const clean=saveAdminOrderEntries(taskDate, activeAdminOperator, adminOrderList);setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);showToast("סדר נשמר");haptic("success");void sendNotificationToOperators([activeAdminOperator], "סדר היום עודכן", `${clean.length} בריכות לתאריך ${fmtDate(taskDate)}`).catch(e=>console.warn("Admin order operator notification failed", e));const assignedSub=subOperatorUsers.find(su=>isSameSubOperator(getAssignedSubOperator(taskDate, activeAdminOperator), su));if(assignedSub?.username) void sendNotificationToSubOperators([assignedSub], "סדר היום עודכן", `סדר היום של ${activeAdminOperator} עודכן לתאריך ${fmtDate(taskDate)}`).catch(e=>console.warn("Admin order sub notification failed", e));}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר"}</Press>
                     </div>
                     {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
                       <label style={{fontSize:11,fontWeight:900,color:C.muted,display:"block",marginBottom:6}}>שיוך SUB_OPERATOR למפעיל זה</label>
