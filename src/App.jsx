@@ -237,7 +237,7 @@ async function postScriptAction(scriptUrl, action, payload={}) {
     const company = getCompany();
     const sheetId = company.sheetId || localStorage.getItem("galileo_sheet_id") || "";
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+    const timer = setTimeout(() => controller.abort(), 4000);
     const r = await fetch(scriptUrl, {
       method: "POST",
       headers: {"Content-Type":"text/plain"},
@@ -261,9 +261,11 @@ async function postScriptAction(scriptUrl, action, payload={}) {
 
 function pushScriptResponseOk(res) {
   if (!res) return false;
-  if (res.success === true || res.sent === true || res.ok === true) return true;
-  if (Number(res.recipients || res.recipientCount || res.sentCount || 0) > 0) return true;
-  if (res.id || res.notificationId) return true;
+  const recipients = Number(res.recipients || res.recipientCount || res.sentCount || res.response?.recipients || 0);
+  if (recipients > 0) return true;
+  if (res.errors || res.error || res.response?.errors) return false;
+  if (res.id || res.notificationId || res.response?.id) return recipients > 0;
+  if (res.success === true || res.sent === true || res.ok === true) return recipients > 0;
   if (typeof res.raw === "string" && /ok|sent|success/i.test(res.raw)) return true;
   return false;
 }
@@ -1742,15 +1744,11 @@ const [screen,setScreen] = useState(() => {
   });
 
   const sendNotificationToAdmins = async (title, message) => {
-    let sentCount = 0;
     const adminUsers = allUsers.filter(u => {
       const role = String(u.role || "").trim().toLowerCase();
       return (role === "admin" || role === "\u05de\u05e0\u05d4\u05dc" || role === "\u05d0\u05d3\u05de\u05d9\u05df") && u.username;
     });
-    for (const admin of adminUsers) {
-      const sent = await sendOneSignalToUser(title, message, admin.username);
-      if (sent) sentCount++;
-    }
+    let sentCount = (await Promise.all(adminUsers.map(admin => sendOneSignalToUser(title, message, admin.username)))).filter(Boolean).length;
 
     if (sentCount === 0 && sheetId) {
       const res = await sheetCall("sendOneSignalToAdmins", {title, message});
@@ -1867,20 +1865,12 @@ const [screen,setScreen] = useState(() => {
       return 0;
     }
 
-    let sentCount = 0;
-    for (const op of targets) {
-      const sent = await sendOneSignalToUser(title, message, op.username);
-      if (sent) sentCount++;
-    }
+    const sentCount = (await Promise.all(targets.map(op => sendOneSignalToUser(title, message, op.username)))).filter(Boolean).length;
     return sentCount;
   };
   const sendNotificationToSubOperators = async (subUsers, title, message) => {
     const targets = (subUsers || []).filter(u => u?.username);
-    let sentCount = 0;
-    for (const sub of targets) {
-      const sent = await sendOneSignalToUser(title, message, sub.username);
-      if (sent) sentCount++;
-    }
+    const sentCount = (await Promise.all(targets.map(sub => sendOneSignalToUser(title, message, sub.username)))).filter(Boolean).length;
     if (!targets.length) console.warn("OneSignal: no sub-operator users found for notification");
     return sentCount;
   };
@@ -4178,19 +4168,17 @@ const report = {
                     const notifyClients = [...taskClients];
                     const notifyDate = taskDate;
                     setTimeout(async () => {
-                      let sentCount = 0;
-                      let missingCount = 0;
                       const clientList = notifyClients.map(c=>c.name.split(" - ")[0]).join(", ");
-                      for(const opName of notifyOps) {
+                      const targets = notifyOps.map(opName => {
                         const opUser = allUsers.find(u=>normalizeName(u.name)===normalizeName(opName));
                         if (!opUser?.username) {
                           console.warn("OneSignal: operator user not found or missing username", opName, opUser);
-                          missingCount++;
-                          continue;
+                          return null;
                         }
-                        const sent = await sendOneSignalToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(notifyDate)}`, opUser?.username);
-                        if(sent) sentCount++;
-                      }
+                        return opUser;
+                      }).filter(Boolean);
+                      const missingCount = notifyOps.length - targets.length;
+                      const sentCount = (await Promise.all(targets.map(opUser => sendOneSignalToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(notifyDate)}`, opUser.username)))).filter(Boolean).length;
                       if (sentCount === notifyOps.length) showToast(`✅ ההתראות נשלחו`);
                       else if (missingCount) showToast(`⚠️ חסר שם משתמש ל-${missingCount} מפעילים`);
                       else showToast(`⚠️ ${sentCount}/${notifyOps.length} התראות נשלחו`);
