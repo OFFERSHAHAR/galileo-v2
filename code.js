@@ -1803,30 +1803,23 @@ function getAdminOrders_(ss) {
 
 function saveAdminOrders_(ss, adminOrders) {
   let sheet = ss.getSheetByName("חלוקת_עבודה");
-  if (!sheet) {
-    sheet = ss.insertSheet("חלוקת_עבודה");
-    sheet.appendRow(["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"]);
-  } else {
-    ensureColumns(sheet, ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"]);
-  }
-  const rows = sheet.getDataRange().getValues();
-  let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
-  if (hi === -1) hi = 0;
-  const dataStart = hi + 2;
-  const last = sheet.getLastRow();
-  if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
-  dedupeAdminOrders_(adminOrders).filter(o => o && o.client).forEach(o => {
-    sheet.appendRow([
-      o.id,
-      o.date,
-      o.operator || "",
-      o.client,
-      Number(o.orderIndex || 0),
-      o.adminNote || "",
-      o.status || "pending",
-      JSON.stringify(o.changeLog || [])
-    ]);
-  });
+  if (!sheet) sheet = ss.insertSheet("חלוקת_עבודה");
+
+  const headers = ["id","\u05ea\u05d0\u05e8\u05d9\u05da","\u05de\u05e4\u05e2\u05d9\u05dc","\u05dc\u05e7\u05d5\u05d7","\u05e1\u05d3\u05e8","\u05d4\u05e2\u05e8\u05ea_\u05de\u05e0\u05d4\u05dc","\u05e1\u05d8\u05d8\u05d5\u05e1","changeLog"];
+  const rows = dedupeAdminOrders_(adminOrders).filter(o => o && o.client).map(o => ([
+    o.id,
+    o.date,
+    o.operator || "",
+    o.client,
+    Number(o.orderIndex || 0),
+    o.adminNote || "",
+    o.status || "pending",
+    JSON.stringify(o.changeLog || [])
+  ]));
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
 }
 
 function getSupplyDB_(ss) {

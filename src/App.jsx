@@ -2342,7 +2342,11 @@ useEffect(() => {
       .filter(o => normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName))
       .map((o, i)=>({id:o.id, client:o.client, note:o.adminNote || "", orderIndex:Number(o.orderIndex || i + 1), status:o.status || "pending", changeLog:o.changeLog || []}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
-    if (fromOrders.length) return fromOrders;
+    if (fromOrders.length) {
+      const byClient = new Map();
+      fromOrders.forEach(o => byClient.set(normalizeName(o.client), o));
+      return [...byClient.values()].sort((a,b)=>a.orderIndex-b.orderIndex);
+    }
     return tasks
       .filter(t =>
         normalizeDate(t.date) === date &&
@@ -2357,8 +2361,11 @@ useEffect(() => {
     if (fromSheet.length) return fromSheet;
     return getLocalAdminOrderEntries(date, opName).sort((a,b)=>a.orderIndex-b.orderIndex);
   };
-  const prepareAdminOrderEntries = (entries) =>
-    (entries || []).filter(x=>x?.client).map((x, i)=>({client:x.client, note:x.note || "", orderIndex:i + 1}));
+  const prepareAdminOrderEntries = (entries) => {
+    const byClient = new Map();
+    (entries || []).filter(x=>x?.client).forEach(x => byClient.set(normalizeName(x.client), {client:x.client, note:x.note || ""}));
+    return [...byClient.values()].map((x, i)=>({...x, orderIndex:i + 1}));
+  };
   const adminOrderDedupeKey = (o) => [normalizeDate(o?.date), normalizeName(o?.operator), normalizeName(o?.client)].join("|");
   const dedupeAdminOrders = (orders) => {
     const map = new Map();
