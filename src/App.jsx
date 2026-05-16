@@ -3195,6 +3195,10 @@ const report = {
     const lockedDayTasks = orderedDayTasks.filter(t=>lockedClients.has(t.client));
     const activeDayTasks = orderedDayTasks.filter(t=>!lockedClients.has(t.client));
     const dayTasks = (!isSubOperator && operatorEditOrder) ? operatorOrderDraft : activeDayTasks;
+    const hasTaskChanges = orderedDayTasks.some(t => {
+      const lastLog = t.changeLog?.[t.changeLog.length - 1];
+      return lastLog?.needsAck && !(lastLog?.ackedBy || []).includes(user?.name);
+    });
     const shareOrderWithSubOperators = () => {
       if (isSubOperator) return;
       const subs = assignedSubOperators || [];
@@ -3620,7 +3624,8 @@ const report = {
         </div>
         <div style={{position:"fixed",right:12,left:12,bottom:12,zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",justifyContent:"space-around",gap:8,boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
           {[["🏠","בית",0],["📋","משימות",1],["📅","עתידי",2]].map(([ic,lb,idx])=>(
-            <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"7px 16px",borderRadius:18,background:navTab===idx?operatorPrimaryGradient:"rgba(241,245,249,0.50)",boxShadow:navTab===idx?"0 12px 28px rgba(79,70,229,0.22)":"none"}}>
+            <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"7px 16px",borderRadius:18,background:navTab===idx?operatorPrimaryGradient:"rgba(241,245,249,0.50)",boxShadow:navTab===idx?"0 12px 28px rgba(79,70,229,0.22)":"none"}}>
+              {idx===1&&hasTaskChanges&&<span style={{position:"absolute",top:5,right:12,width:10,height:10,borderRadius:99,background:C.red,boxShadow:"0 0 0 3px rgba(255,255,255,0.86)",border:"1px solid rgba(255,255,255,0.95)"}}/>}
               <span style={{fontSize:22}}>{ic}</span>
               <span style={{fontSize:10,fontWeight:900,color:navTab===idx?"#fff":C.muted}}>{lb}</span>
             </Press>
