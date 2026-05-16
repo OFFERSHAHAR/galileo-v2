@@ -2381,7 +2381,6 @@ useEffect(() => {
     });
     const cleanedOrders = adminOrders.filter(o => !(normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName)));
     const nextOrders = [...cleanedOrders, ...orderRows];
-    if (!sheetId) return {success:false, clean, error:"missing sheetId"};
     const res = await sheetCall("saveAdminOrders", {adminOrders: nextOrders});
     if (!res?.success) return {success:false, clean, error:res?.error || "saveAdminOrders failed"};
     setAdminOrders(nextOrders);
