@@ -346,7 +346,7 @@
   מדידות:
   כלור: ${r.chlorine} ppm
   pH: ${r.ph}
-  מלח: ${r.salt} g/L
+  רמת מלח: ${r.salt} PPM
 
   בדיקות מצב:
   גובה מים: ${r.waterLevel}
@@ -357,7 +357,7 @@
   מצב בריכה: ${r.poolStatus}
   ${r.customStatusText?"פירוט: "+r.customStatusText:""}
   ${r.restrictedUntil?"הגבלה עד: "+r.restrictedUntil:""}
-  ${r.supplyLabel?"ציוד נדרש: "+r.supplyLabel:""}
+  ${r.supplyLabel?"חומרים לטיפול הבא: "+r.supplyLabel:""}
   ${r.notes?"הערות: "+r.notes:""}
             `.trim();
 
@@ -484,28 +484,7 @@
 
       if (action === "saveClients") {
         const sheet = ss.getSheetByName("לקוחות");
-        const last = sheet.getLastRow();
-        // Find header row
-        let hi = 2;
-        for (let i = 0; i < last; i++) {
-          if (String(sheet.getRange(i+1,1).getValue()).includes("שם")) { hi = i+1; break; }
-        }
-      // Clear data rows
-      if (last > hi) sheet.deleteRows(hi+1, last-hi);
-      ensureColumns(sheet, ["יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל", "מכסת_טיפולים_חודשית", "חודש_טיפולים"]);
-      const headers = sheet.getRange(hi, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h || "").trim());
-      const baseCols = Math.max(10, sheet.getLastColumn());
-      data.clients.forEach(c => sheet.appendRow([
-        c.name, c.phone, c.address, c.qrUrl||"",
-        c.gateCode||"", c.poolType||"מלח", c.regularDays||"", c.regularOperator||"",
-        Number(c.monthlyTreatmentBalance ?? 0), Number(c.monthlyTreatmentCount ?? 0)
-      ].concat(Array(Math.max(0, baseCols - 10)).fill("")).map((value, idx) => {
-        const header = headers[idx] || "";
-        if (header === "מכסת_טיפולים_חודשית") return Number(c.monthlyTreatmentQuota ?? c.monthlyTreatmentBalance ?? 0);
-        if (header === "חודש_טיפולים") return "";
-        return value;
-      })));
-      return json({ success: true });
+        return json(saveClients_(sheet, data.clients || []));
     }
 
       if (action === "getLastReadings") {
@@ -1499,6 +1478,11 @@ function getUsers_(ss) {
   return rows.slice(hi + 1).filter(r => r[0]).map(r => {
     const obj = {};
     headers.forEach((h, i) => obj[h] = r[i]);
+    obj.username = String(obj.username || obj.Username || obj["שם משתמש"] || obj["שם_משתמש"] || "").trim();
+    obj.password = obj.password ?? obj.Password ?? obj["סיסמה"] ?? obj["סיסמא"] ?? "";
+    obj.role = String(obj.role || obj.Role || obj["תפקיד"] || obj["סוג משתמש"] || obj["סוג_משתמש"] || "").trim();
+    obj.name = String(obj.name || obj.Name || obj["שם"] || obj["שם מלא"] || obj["שם_מלא"] || "").trim();
+    obj.phone = String(obj.phone || obj.Phone || obj["טלפון"] || obj["נייד"] || "").trim();
     const linkedOperator = String(
       obj.linkedOperator ||
       obj.assignedOperator ||
@@ -1552,6 +1536,127 @@ function getClients_(ss) {
   return rows.slice(hi + 1).filter(r => r[0]).map(r => ({
     name: String(r[0]), phone: String(r[1]), address: String(r[2]), qrUrl: String(r[3]||""), gateCode: String(r[4]||""), poolType: String(r[5]||"מלח"), regularDays: String(r[6]||""), regularOperator: String(r[7]||""), monthlyTreatmentBalance: Number(r[8] || 0), monthlyTreatmentCount: Number(r[9] || 0), monthlyTreatmentQuota: Number(quotaIdx >= 0 ? r[quotaIdx] || 0 : 0)
   }));
+}
+
+function saveClients_(sheet, clients) {
+  if (!sheet) return { success:false, error:"clients sheet not found" };
+  const headerRowIndex = findHeaderRowIndex_(sheet, ["שם_לקוח", "שם לקוח"]);
+  const headerRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 3;
+  ensureColumns(sheet, [
+    "קוד_שער",
+    "סוג_בריכה",
+    "ימים_קבועים",
+    "מפעיל_קבוע",
+    "יתרת_טיפולים_חודשית",
+    "מונה_טיפולים_בפועל",
+    "מכסת_טיפולים_חודשית",
+    "חודש_טיפולים"
+  ]);
+
+  const lastCol = sheet.getLastColumn();
+  const headers = sheet.getRange(headerRow, 1, 1, lastCol).getValues()[0].map(h => String(h || "").trim());
+  const headerMap = {};
+  headers.forEach((header, idx) => { if (header) headerMap[header] = idx; });
+  const aliases = {
+    name: ["שם_לקוח", "שם לקוח"],
+    phone: ["טלפון"],
+    address: ["כתובת"],
+    qrUrl: ["qr_url", "QR", "קישור_QR"],
+    gateCode: ["קוד_שער", "קוד שער"],
+    poolType: ["סוג_בריכה", "סוג בריכה"],
+    regularDays: ["ימים_קבועים", "ימים קבועים"],
+    regularOperator: ["מפעיל_קבוע", "מפעיל קבוע"],
+    monthlyTreatmentBalance: ["יתרת_טיפולים_חודשית"],
+    monthlyTreatmentCount: ["מונה_טיפולים_בפועל"],
+    monthlyTreatmentQuota: ["מכסת_טיפולים_חודשית"],
+    monthlyTreatmentMonth: ["חודש_טיפולים"]
+  };
+  const colOf = (key) => {
+    const names = aliases[key] || [key];
+    for (const name of names) if (headerMap[name] !== undefined) return headerMap[name];
+    return -1;
+  };
+
+  const dataStart = headerRow + 1;
+  const lastRow = sheet.getLastRow();
+  const existing = {};
+  const existingByRow = {};
+  const nameIdx = colOf("name");
+  if (lastRow >= dataStart) {
+    sheet.getRange(dataStart, 1, lastRow - headerRow, lastCol).getValues().forEach((row, offset) => {
+      const name = String(row[nameIdx >= 0 ? nameIdx : 0] || "").trim();
+      const rowNumber = dataStart + offset;
+      if (name) existing[normalizeReportValue_(name)] = { row, rowNumber };
+      existingByRow[rowNumber] = row;
+    });
+  }
+
+  const managedKeys = [
+    "name",
+    "phone",
+    "address",
+    "qrUrl",
+    "gateCode",
+    "poolType",
+    "regularDays",
+    "regularOperator",
+    "monthlyTreatmentBalance",
+    "monthlyTreatmentCount",
+    "monthlyTreatmentQuota",
+    "monthlyTreatmentMonth"
+  ];
+  const setValue = (row, key, value) => {
+    const idx = colOf(key);
+    if (idx >= 0) row[idx] = value;
+  };
+  const valueFor = (c, key, original) => {
+    const monthIdx = colOf("monthlyTreatmentMonth");
+    const values = {
+      name: String(c.name || "").trim(),
+      phone: String(c.phone || ""),
+      address: String(c.address || ""),
+      qrUrl: String(c.qrUrl || ""),
+      gateCode: String(c.gateCode || ""),
+      poolType: String(c.poolType || "מלח"),
+      regularDays: String(c.regularDays || ""),
+      regularOperator: String(c.regularOperator || ""),
+      monthlyTreatmentBalance: numberOrZero(c.monthlyTreatmentBalance),
+      monthlyTreatmentCount: numberOrZero(c.monthlyTreatmentCount),
+      monthlyTreatmentQuota: numberOrZero(c.monthlyTreatmentQuota ?? c.monthlyTreatmentBalance),
+      monthlyTreatmentMonth: c.monthlyTreatmentMonth ?? (monthIdx >= 0 ? original[monthIdx] : "") ?? ""
+    };
+    return values[key];
+  };
+  const sameCellValue = (a, b) => {
+    if (a instanceof Date || b instanceof Date) return String(a) === String(b);
+    return String(a ?? "") === String(b ?? "");
+  };
+  const numberOrZero = (value) => Number(value ?? 0) || 0;
+  let updated = 0;
+  let appended = 0;
+  clients.filter(c => c && String(c.name || "").trim()).forEach(c => {
+    const record = existing[normalizeReportValue_(c.originalName || c.name)] || existing[normalizeReportValue_(c.name)];
+    if (record) {
+      managedKeys.forEach(key => {
+        const idx = colOf(key);
+        if (idx < 0) return;
+        if (key === "monthlyTreatmentMonth" && !Object.prototype.hasOwnProperty.call(c, "monthlyTreatmentMonth")) return;
+        const nextValue = valueFor(c, key, record.row);
+        if (!sameCellValue(record.row[idx], nextValue)) {
+          sheet.getRange(record.rowNumber, idx + 1).setValue(nextValue);
+          record.row[idx] = nextValue;
+          updated++;
+        }
+      });
+      return;
+    }
+
+    const row = Array.from({ length: lastCol }, () => "");
+    managedKeys.forEach(key => setValue(row, key, valueFor(c, key, row)));
+    sheet.appendRow(row);
+    appended++;
+  });
+  return { success:true, count:clients.length, updated, appended };
 }
 
 function getTasks_(ss) {
