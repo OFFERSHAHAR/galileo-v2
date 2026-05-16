@@ -3964,7 +3964,40 @@ const report = {
     const adminOrderList = adminOrderDraft.length || selectedAdminOperator ? adminOrderDraft : (activeAdminOperator ? getAdminOrderEntries(taskDate, activeAdminOperator) : []);
     const adminOrderNames = new Set(adminOrderList.map(x=>x.client));
     const allOrderClients = [...clients, ...unassignedClients.filter(uc=>!clients.find(c=>c.name===uc.name))];
-    const filteredOrderClients = filterClientOptions(allOrderClients, adminOrderClientSearch);
+    const adminOrderClientMap = new Map(allOrderClients.map(c=>[c.name,c]));
+    const adminOrderEligibleMap = new Map();
+    allOrderClients.forEach(c => {
+      if (activeAdminOperator && clientAssignedToOperatorDate(c, taskDate, activeAdminOperator)) adminOrderEligibleMap.set(c.name, c);
+    });
+    adminOrderList.forEach(entry => {
+      const base = adminOrderClientMap.get(entry.client) || {name:entry.client};
+      adminOrderEligibleMap.set(entry.client, base);
+    });
+    const adminOrderSearchActive = adminOrderClientSearch.trim().length > 0;
+    const adminOrderSearchPool = adminOrderSearchActive ? allOrderClients : [...adminOrderEligibleMap.values()];
+    const adminOrderEligibleClients = filterClientOptions(sortByClientName(adminOrderSearchPool), adminOrderClientSearch);
+    const selectedAdminOrderEntries = adminOrderList.filter(entry => !adminOrderClientSearch || filterClientOptions([{name:entry.client, ...(adminOrderClientMap.get(entry.client)||{})}], adminOrderClientSearch).length);
+    const unselectedAdminOrderClients = adminOrderEligibleClients.filter(c=>!adminOrderNames.has(c.name));
+    const loadDefaultAdminOrder = () => {
+      const defaults = baseOperatorClients(taskDate, activeAdminOperator);
+      if (!defaults.length) {
+        showToast("אין בריכות משויכות למפעיל ביום הזה");
+        haptic("medium");
+        return;
+      }
+      const existingByClient = new Map(adminOrderList.map(entry=>[entry.client, entry]));
+      const loaded = defaults.map((entry, i) => {
+        const existing = existingByClient.get(entry.client);
+        return {...entry, note:existing?.note || entry.note || "", orderIndex:i + 1};
+      });
+      adminOrderList.forEach(entry => {
+        if (!loaded.some(x=>x.client===entry.client)) loaded.push({...entry, orderIndex:loaded.length + 1});
+      });
+      setAdminOrderDraft(loaded);
+      setAdminOrderClientSearch("");
+      showToast(`נטענו ${defaults.length} בריכות ברירת מחדל`);
+      haptic("success");
+    };
     const taskClientOptions = clientsForOperatorsAndDate(clients, taskDate, taskOps);
     const dayTasks = tasks.filter(t=>normalizeDate(t.date)===taskDate && !t.createdByAdminOrder && Number(t.orderIndex || 0) <= 0);
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
@@ -4106,7 +4139,10 @@ const report = {
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10}}>
                       <div style={{fontSize:13,fontWeight:900,color:C.blue}}>סדר עבודה: {activeAdminOperator}</div>
-                      <Press onClick={async()=>{const sync=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);if(!sync.success){showToast("השמירה לגיליון נכשלה");haptic("medium");return;}const clean=sync.clean;setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);showToast("סדר נשמר, שולח התראה...");haptic("success");void (async()=>{const opSent=await sendNotificationToOperators([activeAdminOperator], "סדר היום עודכן", `${clean.length} בריכות לתאריך ${fmtDate(taskDate)}`);const assignedSub=subOperatorUsers.find(su=>isSameSubOperator(getAssignedSubOperator(taskDate, activeAdminOperator), su));let subSent=0;if(assignedSub?.username) subSent=await sendNotificationToSubOperators([assignedSub], "סדר היום עודכן", `סדר היום של ${activeAdminOperator} עודכן לתאריך ${fmtDate(taskDate)}`);showToast(opSent>0||subSent>0?"התראה נשלחה":"התראה לא נשלחה");})().catch(e=>{console.warn("Admin order notification failed", e);showToast("התראה לא נשלחה");});}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר"}</Press>
+                      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                        <Press onClick={loadDefaultAdminOrder} style={{padding:"7px 12px",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:12,fontWeight:900,border:`1px solid ${C.lightBlue}`}}>טען</Press>
+                        <Press onClick={async()=>{const sync=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);if(!sync.success){showToast("השמירה לגיליון נכשלה");haptic("medium");return;}const clean=sync.clean;setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);showToast("סדר נשמר, שולח התראה...");haptic("success");void (async()=>{const opSent=await sendNotificationToOperators([activeAdminOperator], "סדר היום עודכן", `${clean.length} בריכות לתאריך ${fmtDate(taskDate)}`);const assignedSub=subOperatorUsers.find(su=>isSameSubOperator(getAssignedSubOperator(taskDate, activeAdminOperator), su));let subSent=0;if(assignedSub?.username) subSent=await sendNotificationToSubOperators([assignedSub], "סדר היום עודכן", `סדר היום של ${activeAdminOperator} עודכן לתאריך ${fmtDate(taskDate)}`);showToast(opSent>0||subSent>0?"התראה נשלחה":"התראה לא נשלחה");})().catch(e=>{console.warn("Admin order notification failed", e);showToast("התראה לא נשלחה");});}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר"}</Press>
+                      </div>
                     </div>
                     {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
                       <label style={{fontSize:11,fontWeight:900,color:C.muted,display:"block",marginBottom:6}}>שיוך SUB_OPERATOR למפעיל זה</label>
@@ -4116,28 +4152,15 @@ const report = {
                       </select>
                       <div style={{fontSize:10,fontWeight:800,color:C.muted,marginTop:6}}>העוזר יראה את סדר היום של {activeAdminOperator}. מילוי דוחות ייפתח רק אחרי אישור מפעיל.</div>
                     </div>}
-                    <input value={adminOrderClientSearch} onChange={e=>setAdminOrderClientSearch(e.target.value)} placeholder="חפש והוסף בריכה לסדר..." style={{...inp,fontSize:12,marginBottom:8}}/>
-                    {adminOrderClientSearch&&(
-                      <div style={{maxHeight:160,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#fff",marginBottom:10}}>
-                        {filteredOrderClients.map(c=>{
-                          const exists = adminOrderNames.has(c.name);
-                          return (
-                            <Press key={c.name} onClick={()=>{ if(!exists){setAdminOrderDraft(prev=>[...adminOrderList,{client:c.name,note:"",orderIndex:adminOrderList.length+1}]);setAdminOrderClientSearch("");haptic();} }} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",borderBottom:`1px solid ${C.border}`,background:exists?"#f0f4f8":"#fff",opacity:exists?0.65:1}}>
-                              <div style={{minWidth:0}}>
-                                <div style={{fontSize:13,fontWeight:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</div>
-                                {c.address&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>}
-                                <div style={{fontSize:11,color:C.blue,fontWeight:800,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>
-                                  {clientMetaLine(c) || "ללא שיוך קבוע"}
-                                </div>
-                              </div>
-                              <Badge label={exists?"קיים":"הוסף"} col={exists?C.muted:C.blue}/>
-                            </Press>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {adminOrderList.length===0&&<div style={{padding:18,borderRadius:12,background:"#f5f9ff",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700}}>אין בריכות בסדר המקומי למפעיל הזה</div>}
-                    {adminOrderList.map((entry,i)=>(
+                    <input value={adminOrderClientSearch} onChange={e=>setAdminOrderClientSearch(e.target.value)} placeholder="חפש מכל הלקוחות, הימים והמפעילים..." style={{...inp,fontSize:12,marginBottom:8}}/>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,margin:"10px 0 8px"}}>
+                      <div style={{fontSize:12,fontWeight:900,color:C.green}}>נבחרו לסדר היום</div>
+                      <Badge label={`${selectedAdminOrderEntries.length}/${adminOrderEligibleClients.length} בריכות`} col={C.green}/>
+                    </div>
+                    {selectedAdminOrderEntries.length===0&&<div style={{padding:18,borderRadius:12,background:"#f5f9ff",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700,marginBottom:10}}>אין בריכות שנבחרו לסדר היום</div>}
+                    {selectedAdminOrderEntries.map((entry)=>{
+                      const i = adminOrderList.findIndex(x=>x.client===entry.client);
+                      return (
                       <div key={`${entry.client}-${i}`} draggable onDragStart={e=>e.dataTransfer.setData("text/plain", String(i))} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();moveAdminOrderItem(Number(e.dataTransfer.getData("text/plain")), i);}} style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:8}}>
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
                           <div style={{width:28,height:28,borderRadius:"50%",background:"#e3f2fd",color:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,flexShrink:0}}>{i+1}</div>
@@ -4146,6 +4169,22 @@ const report = {
                         </div>
                         <input value={entry.note || ""} onChange={e=>setAdminOrderDraft(adminOrderList.map((x,idx)=>idx===i?{...x,note:e.target.value}:x))} placeholder="הערה למפעיל לבריכה זו..." style={{...inp,fontSize:12,padding:"8px 10px",margin:0}}/>
                       </div>
+                    )})}
+                    <div style={{height:1,background:C.border,margin:"14px 0 10px",position:"relative"}}>
+                      <span style={{position:"absolute",right:0,top:-10,background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:99,padding:"2px 10px",fontSize:10,fontWeight:900,color:C.muted}}>לא נבחרו לסדר היום</span>
+                    </div>
+                    {unselectedAdminOrderClients.length===0&&<div style={{padding:16,borderRadius:12,background:"#f8fafc",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700}}>אין בריכות נוספות ליום הזה</div>}
+                    {unselectedAdminOrderClients.map(c=>(
+                      <Press key={c.name} onClick={()=>{setAdminOrderDraft(prev=>[...adminOrderList,{client:c.name,note:"",orderIndex:adminOrderList.length+1}]);setAdminOrderClientSearch("");haptic();}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",border:`1px solid ${C.border}`,borderRadius:12,background:"#fff",marginBottom:8}}>
+                        <div style={{minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</div>
+                          {c.address&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>}
+                          <div style={{fontSize:11,color:C.blue,fontWeight:800,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>
+                            {clientMetaLine(c) || "ללא שיוך קבוע"}
+                          </div>
+                        </div>
+                        <Badge label="הוסף" col={C.blue}/>
+                      </Press>
                     ))}
                   </div>
                 )}
