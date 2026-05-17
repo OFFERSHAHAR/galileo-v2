@@ -553,11 +553,12 @@ function WelcomeMediaModal({media,onClose}) {
   );
 }
 
-function DailyBriefingModal({tasks,workStart,supplyDB,subOperators=[],onStartWork,onConfirm,onClose}) {
+function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[],onStartWork,onConfirm,onClose}) {
   const list = Array.isArray(tasks) ? tasks : [];
+  const materialList = Array.isArray(supplyTasks) ? supplyTasks : [];
   const linkedSubs = Array.isArray(subOperators) ? subOperators.filter(Boolean) : [];
   const [openMaterial,setOpenMaterial] = useState(null);
-  const materials = list.reduce((acc, task) => {
+  const materials = materialList.reduce((acc, task) => {
     const supply = supplyDB?.[task.client];
     if (!supply) return acc;
     if (supply.acid) acc.acid += 1;
@@ -565,7 +566,7 @@ function DailyBriefingModal({tasks,workStart,supplyDB,subOperators=[],onStartWor
     if (supply.saltPkg) acc.saltBags += Number(supply.saltBags || 1);
     return acc;
   }, { acid: 0, phUpSupply: 0, saltBags: 0 });
-  const materialRecipients = list.reduce((acc, task) => {
+  const materialRecipients = materialList.reduce((acc, task) => {
     const supply = supplyDB?.[task.client];
     if (!supply) return acc;
     const client = String(task.client || "").split(" - ")[0];
@@ -3410,10 +3411,16 @@ const report = {
       : null;
     const orderedDayTasks = getOperatorDailyView(dailyDate);
     const hasSharedOrderForSub = isSubOperator ? getSharedSubOrderEntries(dailyDate, currentDailyOwner, user?.username || user?.name).length > 0 : true;
+    const explicitSupplyClients = new Set([
+      ...getAdminOrderEntries(dailyDate, currentDailyOwner).map(entry=>normalizeName(entry.client)),
+      ...getSharedSubOrderEntries(dailyDate, currentDailyOwner, user?.username || user?.name).map(entry=>normalizeName(entry.client)),
+      ...readLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate)).map(normalizeName)
+    ].filter(Boolean));
     const lockedClients = getLockedClients(dailyDate);
     const lockedDayTasks = orderedDayTasks.filter(t=>lockedClients.has(t.client));
     const activeDayTasks = orderedDayTasks.filter(t=>!lockedClients.has(t.client));
     const dayTasks = (!isSubOperator && operatorEditOrder) ? operatorOrderDraft : activeDayTasks;
+    const dailySupplyTasks = orderedDayTasks.filter(t=>explicitSupplyClients.has(normalizeName(t.client)));
     const hasTaskChanges = orderedDayTasks.some(t => {
       const lastLog = t.changeLog?.[t.changeLog.length - 1];
       return !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy || []).includes(user?.name);
@@ -3486,7 +3493,7 @@ const report = {
         !dismissedCriticalIssueIds.includes(String(id));
     });
     const done = todayReported.filter(c=>dayTasks.some(t=>t.client===c)).length;
-    const dailySupplySummary = orderedDayTasks.reduce((acc, task) => {
+    const dailySupplySummary = dailySupplyTasks.reduce((acc, task) => {
       const supply = supplyDB[task.client];
       if (!supply) return acc;
       if (supply.acid) acc.acid += 1;
@@ -3494,7 +3501,7 @@ const report = {
       if (supply.saltPkg) acc.saltBags += Number(supply.saltBags || 1);
       return acc;
     }, { acid:0, phUpSupply:0, saltBags:0 });
-    const dailySupplyRecipients = orderedDayTasks.reduce((acc, task) => {
+    const dailySupplyRecipients = dailySupplyTasks.reduce((acc, task) => {
       const supply = supplyDB[task.client];
       if (!supply) return acc;
       const clientName = String(task.client || "").split(" - ")[0];
@@ -3510,7 +3517,7 @@ const report = {
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
-        {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
+        {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
         {pendingSubReportForOperator&&(()=>{ const item=pendingSubReportForOperator; const r=item.report||{}; return (
           <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -3693,6 +3700,7 @@ const report = {
             const doneKey = `${dailyDate}:${t.id || t.client}`;
             const isDoneOpen = !!openDoneTasks[doneKey];
             const supply = clientSupply(t.client);
+            const showTaskSupply = explicitSupplyClients.has(normalizeName(t.client));
             const lastLog = t.changeLog?.[t.changeLog.length-1];
             const needsAck = !isSubOperator && !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy||[]).includes(user?.name);
             const logIdx = t.changeLog?t.changeLog.length-1:-1;
@@ -3821,7 +3829,7 @@ const report = {
                     </div>
                   );
                 })()}
-                {supply&&!isDone&&(
+                {supply&&showTaskSupply&&!isDone&&(
                   <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:10}}>
                     <div style={{fontSize:11,fontWeight:700,color:C.blue,marginBottom:4}}>📦 חומרים נדרשים:</div>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
