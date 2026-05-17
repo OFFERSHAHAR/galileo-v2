@@ -1417,6 +1417,8 @@ export default function App() {
   const [clients,setClients] = useState(DEMO_CLIENTS);
   const [tasks,setTasks] = useState([]);
   const [adminOrders,setAdminOrders] = useState([]);
+  const [sharedSubOrders,setSharedSubOrders] = useState([]);
+  const [subOperatorApprovals,setSubOperatorApprovals] = useState([]);
   const [supplyDB,setSupplyDB] = useState({});
   const [lastReadings,setLastReadings] = useState({});
 const [reports,setReports] = useState([]);
@@ -2069,9 +2071,11 @@ useEffect(() => {
     if(!user) return;
     setGreeting(getDailyGreeting(user.username || ""));
     const refresh = async() => {
-      const [tR, uR, oR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers"), sheetCall("getAdminOrders")]);
+      const [tR, uR, oR, shR, apR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers"), sheetCall("getAdminOrders"), sheetCall("getSubOperatorShares"), sheetCall("getSubOperatorApprovals")]);
       if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
       if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
+      if(Array.isArray(shR?.sharedSubOrders)) setSharedSubOrders(shR.sharedSubOrders);
+      if(Array.isArray(apR?.approvals)) setSubOperatorApprovals(apR.approvals);
       if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
       try {
         const cached = localStorage.getItem("galileo_cache");
@@ -2080,6 +2084,8 @@ useEffect(() => {
           ...c,
           tasks:Array.isArray(tR?.tasks) ? tR.tasks : c.tasks,
           adminOrders:Array.isArray(oR?.adminOrders) ? oR.adminOrders : c.adminOrders,
+          sharedSubOrders:Array.isArray(shR?.sharedSubOrders) ? shR.sharedSubOrders : c.sharedSubOrders,
+          subOperatorApprovals:Array.isArray(apR?.approvals) ? apR.approvals : c.subOperatorApprovals,
           users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
           cachedAt:Date.now()
         }));
@@ -2126,6 +2132,10 @@ useEffect(() => {
   const sharedSubOrderKey = (date, opName, subUsername) => localKey("galileo_shared_sub_order", date, opName, subUsername);
   const subOperatorAssignKey = (date, opName) => localKey("galileo_sub_operator", date, opName);
   const subOperatorApprovalKey = (date, opName, subUsername) => localKey("galileo_sub_operator_approval", date, opName, subUsername);
+  const sharedSubMatch = (row, date, opName, subUsername) =>
+    normalizeDate(row?.date) === date &&
+    normalizeName(row?.operator) === normalizeName(opName) &&
+    (normalizeName(row?.subUsername) === normalizeName(subUsername) || normalizeName(row?.subOperator) === normalizeName(subUsername));
   const lockedClientsKey = (username, date) => localKey("galileo_locked_clients", username, date);
   const rawLinkedOperatorValue = (u) => String(
     u?.linkedOperator ||
@@ -2258,20 +2268,45 @@ useEffect(() => {
   };
   const linkedOperatorName = (u=user, date=dailyDate) => findAssignedOperatorForSub(date, u) || resolveOperatorName(rawLinkedOperatorValue(u));
   const dailyOwnerName = (date=dailyDate) => isSubOperatorRole(user?.role) ? (linkedOperatorName(user, date) || user?.name || "") : (user?.name || "");
-  const isSubOperatorApproved = (date=dailyDate, opName=dailyOwnerName(date), subUsername=user?.username) => localStorage.getItem(subOperatorApprovalKey(date, opName, subUsername)) === "yes";
-  const approveSubOperator = (date, opName, subUsername) => {
-    localStorage.setItem(subOperatorApprovalKey(date, opName, subUsername), "yes");
-    setSubOperatorRefresh(x=>x+1);
-    void sendOneSignalToUser("אישור מילוי דוחות", `אושרת למילוי דוחות עבור ${opName} בתאריך ${fmtDate(date)}`, subUsername)
-      .catch(e => console.warn("Sub-operator approval notification failed", e));
-    showToast("✅ עוזר מפעיל אושר למילוי דוחות");
-    haptic("success");
+  const isSubOperatorApproved = (date=dailyDate, opName=dailyOwnerName(date), subUsername=user?.username) =>
+    subOperatorApprovals.some(row => sharedSubMatch(row, date, opName, subUsername) && row.approved !== false) ||
+    localStorage.getItem(subOperatorApprovalKey(date, opName, subUsername)) === "yes";
+  const saveSubOperatorApprovals = async (next) => {
+    setSubOperatorApprovals(next);
+    const res = await sheetCall("saveSubOperatorApprovals", {approvals:next});
+    if (!res?.success) throw new Error(res?.error || "saveSubOperatorApprovals failed");
   };
-  const revokeSubOperatorApproval = (date, opName, subUsername) => {
-    localStorage.removeItem(subOperatorApprovalKey(date, opName, subUsername));
-    setSubOperatorRefresh(x=>x+1);
-    showToast("הרשאת העריכה בוטלה");
-    haptic("medium");
+  const approveSubOperator = async (date, opName, subUsername) => {
+    const subUser = subOperatorUsers.find(su => isSameSubOperator(subUsername, su));
+    const row = {date, operator:opName, subUsername, subOperator:subUser?.name || subUsername, approved:true, approvedAt:nowStr(), approvedBy:user?.name || ""};
+    const next = [...subOperatorApprovals.filter(x=>!sharedSubMatch(x, date, opName, subUsername)), row];
+    try {
+      await saveSubOperatorApprovals(next);
+      localStorage.setItem(subOperatorApprovalKey(date, opName, subUsername), "yes");
+      setSubOperatorRefresh(x=>x+1);
+      void sendOneSignalToUser("אישור מילוי דוחות", `אושרת למילוי דוחות עבור ${opName} בתאריך ${fmtDate(date)}`, subUsername)
+        .catch(e => console.warn("Sub-operator approval notification failed", e));
+      showToast("✅ עוזר מפעיל אושר למילוי דוחות");
+      haptic("success");
+    } catch(e) {
+      console.warn("Sub-operator approval sync failed", e);
+      showToast("שמירת הרשאה נכשלה");
+      haptic("medium");
+    }
+  };
+  const revokeSubOperatorApproval = async (date, opName, subUsername) => {
+    const next = subOperatorApprovals.filter(x=>!sharedSubMatch(x, date, opName, subUsername));
+    try {
+      await saveSubOperatorApprovals(next);
+      localStorage.removeItem(subOperatorApprovalKey(date, opName, subUsername));
+      setSubOperatorRefresh(x=>x+1);
+      showToast("הרשאת העריכה בוטלה");
+      haptic("medium");
+    } catch(e) {
+      console.warn("Sub-operator approval revoke failed", e);
+      showToast("ביטול ההרשאה נכשל");
+      haptic("medium");
+    }
   };
   const todayReported = [
     ...reports.filter(r=>r.reportDate===dailyDate&&r.operator===(dailyOwnerName(dailyDate)||user?.name)).map(r=>r.client),
@@ -2407,10 +2442,17 @@ useEffect(() => {
     setAdminOrderDraft(entries);
     return entries;
   };
-  const getSharedSubOrderEntries = (date, opName, subUsername) => readLocalArray(sharedSubOrderKey(date, opName, subUsername))
-    .filter(x=>x?.client)
-    .map((x, i)=>({client:x.client, note:x.note || "", orderIndex:Number(x.orderIndex || i + 1)}))
-    .sort((a,b)=>a.orderIndex-b.orderIndex);
+  const getSharedSubOrderEntries = (date, opName, subUsername) => {
+    const fromSheet = sharedSubOrders
+      .filter(x=>sharedSubMatch(x, date, opName, subUsername) && x?.client)
+      .map((x, i)=>({client:x.client, note:x.note || "", orderIndex:Number(x.orderIndex || i + 1)}))
+      .sort((a,b)=>a.orderIndex-b.orderIndex);
+    if (fromSheet.length) return fromSheet;
+    return readLocalArray(sharedSubOrderKey(date, opName, subUsername))
+      .filter(x=>x?.client)
+      .map((x, i)=>({client:x.client, note:x.note || "", orderIndex:Number(x.orderIndex || i + 1)}))
+      .sort((a,b)=>a.orderIndex-b.orderIndex);
+  };
   const entriesToDailyTasks = (date, opName, entries, idPrefix="order") => (entries || [])
     .filter(entry=>entry?.client)
     .map((entry, i) => {
@@ -2581,7 +2623,7 @@ useEffect(() => {
 
   useEffect(()=>{
     applyTenantBranding(getCompany());
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); setSheetId("connected"); } } catch {}
     const checkLicense = async () => {
       const lic = getLicense(); if(!lic.key) return;
       try { const res = await mgmtCall("validateLicense",{key:lic.key}); if(res?.valid){ const company = companyFromLicenseResponse(res); saveLicense({...lic, company:company.name, sheetId:res.sheetId, plan:res.plan, status:res.status, expiry:res.expiry, logoUrl:res.logoUrl||"", appName:company.appName, shortName:company.shortName, icon192Url:company.icon192Url, icon512Url:company.icon512Url, appleIconUrl:company.appleIconUrl, themeColor:company.themeColor, backgroundColor:company.backgroundColor}); saveCompany(company); setCompanyName(company.name || DEFAULT_APP_NAME); setClientPlan({plan:res.plan, status:res.status}); if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId); } else { localStorage.removeItem("galileo_user"); localStorage.removeItem("galileo_license"); setUser(null); setShowSetup(true); } } catch {}
@@ -2611,7 +2653,7 @@ useEffect(() => {
   },[user?.username, user?.role]);
 
   const connectSheets = async (bg=false) => {
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); setSheetId("connected"); if(!bg) return; } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
       let boot = await sheetCall("getBootstrapData");
       let u=boot?.users?.length?boot.users:null;
@@ -2621,13 +2663,15 @@ useEffect(() => {
       let s=boot?.supplyDB?boot.supplyDB:null;
       let lr=boot?.lastReadings?boot.lastReadings:null;
       let uc=boot?.unassignedClients?.length?boot.unassignedClients:null;
+      let sh=Array.isArray(boot?.sharedSubOrders)?boot.sharedSubOrders:null;
+      let ap=Array.isArray(boot?.subOperatorApprovals)?boot.subOperatorApprovals:null;
       if(!u && !c && !t && !ord && !s && !lr){
-        const [uR,cR,tR,oR,sR,rR,ucR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients")]);
-        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null;
+        const [uR,cR,tR,oR,sR,rR,ucR,shR,apR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals")]);
+        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null;
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
-      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc);
-      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},cachedAt:Date.now()}));
+      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap);
+      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
     } catch {}
@@ -3323,7 +3367,7 @@ const report = {
       const lastLog = t.changeLog?.[t.changeLog.length - 1];
       return !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy || []).includes(user?.name);
     });
-    const shareOrderWithSubOperators = () => {
+    const shareOrderWithSubOperators = async () => {
       if (isSubOperator) return;
       const subs = assignedSubOperators || [];
       if (!subs.length) {
@@ -3341,6 +3385,36 @@ const report = {
         sharedEntries = adminEntries.length
           ? adminEntries.map((entry, i)=>({client:entry.client, note:entry.note || "", orderIndex:i + 1}))
           : (currentList || []).map((t, i)=>({client:t.client, note:t.adminNote || "", orderIndex:i + 1}));
+      }
+      const subKeys = new Set(subs.map(su => normalizeName(su.username || su.name)).filter(Boolean));
+      const shareRows = subs.flatMap(su => sharedEntries.map((entry, i)=>({
+        date: dailyDate,
+        operator: opName,
+        subUsername: su.username || su.name || "",
+        subOperator: su.name || su.username || "",
+        client: entry.client,
+        note: entry.note || "",
+        orderIndex: i + 1,
+        sharedAt: nowStr(),
+        sharedBy: user?.name || ""
+      })));
+      const nextShared = [
+        ...sharedSubOrders.filter(row => !(
+          normalizeDate(row?.date) === dailyDate &&
+          normalizeName(row?.operator) === normalizeName(opName) &&
+          subKeys.has(normalizeName(row?.subUsername || row?.subOperator))
+        )),
+        ...shareRows
+      ];
+      try {
+        const res = await sheetCall("saveSubOperatorShares", {sharedSubOrders: nextShared});
+        if (!res?.success) throw new Error(res?.error || "saveSubOperatorShares failed");
+        setSharedSubOrders(nextShared);
+      } catch (e) {
+        console.warn("Shared order sync failed", e);
+        showToast("שיתוף הסדר נכשל");
+        haptic("medium");
+        return;
       }
       subs.forEach(su => writeLocalArray(sharedSubOrderKey(dailyDate, opName, su.username || su.name), sharedEntries));
       if (operatorEditOrder) {

@@ -194,6 +194,8 @@
         clients: getClients_(ss),
         tasks: getTasks_(ss),
         adminOrders: getAdminOrders_(ss),
+        sharedSubOrders: getSubOperatorShares_(ss),
+        subOperatorApprovals: getSubOperatorApprovals_(ss),
         supplyDB: getSupplyDB_(ss),
         lastReadings: getLastReadings_(ss),
         unassignedClients: getUnassignedClients_(ss)
@@ -299,6 +301,24 @@
 
       if (action === "saveAdminOrders") {
         saveAdminOrders_(ss, data.adminOrders || []);
+        return json({ success: true });
+      }
+
+      if (action === "getSubOperatorShares") {
+        return json({ sharedSubOrders: getSubOperatorShares_(ss) });
+      }
+
+      if (action === "saveSubOperatorShares") {
+        saveSubOperatorShares_(ss, data.sharedSubOrders || []);
+        return json({ success: true });
+      }
+
+      if (action === "getSubOperatorApprovals") {
+        return json({ approvals: getSubOperatorApprovals_(ss) });
+      }
+
+      if (action === "saveSubOperatorApprovals") {
+        saveSubOperatorApprovals_(ss, data.approvals || []);
         return json({ success: true });
       }
 
@@ -1836,6 +1856,110 @@ function saveAdminOrders_(ss, adminOrders) {
     JSON.stringify(o.changeLog || [])
   ]));
 
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+}
+
+function getSubOperatorShares_(ss) {
+  const sheet = ss.getSheetByName("SubOperatorShares");
+  if (!sheet) return [];
+  const rows = sheet.getDataRange().getValues();
+  return rows.slice(1).filter(r => r[0] && r[1] && r[4]).map(r => {
+    let date = r[0];
+    if (date instanceof Date) date = Utilities.formatDate(date, "Asia/Jerusalem", "yyyy-MM-dd");
+    else date = String(date || "").slice(0, 10);
+    return {
+      date,
+      operator: String(r[1] || ""),
+      subUsername: String(r[2] || ""),
+      subOperator: String(r[3] || ""),
+      client: String(r[4] || ""),
+      orderIndex: Number(r[5] || 0),
+      note: String(r[6] || ""),
+      sharedAt: String(r[7] || ""),
+      sharedBy: String(r[8] || "")
+    };
+  });
+}
+
+function saveSubOperatorShares_(ss, sharedSubOrders) {
+  let sheet = ss.getSheetByName("SubOperatorShares");
+  if (!sheet) sheet = ss.insertSheet("SubOperatorShares");
+  const headers = ["date","operator","subUsername","subOperator","client","orderIndex","note","sharedAt","sharedBy"];
+  const seen = {};
+  const rows = (sharedSubOrders || []).filter(r => r && r.date && r.operator && r.client).map(r => {
+    const key = [
+      String(r.date || "").slice(0, 10),
+      normalizeReportValue_(r.operator),
+      normalizeReportValue_(r.subUsername || r.subOperator),
+      normalizeReportValue_(r.client)
+    ].join("|");
+    if (seen[key]) return null;
+    seen[key] = true;
+    return [
+      String(r.date || "").slice(0, 10),
+      r.operator || "",
+      r.subUsername || "",
+      r.subOperator || "",
+      r.client || "",
+      Number(r.orderIndex || 0),
+      r.note || "",
+      r.sharedAt || "",
+      r.sharedBy || ""
+    ];
+  }).filter(Boolean);
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+}
+
+function getSubOperatorApprovals_(ss) {
+  const sheet = ss.getSheetByName("SubOperatorApprovals");
+  if (!sheet) return [];
+  const rows = sheet.getDataRange().getValues();
+  return rows.slice(1).filter(r => r[0] && r[1] && r[2]).map(r => {
+    let date = r[0];
+    if (date instanceof Date) date = Utilities.formatDate(date, "Asia/Jerusalem", "yyyy-MM-dd");
+    else date = String(date || "").slice(0, 10);
+    const approvedText = String(r[4] || "").toLowerCase();
+    return {
+      date,
+      operator: String(r[1] || ""),
+      subUsername: String(r[2] || ""),
+      subOperator: String(r[3] || ""),
+      approved: approvedText !== "false" && approvedText !== "0" && approvedText !== "no",
+      approvedAt: String(r[5] || ""),
+      approvedBy: String(r[6] || "")
+    };
+  });
+}
+
+function saveSubOperatorApprovals_(ss, approvals) {
+  let sheet = ss.getSheetByName("SubOperatorApprovals");
+  if (!sheet) sheet = ss.insertSheet("SubOperatorApprovals");
+  const headers = ["date","operator","subUsername","subOperator","approved","approvedAt","approvedBy"];
+  const byKey = {};
+  (approvals || []).filter(r => r && r.date && r.operator && (r.subUsername || r.subOperator)).forEach(r => {
+    const key = [
+      String(r.date || "").slice(0, 10),
+      normalizeReportValue_(r.operator),
+      normalizeReportValue_(r.subUsername || r.subOperator)
+    ].join("|");
+    byKey[key] = r;
+  });
+  const rows = Object.keys(byKey).map(key => {
+    const r = byKey[key];
+    return [
+      String(r.date || "").slice(0, 10),
+      r.operator || "",
+      r.subUsername || "",
+      r.subOperator || "",
+      r.approved === false ? false : true,
+      r.approvedAt || "",
+      r.approvedBy || ""
+    ];
+  });
   sheet.clearContents();
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
