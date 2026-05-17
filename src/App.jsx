@@ -2071,11 +2071,12 @@ useEffect(() => {
     if(!user) return;
     setGreeting(getDailyGreeting(user.username || ""));
     const refresh = async() => {
-      const [tR, uR, oR, shR, apR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers"), sheetCall("getAdminOrders"), sheetCall("getSubOperatorShares"), sheetCall("getSubOperatorApprovals")]);
+      const [tR, uR, oR, shR, apR, prR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers"), sheetCall("getAdminOrders"), sheetCall("getSubOperatorShares"), sheetCall("getSubOperatorApprovals"), sheetCall("getPendingSubReports")]);
       if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
       if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
       if(Array.isArray(shR?.sharedSubOrders)) setSharedSubOrders(shR.sharedSubOrders);
       if(Array.isArray(apR?.approvals)) setSubOperatorApprovals(apR.approvals);
+      if(Array.isArray(prR?.pendingSubReports)) setPendingSubReports(prR.pendingSubReports);
       if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
       try {
         const cached = localStorage.getItem("galileo_cache");
@@ -2086,6 +2087,7 @@ useEffect(() => {
           adminOrders:Array.isArray(oR?.adminOrders) ? oR.adminOrders : c.adminOrders,
           sharedSubOrders:Array.isArray(shR?.sharedSubOrders) ? shR.sharedSubOrders : c.sharedSubOrders,
           subOperatorApprovals:Array.isArray(apR?.approvals) ? apR.approvals : c.subOperatorApprovals,
+          pendingSubReports:Array.isArray(prR?.pendingSubReports) ? prR.pendingSubReports : c.pendingSubReports,
           users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
           cachedAt:Date.now()
         }));
@@ -2124,8 +2126,22 @@ useEffect(() => {
   const writeLocalArray = (key, value) => {
     localStorage.setItem(key, JSON.stringify(value || []));
   };
-  const removePendingSubReport = (id) => {
-    setPendingSubReports(prev => prev.filter(item => item.id !== id));
+  const savePendingSubReports = async (next) => {
+    const clean = Array.isArray(next) ? next : [];
+    setPendingSubReports(clean);
+    localStorage.setItem("galileo_sub_operator_pending_reports", JSON.stringify(clean));
+    const res = await sheetCall("savePendingSubReports", {pendingSubReports:clean});
+    if (!res?.success) throw new Error(res?.error || "savePendingSubReports failed");
+    return clean;
+  };
+  const removePendingSubReport = async (id) => {
+    const next = pendingSubReports.filter(item => item.id !== id);
+    try {
+      await savePendingSubReports(next);
+    } catch(e) {
+      console.warn("Pending sub report removal sync failed", e);
+      setPendingSubReports(next);
+    }
   };
   const adminOrderKey = (date, opName) => localKey("galileo_admin_order", date, opName);
   const operatorOrderKey = (username, date) => localKey("galileo_operator_order", username, date);
@@ -2623,7 +2639,7 @@ useEffect(() => {
 
   useEffect(()=>{
     applyTenantBranding(getCompany());
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); setSheetId("connected"); } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); setSheetId("connected"); } } catch {}
     const checkLicense = async () => {
       const lic = getLicense(); if(!lic.key) return;
       try { const res = await mgmtCall("validateLicense",{key:lic.key}); if(res?.valid){ const company = companyFromLicenseResponse(res); saveLicense({...lic, company:company.name, sheetId:res.sheetId, plan:res.plan, status:res.status, expiry:res.expiry, logoUrl:res.logoUrl||"", appName:company.appName, shortName:company.shortName, icon192Url:company.icon192Url, icon512Url:company.icon512Url, appleIconUrl:company.appleIconUrl, themeColor:company.themeColor, backgroundColor:company.backgroundColor}); saveCompany(company); setCompanyName(company.name || DEFAULT_APP_NAME); setClientPlan({plan:res.plan, status:res.status}); if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId); } else { localStorage.removeItem("galileo_user"); localStorage.removeItem("galileo_license"); setUser(null); setShowSetup(true); } } catch {}
@@ -2653,7 +2669,7 @@ useEffect(() => {
   },[user?.username, user?.role]);
 
   const connectSheets = async (bg=false) => {
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); setSheetId("connected"); if(!bg) return; } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
       let boot = await sheetCall("getBootstrapData");
       let u=boot?.users?.length?boot.users:null;
@@ -2665,13 +2681,14 @@ useEffect(() => {
       let uc=boot?.unassignedClients?.length?boot.unassignedClients:null;
       let sh=Array.isArray(boot?.sharedSubOrders)?boot.sharedSubOrders:null;
       let ap=Array.isArray(boot?.subOperatorApprovals)?boot.subOperatorApprovals:null;
+      let pr=Array.isArray(boot?.pendingSubReports)?boot.pendingSubReports:null;
       if(!u && !c && !t && !ord && !s && !lr){
-        const [uR,cR,tR,oR,sR,rR,ucR,shR,apR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals")]);
-        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null;
+        const [uR,cR,tR,oR,sR,rR,ucR,shR,apR,prR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals"),sheetCall("getPendingSubReports")]);
+        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null;
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
-      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap);
-      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,cachedAt:Date.now()}));
+      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr);
+      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
     } catch {}
@@ -2955,7 +2972,7 @@ useEffect(() => {
     return false;
   };
 
-  const queueSubOperatorReportForApproval = (report, photosBase64, adminEmail) => {
+  const queueSubOperatorReportForApproval = async (report, photosBase64, adminEmail) => {
     const item = {
       id: crypto.randomUUID(),
       status: "pending",
@@ -2969,7 +2986,8 @@ useEffect(() => {
       clientAddress: clientAddress(report.client),
       clientPhone: clientPhone(report.client),
     };
-    setPendingSubReports(prev => [item, ...prev]);
+    const next = [item, ...pendingSubReports.filter(x => x.id !== item.id)];
+    await savePendingSubReports(next);
     setAction("submitReport", "success", 1600);
     showToast("הדוח ממתין לאישור מפעיל");
     haptic("success");
@@ -3036,14 +3054,14 @@ useEffect(() => {
       }));
       const match = tasks.find(t => t.date === report.reportDate && t.client === report.client && (t.operators || []).includes(report.operator) && t.status !== "done");
       if (match) markDone(match.id);
-      removePendingSubReport(item.id);
+      await removePendingSubReport(item.id);
       setAction(`approveSubReport:${item.id}`, "success", 1400);
       showToast("✅ הדוח אושר ונשלח");
       void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
       void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
     } else {
       setPending(p => [...p, report]);
-      removePendingSubReport(item.id);
+      await removePendingSubReport(item.id);
       setAction(`approveSubReport:${item.id}`, "local", 2200);
       showToast("⚠️ הדוח נשמר מקומית לשליחה מאוחרת");
     }
@@ -3120,11 +3138,20 @@ const report = {
 };
     if (!isEditingExistingReport && isSubOperatorRole(user?.role) && !approvalEditId) {
       const adminEmail = getCompany().adminEmail || "";
-      queueSubOperatorReportForApproval(report, photosBase64, adminEmail);
-      setSyncing(false);
-      setEditingReport(null);
-      setScreen("daily");
-      return;
+      try {
+        await queueSubOperatorReportForApproval(report, photosBase64, adminEmail);
+        setSyncing(false);
+        setEditingReport(null);
+        setScreen("daily");
+        return;
+      } catch(e) {
+        console.warn("Sub-operator report queue failed", e);
+        setAction("submitReport", "error", 2200);
+        showToast("שמירת הדוח לאישור נכשלה");
+        haptic("medium");
+        setSyncing(false);
+        return;
+      }
     }
     if (isEditingExistingReport) {
       setReports(prev => {
@@ -3205,7 +3232,7 @@ const report = {
 
     setSyncing(false);
     if (approvalEditId) {
-      removePendingSubReport(approvalEditId);
+      await removePendingSubReport(approvalEditId);
       setApprovalEditId("");
     }
     setEditingReport(null);

@@ -196,6 +196,7 @@
         adminOrders: getAdminOrders_(ss),
         sharedSubOrders: getSubOperatorShares_(ss),
         subOperatorApprovals: getSubOperatorApprovals_(ss),
+        pendingSubReports: getPendingSubReports_(ss),
         supplyDB: getSupplyDB_(ss),
         lastReadings: getLastReadings_(ss),
         unassignedClients: getUnassignedClients_(ss)
@@ -319,6 +320,15 @@
 
       if (action === "saveSubOperatorApprovals") {
         saveSubOperatorApprovals_(ss, data.approvals || []);
+        return json({ success: true });
+      }
+
+      if (action === "getPendingSubReports") {
+        return json({ pendingSubReports: getPendingSubReports_(ss) });
+      }
+
+      if (action === "savePendingSubReports") {
+        savePendingSubReports_(ss, data.pendingSubReports || []);
         return json({ success: true });
       }
 
@@ -1958,6 +1968,54 @@ function saveSubOperatorApprovals_(ss, approvals) {
       r.approved === false ? false : true,
       r.approvedAt || "",
       r.approvedBy || ""
+    ];
+  });
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+}
+
+function getPendingSubReports_(ss) {
+  const sheet = ss.getSheetByName("PendingSubReports");
+  if (!sheet) return [];
+  const rows = sheet.getDataRange().getValues();
+  return rows.slice(1).filter(r => r[0]).map(r => {
+    let item = {};
+    try {
+      item = r[6] ? JSON.parse(String(r[6])) : {};
+    } catch(e) {
+      item = {};
+    }
+    return {
+      id: String(r[0] || item.id || ""),
+      status: String(r[1] || item.status || "pending"),
+      createdAt: String(r[2] || item.createdAt || ""),
+      operator: String(r[3] || item.operator || ""),
+      subUsername: String(r[4] || item.subUsername || ""),
+      subName: String(r[5] || item.subName || ""),
+      ...item
+    };
+  });
+}
+
+function savePendingSubReports_(ss, pendingSubReports) {
+  let sheet = ss.getSheetByName("PendingSubReports");
+  if (!sheet) sheet = ss.insertSheet("PendingSubReports");
+  const headers = ["id","status","createdAt","operator","subUsername","subName","payload"];
+  const byId = {};
+  (pendingSubReports || []).filter(item => item && item.id).forEach(item => {
+    byId[String(item.id)] = item;
+  });
+  const rows = Object.keys(byId).map(id => {
+    const item = byId[id];
+    return [
+      id,
+      item.status || "pending",
+      item.createdAt || "",
+      item.operator || item.report?.operator || "",
+      item.subUsername || "",
+      item.subName || "",
+      JSON.stringify(item)
     ];
   });
   sheet.clearContents();
