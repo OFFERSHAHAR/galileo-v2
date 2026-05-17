@@ -2694,6 +2694,62 @@ useEffect(() => {
     return () => clearInterval(timer);
   },[user?.username, user?.role]);
 
+  useEffect(()=>{
+    if(screen!=="admin" || !sheetId) return;
+    let cancelled = false;
+    (async()=>{
+      try {
+        if(["daily","progress"].includes(adminTab)){
+          const [rep,tR,oR,lrR] = await Promise.all([
+            sheetCall("getReports").catch(()=>null),
+            sheetCall("getTasks").catch(()=>null),
+            sheetCall("getAdminOrders").catch(()=>null),
+            sheetCall("getLastReadings").catch(()=>null)
+          ]);
+          if(cancelled) return;
+          if(Array.isArray(rep?.reports)) setSheetReports(rep.reports);
+          if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
+          if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
+          if(lrR?.lastReadings) setLastReadings(lrR.lastReadings);
+          return;
+        }
+        if(adminTab==="reports" || adminTab==="supply"){
+          const rep = await sheetCall("getReports").catch(()=>null);
+          if(!cancelled && Array.isArray(rep?.reports)) setSheetReports(rep.reports);
+          return;
+        }
+        if(adminTab==="tasks"){
+          const tR = await sheetCall("getTasks").catch(()=>null);
+          if(!cancelled && Array.isArray(tR?.tasks)) setTasks(tR.tasks);
+          return;
+        }
+        if(adminTab==="clients"){
+          const [cR,ucR] = await Promise.all([
+            sheetCall("getClients").catch(()=>null),
+            sheetCall("getUnassignedClients").catch(()=>null)
+          ]);
+          if(cancelled) return;
+          if(Array.isArray(cR?.clients)) setClients(cR.clients);
+          if(Array.isArray(ucR?.clients)) setUnassignedClients(ucR.clients);
+          return;
+        }
+        if(adminTab==="users"){
+          const uR = await sheetCall("getUsers").catch(()=>null);
+          if(!cancelled && Array.isArray(uR?.users)) applyFetchedUsers(uR.users);
+          return;
+        }
+        if(adminTab==="opissues"){
+          await loadOperatorIssues(true);
+          return;
+        }
+        if(adminTab==="treatments"){
+          await loadTreatmentCounts();
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  },[screen, adminTab, dailyDate, taskDate, sheetId]);
+
   const connectSheets = async (bg=false) => {
     try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
@@ -2727,6 +2783,10 @@ useEffect(() => {
       await connectSheets(true);
       if (screen === "daily" || screen === "admin") await loadOperatorIssues(true);
       if (screen === "admin" && adminTab === "treatments") await loadTreatmentCounts();
+      if (screen === "admin" && ["daily","progress","reports"].includes(adminTab)) {
+        const rep = await sheetCall("getReports").catch(()=>null);
+        if (Array.isArray(rep?.reports)) setSheetReports(rep.reports);
+      }
       setSubOperatorRefresh(x=>x+1);
       setAction("refreshData", "success", 1400);
       showToast("✅ הנתונים רועננו");
@@ -3287,6 +3347,32 @@ const report = {
     }
 
     if(ok){
+      setReports(prev => {
+        const next = [...prev];
+        pending.forEach(r => {
+          const idx = next.findIndex(x => x.id === r.id || (
+            normalizeDate(x.reportDate) === normalizeDate(r.reportDate) &&
+            normalizeName(x.operator) === normalizeName(r.operator) &&
+            normalizeName(x.client) === normalizeName(r.client)
+          ));
+          if (idx >= 0) next[idx] = r;
+          else next.push(r);
+        });
+        return next;
+      });
+      setSheetReports(prev => {
+        const next = [...prev];
+        pending.forEach(r => {
+          const idx = next.findIndex(x => x.id === r.id || (
+            normalizeDate(x.reportDate) === normalizeDate(r.reportDate) &&
+            normalizeName(x.operator) === normalizeName(r.operator) &&
+            normalizeName(x.client) === normalizeName(r.client)
+          ));
+          if (idx >= 0) next[idx] = r;
+          else next.push(r);
+        });
+        return next;
+      });
       setPending([]);
       setAction("syncPending", "success", 1600);
       showToast("✅ כל הדוחות נשלחו!");
