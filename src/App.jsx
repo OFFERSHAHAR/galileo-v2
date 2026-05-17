@@ -1719,8 +1719,10 @@ useEffect(() => {
   };
   const isClientReportedDone = (date, clientName) => {
     const opName = dailyOwnerName(date) || user?.name || "";
+    const last = lastReadings[clientName];
     return reports.some(r=>r.reportDate===date&&r.operator===opName&&r.client===clientName) ||
-      completedReports.includes(completedReportKey(date, clientName, opName));
+      completedReports.includes(completedReportKey(date, clientName, opName)) ||
+      normalizeDate(last?.date) === date;
   };
   const poolTags = (poolType) => String(poolType || "מלח").split(/[,+/|]/).map(x=>x.trim()).filter(Boolean);
   const primaryPoolType = (poolType) => poolTags(poolType).includes("כלור") ? "כלור" : "מלח";
@@ -1736,6 +1738,19 @@ useEffect(() => {
   const toggleSuppliedEquipment = (name) => {
     const current = Array.isArray(form.suppliedEquipment) ? form.suppliedEquipment : [];
     sf("suppliedEquipment", current.includes(name) ? current.filter(x=>x!==name) : [...current, name]);
+  };
+  const reportSupplyFlags = (source = {}) => {
+    const label = String(source.supplyLabel || "");
+    const saltMatch = label.match(/[×x]\s*(\d+)/i);
+    return {
+      acid: source.acid === true || label.includes("חומצת"),
+      phUpSupply: source.phUpSupply === true || label.includes("מעלה"),
+      saltPkg: source.saltPkg === true || label.includes("מלח"),
+      saltBags: Number(source.saltBags || saltMatch?.[1] || 1),
+      suppliedEquipment: Array.isArray(source.suppliedEquipment)
+        ? source.suppliedEquipment
+        : String(source.suppliedEquipment || "").split(",").map(x=>x.trim()).filter(Boolean)
+    };
   };
   const openDoneReportEditor = (task) => {
     const opName = dailyOwnerName(dailyDate) || user?.name || "";
@@ -1763,6 +1778,7 @@ useEffect(() => {
     setForm({
       ...blank(),
       ...source,
+      ...reportSupplyFlags(source),
       reportDate: source.reportDate || dailyDate,
       client: task.client,
       clientLocked: true,
@@ -2071,12 +2087,13 @@ useEffect(() => {
     if(!user) return;
     setGreeting(getDailyGreeting(user.username || ""));
     const refresh = async() => {
-      const [tR, uR, oR, shR, apR, prR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers"), sheetCall("getAdminOrders"), sheetCall("getSubOperatorShares"), sheetCall("getSubOperatorApprovals"), sheetCall("getPendingSubReports")]);
+      const [tR, uR, oR, shR, apR, prR, lrR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers"), sheetCall("getAdminOrders"), sheetCall("getSubOperatorShares"), sheetCall("getSubOperatorApprovals"), sheetCall("getPendingSubReports"), sheetCall("getLastReadings")]);
       if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
       if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
       if(Array.isArray(shR?.sharedSubOrders)) setSharedSubOrders(shR.sharedSubOrders);
       if(Array.isArray(apR?.approvals)) setSubOperatorApprovals(apR.approvals);
       if(Array.isArray(prR?.pendingSubReports)) setPendingSubReports(prR.pendingSubReports);
+      if(lrR?.lastReadings) setLastReadings(lrR.lastReadings);
       if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
       try {
         const cached = localStorage.getItem("galileo_cache");
@@ -2088,6 +2105,7 @@ useEffect(() => {
           sharedSubOrders:Array.isArray(shR?.sharedSubOrders) ? shR.sharedSubOrders : c.sharedSubOrders,
           subOperatorApprovals:Array.isArray(apR?.approvals) ? apR.approvals : c.subOperatorApprovals,
           pendingSubReports:Array.isArray(prR?.pendingSubReports) ? prR.pendingSubReports : c.pendingSubReports,
+          lastReadings:lrR?.lastReadings || c.lastReadings,
           users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
           cachedAt:Date.now()
         }));
@@ -2988,6 +3006,7 @@ useEffect(() => {
     };
     const next = [item, ...pendingSubReports.filter(x => x.id !== item.id)];
     await savePendingSubReports(next);
+    rememberCompletedReport(report);
     setAction("submitReport", "success", 1600);
     showToast("הדוח ממתין לאישור מפעיל");
     haptic("success");
@@ -3000,9 +3019,9 @@ useEffect(() => {
     setForm({
       ...blank(),
       ...r,
+      ...reportSupplyFlags(r),
       client: r.client || "",
       reportDate: r.reportDate || todayStr(),
-      suppliedEquipment: String(r.suppliedEquipment || "").split(",").map(x=>x.trim()).filter(Boolean),
       photos: [],
       clientLocked: true,
     });
@@ -3095,8 +3114,13 @@ useEffect(() => {
     const supplyLabel=[acid&&"חומצת מלח",phUpSupply&&"מעלה pH",saltPkg&&`מלח ×${saltBags}`].filter(Boolean).join(", ");
     if(client&&(acid||phUpSupply||saltPkg||suppliedEquipment.length)&&(!isSubOperatorRole(user?.role)||approvalEditId)){
       const newDB={...supplyDB};
-      if (acid || phUpSupply || saltPkg) {
-        newDB[client]={acid,phUpSupply,saltPkg,saltBags,supplyNote:"",updatedAt:fmtDate(reportDate)};
+      const suppliedAcid = suppliedEquipment.includes("חומצת מלח");
+      const suppliedPhUp = suppliedEquipment.includes("סודה אש");
+      const nextAcid = acid && !suppliedAcid;
+      const nextPhUpSupply = phUpSupply && !suppliedPhUp;
+      const nextSaltPkg = saltPkg;
+      if (nextAcid || nextPhUpSupply || nextSaltPkg) {
+        newDB[client]={acid:nextAcid,phUpSupply:nextPhUpSupply,saltPkg:nextSaltPkg,saltBags:nextSaltPkg?saltBags:0,supplyNote:"",updatedAt:fmtDate(reportDate)};
       } else if (suppliedEquipment.length) {
         newDB[client]={acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyNote:"",updatedAt:fmtDate(reportDate)};
       }
