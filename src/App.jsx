@@ -1570,6 +1570,7 @@ useEffect(() => {
   const [treatmentCounts,setTreatmentCounts] = useState([]);
   const [chemicalRestrictionPrompt,setChemicalRestrictionPrompt] = useState(null);
   const [openDailySupplyType,setOpenDailySupplyType] = useState(null);
+  const [openCompletedPools,setOpenCompletedPools] = useState(false);
   const logoLongPress = useRef();
   const longPressTimers = useRef({});
   const fileRef = useRef();
@@ -1742,11 +1743,13 @@ useEffect(() => {
   };
   const reportSupplyFlags = (source = {}) => {
     const label = String(source.supplyLabel || "");
+    const labelParts = label.split(",").map(x=>x.trim()).filter(Boolean);
+    const hasLabelPart = (...needles) => labelParts.some(part => needles.some(n => part.includes(n)));
     const saltMatch = label.match(/[×x]\s*(\d+)/i);
     return {
-      acid: source.acid === true || label.includes("חומצת"),
-      phUpSupply: source.phUpSupply === true || label.includes("מעלה"),
-      saltPkg: source.saltPkg === true || label.includes("מלח"),
+      acid: source.acid === true || hasLabelPart("חומצת"),
+      phUpSupply: source.phUpSupply === true || hasLabelPart("מעלה"),
+      saltPkg: source.saltPkg === true || hasLabelPart("שקי מלח", "מלח ×", "מלח x"),
       saltBags: Number(source.saltBags || saltMatch?.[1] || 1),
       suppliedEquipment: Array.isArray(source.suppliedEquipment)
         ? source.suppliedEquipment
@@ -1755,7 +1758,11 @@ useEffect(() => {
   };
   const openDoneReportEditor = (task) => {
     const opName = dailyOwnerName(dailyDate) || user?.name || "";
-    const existing = [...reports].reverse().find(r => r.reportDate === dailyDate && r.operator === opName && r.client === task.client);
+    const existing = [...sheetReports, ...reports.filter(r=>!r._fromSheet)].reverse().find(r =>
+      normalizeDate(r.reportDate) === normalizeDate(dailyDate) &&
+      normalizeName(r.operator) === normalizeName(opName) &&
+      normalizeName(r.client) === normalizeName(task.client)
+    );
     const lr = lastReadings[task.client] || {};
     const source = existing || {
       reportDate: dailyDate,
@@ -3493,6 +3500,7 @@ const report = {
         !dismissedCriticalIssueIds.includes(String(id));
     });
     const done = todayReported.filter(c=>dayTasks.some(t=>t.client===c)).length;
+    const completedDayTasks = dayTasks.filter(t=>isClientReportedDone(dailyDate, t.client));
     const dailySupplySummary = dailySupplyTasks.reduce((acc, task) => {
       const supply = supplyDB[task.client];
       if (!supply) return acc;
@@ -3589,12 +3597,16 @@ const report = {
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,position:"relative"}}>
-            {[[`${done}/${dayTasks.length}`,"בריכות","📋"],[`${dayTasks.length>0?Math.round((done/dayTasks.length)*100):0}%`,"הושלם","✅"],[workStart?workStart:"--:--","התחלה","⏱️"]].map(([n,l,ic])=>(
-              <div key={l} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:"1px solid rgba(148,163,184,0.20)",boxShadow:"0 12px 28px rgba(30,64,175,0.12)"}}>
+            {[
+              {n:`${done}/${dayTasks.length}`,l:"בריכות",ic:"📋",click:true},
+              {n:`${dayTasks.length>0?Math.round((done/dayTasks.length)*100):0}%`,l:"הושלם",ic:"✅",click:true},
+              {n:workStart?workStart:"--:--",l:"התחלה",ic:"⏱️",click:false}
+            ].map(({n,l,ic,click})=>(
+              <Press key={l} onClick={click?()=>{setOpenCompletedPools(v=>!v);haptic();}:undefined} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:`1px solid ${click&&openCompletedPools?"rgba(21,101,192,0.62)":"rgba(148,163,184,0.20)"}`,boxShadow:"0 12px 28px rgba(30,64,175,0.12)",cursor:click?"pointer":"default"}}>
                 <div style={{fontSize:16,marginBottom:2}}>{ic}</div>
                 <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{n}</div>
                 <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>{l}</div>
-              </div>
+              </Press>
             ))}
           </div>
         </div>
@@ -3620,6 +3632,32 @@ const report = {
             </div>;})}
           </div>}
           {dayTasks.length>0&&<div style={{...card(),padding:"14px 18px",marginBottom:4}}><PBar done={done} total={dayTasks.length} label="בריכות"/></div>}
+          {openCompletedPools&&(
+            <div style={{...card({marginBottom:4})}}>
+              <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>בריכות שהושלמו</div>
+              {completedDayTasks.length ? completedDayTasks.map((t,i)=>{
+                const lr = lastReadings[t.client] || {};
+                const note = String(lr.customStatusText || "").trim();
+                return (
+                  <Press key={`${t.id || t.client}-done-${i}`} onClick={()=>openDoneReportEditor(t)} style={{padding:"9px 0",borderBottom:i<completedDayTasks.length-1?`1px solid ${C.border}`:"none",display:"grid",gap:5}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                      <span style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(t.client || "").split(" - ")[0]}</span>
+                      <span style={{fontSize:11,fontWeight:900,color:C.green,background:"#e8f5e9",borderRadius:99,padding:"3px 9px",flexShrink:0}}>בוצע</span>
+                    </div>
+                    {(lr.chlorine!==undefined || lr.ph!==undefined || lr.salt!==undefined)&&(
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,fontWeight:800,color:C.muted}}>
+                        {lr.chlorine!==undefined&&<span>כלור: {lr.chlorine}</span>}
+                        {lr.ph!==undefined&&<span>pH: {lr.ph}</span>}
+                        {lr.salt!==undefined&&<span>מלח: {lr.salt}</span>}
+                        {lr.date&&<span>{fmtDate(String(lr.date).slice(0,10))}</span>}
+                      </div>
+                    )}
+                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערה פנימית: {note}</div>}
+                  </Press>
+                );
+              }) : <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין בריכות שהושלמו עדיין</div>}
+            </div>
+          )}
           <div style={{...card({marginBottom:4})}}>
             <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>חומרים לסיפוק היום</div>
             {hasDailySupply ? (
@@ -3999,6 +4037,20 @@ const report = {
               )}
               {client&&(()=>{ const c=[...clients,...freeClients].find(x=>x.name===client); const meta=clientMetaLine(c); return meta?<div style={{marginTop:8,fontSize:12,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:10,padding:"8px 12px"}}>{meta}</div>:null; })()}
               {client&&clientPhone(client)&&<a href={`tel:${clientPhone(client)}`} style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"10px 14px",background:"#e8f5e9",border:`1px solid #c8e6c9`,borderRadius:12,textDecoration:"none",color:C.green,fontSize:13,fontWeight:700}}><span>📞</span><span>{client.split(" - ")[0]}</span><span style={{color:C.muted,fontSize:12,marginRight:"auto"}}>לחץ לחיוג</span></a>}
+              {client&&lastReadings[client]&&(()=>{ const lr=lastReadings[client]; const note=String(lr.customStatusText||"").trim(); return (
+                <div style={{marginTop:8,display:"grid",gap:6}}>
+                  <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                    <span style={{fontSize:12,fontWeight:900,color:C.blue}}>מדידה אחרונה:</span>
+                    <span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>כלור: {lr.chlorine ?? "-"}</span>
+                    <span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph ?? "-"}</span>
+                    <span style={{fontSize:12,fontWeight:800,color:C.green}}>מלח: {lr.salt ?? "-"}</span>
+                    {lr.date&&<span style={{fontSize:11,fontWeight:800,color:C.muted,marginRight:"auto"}}>{fmtDate(String(lr.date).slice(0,10))}</span>}
+                  </div>
+                  {note&&<div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:800,color:C.muted,lineHeight:1.5}}>
+                    <span style={{color:C.blue}}>הערה פנימית: </span>{note}
+                  </div>}
+                </div>
+              ); })()}
             </div>
           </div>
         </Sec>
@@ -4150,7 +4202,7 @@ const report = {
           <Press onClick={()=>setScreen("daily")} style={{padding:14,borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>🏠 לוח יומי</Press>
         </div>
         {reports.length>0&&(
-          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,ph:isLowPhValue(last.ph)?0:last.ph,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0,phLowConfirmed:isLowPhValue(last.ph)}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:18,border:`1px solid rgba(194,65,12,0.24)`,background:"rgba(255,247,237,0.82)",color:C.orange,fontWeight:900,fontSize:13,textAlign:"center",width:"100%",maxWidth:340,boxShadow:"0 10px 24px rgba(194,65,12,0.08)"}}>✏️ ערוך דוח אחרון</Press>
+          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,...reportSupplyFlags(last),ph:isLowPhValue(last.ph)?0:last.ph,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0,phLowConfirmed:isLowPhValue(last.ph)}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:18,border:`1px solid rgba(194,65,12,0.24)`,background:"rgba(255,247,237,0.82)",color:C.orange,fontWeight:900,fontSize:13,textAlign:"center",width:"100%",maxWidth:340,boxShadow:"0 10px 24px rgba(194,65,12,0.08)"}}>✏️ ערוך דוח אחרון</Press>
         )}
       </div>
     );
