@@ -2351,14 +2351,14 @@ useEffect(() => {
     }
   };
   const todayReported = [
-    ...reports.filter(r=>r.reportDate===dailyDate&&r.operator===(dailyOwnerName(dailyDate)||user?.name)).map(r=>r.client),
-    ...completedReports
-      .map(key => {
-        const [date, clientName, operatorName] = String(key).split("|");
-        return date === dailyDate && operatorName === normalizeName(dailyOwnerName(dailyDate)||user?.name) ? clientName : "";
-      })
-      .filter(Boolean)
-  ];
+    ...sheetReports,
+    ...reports.filter(r=>!r._fromSheet)
+  ].filter((r, idx, arr) => {
+    const opName = dailyOwnerName(dailyDate) || user?.name || "";
+    if (normalizeDate(r.reportDate) !== dailyDate || normalizeName(r.operator) !== normalizeName(opName) || !r.client) return false;
+    const key = normalizeName(r.client);
+    return arr.findIndex(x => normalizeDate(x.reportDate) === dailyDate && normalizeName(x.operator) === normalizeName(opName) && normalizeName(x.client) === key) === idx;
+  }).map(r=>r.client);
   const taskForClientOperator = (date, clientName, opName) => tasks.find(t =>
     normalizeDate(t.date) === date &&
     t.client === clientName &&
@@ -3499,8 +3499,8 @@ const report = {
         normalizeName(operator) === normalizeName(user?.name) &&
         !dismissedCriticalIssueIds.includes(String(id));
     });
-    const done = todayReported.filter(c=>dayTasks.some(t=>t.client===c)).length;
-    const completedDayTasks = dayTasks.filter(t=>isClientReportedDone(dailyDate, t.client));
+    const done = dayTasks.filter(t=>todayReported.some(c=>normalizeName(c)===normalizeName(t.client))).length;
+    const completedDayTasks = dayTasks.filter(t=>todayReported.some(c=>normalizeName(c)===normalizeName(t.client)));
     const dailySupplySummary = dailySupplyTasks.reduce((acc, task) => {
       const supply = supplyDB[task.client];
       if (!supply) return acc;
@@ -3596,19 +3596,53 @@ const report = {
               <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
             </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,position:"relative"}}>
-            {[
-              {n:`${done}/${dayTasks.length}`,l:"בריכות",ic:"📋",click:true},
-              {n:`${dayTasks.length>0?Math.round((done/dayTasks.length)*100):0}%`,l:"הושלם",ic:"✅",click:true},
-              {n:workStart?workStart:"--:--",l:"התחלה",ic:"⏱️",click:false}
-            ].map(({n,l,ic,click})=>(
-              <Press key={l} onClick={click?()=>{setOpenCompletedPools(v=>!v);haptic();}:undefined} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:`1px solid ${click&&openCompletedPools?"rgba(21,101,192,0.62)":"rgba(148,163,184,0.20)"}`,boxShadow:"0 12px 28px rgba(30,64,175,0.12)",cursor:click?"pointer":"default"}}>
-                <div style={{fontSize:16,marginBottom:2}}>{ic}</div>
-                <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{n}</div>
-                <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>{l}</div>
-              </Press>
-            ))}
+          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:10,position:"relative"}}>
+            <Press onClick={()=>{setOpenCompletedPools(v=>!v);haptic();}} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 10px",textAlign:"center",border:`1px solid ${openCompletedPools?"rgba(21,101,192,0.62)":"rgba(148,163,184,0.20)"}`,boxShadow:"0 12px 28px rgba(30,64,175,0.12)",cursor:"pointer"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:16,marginBottom:2}}>📋</div>
+                  <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{done}/{dayTasks.length}</div>
+                  <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>בריכות</div>
+                </div>
+                <div>
+                  <div style={{fontSize:16,marginBottom:2}}>✅</div>
+                  <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{dayTasks.length>0?Math.round((done/dayTasks.length)*100):0}%</div>
+                  <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>הושלם</div>
+                </div>
+              </div>
+            </Press>
+            <div style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:"1px solid rgba(148,163,184,0.20)",boxShadow:"0 12px 28px rgba(30,64,175,0.12)"}}>
+              <div style={{fontSize:16,marginBottom:2}}>⏱️</div>
+              <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{workStart?workStart:"--:--"}</div>
+              <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>התחלה</div>
+            </div>
           </div>
+          {openCompletedPools&&(
+            <div style={{marginTop:10,background:"rgba(244,249,255,0.82)",border:`1px solid ${C.border}`,borderRadius:16,padding:"10px 12px",boxShadow:"0 12px 28px rgba(30,64,175,0.10)"}}>
+              <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>בריכות שהושלמו</div>
+              {completedDayTasks.length ? completedDayTasks.map((t,i)=>{
+                const lr = lastReadings[t.client] || {};
+                const note = String(lr.customStatusText || "").trim();
+                return (
+                  <Press key={`${t.id || t.client}-done-${i}`} onClick={()=>openDoneReportEditor(t)} style={{padding:"8px 0",borderBottom:i<completedDayTasks.length-1?`1px solid ${C.border}`:"none",display:"grid",gap:5}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                      <span style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(t.client || "").split(" - ")[0]}</span>
+                      <span style={{fontSize:11,fontWeight:900,color:C.green,background:"#e8f5e9",borderRadius:99,padding:"3px 9px",flexShrink:0}}>בוצע</span>
+                    </div>
+                    {(lr.chlorine!==undefined || lr.ph!==undefined || lr.salt!==undefined)&&(
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,fontWeight:800,color:C.muted}}>
+                        {lr.chlorine!==undefined&&<span>כלור: {lr.chlorine}</span>}
+                        {lr.ph!==undefined&&<span>pH: {lr.ph}</span>}
+                        {lr.salt!==undefined&&<span>מלח: {lr.salt}</span>}
+                        {lr.date&&<span>{fmtDate(String(lr.date).slice(0,10))}</span>}
+                      </div>
+                    )}
+                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערה פנימית: {note}</div>}
+                  </Press>
+                );
+              }) : <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין בריכות שהושלמו עדיין</div>}
+            </div>
+          )}
         </div>
         <div style={{margin:"14px 16px 0",position:"relative",zIndex:10}}>
           <InstallAppCard compact/>
@@ -3632,32 +3666,6 @@ const report = {
             </div>;})}
           </div>}
           {dayTasks.length>0&&<div style={{...card(),padding:"14px 18px",marginBottom:4}}><PBar done={done} total={dayTasks.length} label="בריכות"/></div>}
-          {openCompletedPools&&(
-            <div style={{...card({marginBottom:4})}}>
-              <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>בריכות שהושלמו</div>
-              {completedDayTasks.length ? completedDayTasks.map((t,i)=>{
-                const lr = lastReadings[t.client] || {};
-                const note = String(lr.customStatusText || "").trim();
-                return (
-                  <Press key={`${t.id || t.client}-done-${i}`} onClick={()=>openDoneReportEditor(t)} style={{padding:"9px 0",borderBottom:i<completedDayTasks.length-1?`1px solid ${C.border}`:"none",display:"grid",gap:5}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-                      <span style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(t.client || "").split(" - ")[0]}</span>
-                      <span style={{fontSize:11,fontWeight:900,color:C.green,background:"#e8f5e9",borderRadius:99,padding:"3px 9px",flexShrink:0}}>בוצע</span>
-                    </div>
-                    {(lr.chlorine!==undefined || lr.ph!==undefined || lr.salt!==undefined)&&(
-                      <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,fontWeight:800,color:C.muted}}>
-                        {lr.chlorine!==undefined&&<span>כלור: {lr.chlorine}</span>}
-                        {lr.ph!==undefined&&<span>pH: {lr.ph}</span>}
-                        {lr.salt!==undefined&&<span>מלח: {lr.salt}</span>}
-                        {lr.date&&<span>{fmtDate(String(lr.date).slice(0,10))}</span>}
-                      </div>
-                    )}
-                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערה פנימית: {note}</div>}
-                  </Press>
-                );
-              }) : <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין בריכות שהושלמו עדיין</div>}
-            </div>
-          )}
           <div style={{...card({marginBottom:4})}}>
             <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>חומרים לסיפוק היום</div>
             {hasDailySupply ? (
