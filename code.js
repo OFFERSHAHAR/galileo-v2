@@ -219,6 +219,8 @@
       if (action === "saveOperatorIssue") {
         const sheet = ss.getSheetByName("תקלות_מפעילים") || ss.insertSheet("תקלות_מפעילים");
         if(sheet.getLastRow()===0) sheet.appendRow(["id","מפעיל","לקוח","תיאור","דחיפות","סטטוס","תגובת_אדמין","תאריך"]);
+        const duplicateRow = findDuplicateOperatorIssueRow_(sheet, data);
+        if (duplicateRow) return json({ success:true, duplicate:true, row:duplicateRow });
         sheet.appendRow([Date.now(), data.operator, data.client, data.desc, data.priority, "פתוח", "", data.date||new Date().toISOString().slice(0,10)]);
         if (String(data.priority || "") === "קריטי" || String(data.priority || "") === "׳§׳¨׳™׳˜׳™") {
           sendOneSignalToAdmins_(ss, {
@@ -290,7 +292,7 @@
         const dataStart = hi + 2;
         const last = sheet.getLastRow();
         if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
-        (data.tasks || []).filter(t => !isAdminOrderTask_(t)).forEach(t => {
+        dedupeTasks_(data.tasks || []).filter(t => !isAdminOrderTask_(t)).forEach(t => {
           sheet.appendRow([t.id, t.date, t.client, t.operators.join(","), t.status, JSON.stringify(t.changeLog), t.orderIndex || 0, t.adminNote || "", t.createdByAdminOrder === true]);
         });
         return json({ success: true });
@@ -429,7 +431,7 @@
         ensureColumns(sheet, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים"]);
         const last = sheet.getLastRow();
         if (last > 3) sheet.deleteRows(4, last - 3);
-        data.rows.forEach(r => sheet.appendRow(r));
+        dedupeRowsByFirstCell_(data.rows || []).forEach(r => sheet.appendRow(r));
         return json({ success: true });
       }
 
@@ -1423,7 +1425,7 @@
     return h === "שם" || h === "שם_לקוח" || h === "שם לקוח" || h === "לקוח" || h === "שם הלקוח";
   }
 
-  function findDuplicateReportRow_(sheet, report) {
+function findDuplicateReportRow_(sheet, report) {
     if (!sheet || sheet.getLastRow() < 2) return 0;
 
     const targetKey = reportDuplicateKeyFromReport_(report);
@@ -1436,6 +1438,31 @@
       if (reportDuplicateKeyFromRow_(rows[i]) === targetKey) return i + 1;
     }
 
+    return 0;
+  }
+
+  function findDuplicateOperatorIssueRow_(sheet, issue) {
+    if (!sheet || sheet.getLastRow() < 2) return 0;
+    const targetKey = [
+      normalizeReportDate_(issue.date || new Date()),
+      normalizeReportValue_(issue.operator).toLowerCase(),
+      normalizeReportValue_(issue.client).toLowerCase(),
+      normalizeReportValue_(issue.desc).toLowerCase(),
+      normalizeReportValue_(issue.priority).toLowerCase(),
+      "פתוח"
+    ].join("|");
+    const rows = sheet.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      const rowKey = [
+        normalizeReportDate_(rows[i][7]),
+        normalizeReportValue_(rows[i][1]).toLowerCase(),
+        normalizeReportValue_(rows[i][2]).toLowerCase(),
+        normalizeReportValue_(rows[i][3]).toLowerCase(),
+        normalizeReportValue_(rows[i][4]).toLowerCase(),
+        normalizeReportValue_(rows[i][5] || "פתוח")
+      ].join("|");
+      if (rowKey === targetKey) return i + 1;
+    }
     return 0;
   }
 
@@ -1508,6 +1535,14 @@ function normalizeReportValue_(value) {
   const n = Number(s);
   if (!isNaN(n)) return String(Math.round(n * 1000) / 1000);
   return s;
+}
+
+function dedupeRowsByFirstCell_(rows) {
+  const map = {};
+  (rows || []).filter(r => r && r[0]).forEach(r => {
+    map[normalizeReportValue_(r[0]).toLowerCase()] = r;
+  });
+  return Object.keys(map).map(k => map[k]);
 }
 
 function syncLicenseCompanyFromClient_(ss, row) {
@@ -1725,7 +1760,11 @@ function saveClients_(sheet, clients) {
   let updated = 0;
   let appended = 0;
   let matched = 0;
+  const byClientName = {};
   clients.filter(c => c && String(c.name || "").trim()).forEach(c => {
+    byClientName[normalizeReportValue_(c.originalName || c.name).toLowerCase()] = c;
+  });
+  Object.keys(byClientName).map(key => byClientName[key]).forEach(c => {
     const record = existing[normalizeReportValue_(c.originalName || c.name)] || existing[normalizeReportValue_(c.name)];
     if (record) {
       matched++;
@@ -1748,7 +1787,7 @@ function saveClients_(sheet, clients) {
     sheet.appendRow(row);
     appended++;
   });
-  const requestedExisting = clients.filter(c => c && String(c.originalName || c.name || "").trim()).length;
+  const requestedExisting = Object.keys(byClientName).length;
   if (clients.length && requestedExisting && matched === 0 && appended === 0) {
     return { success:false, error:"no matching client rows found", count:clients.length, updated, appended, matched };
   }
@@ -1783,6 +1822,34 @@ function getTasks_(ss) {
 
 function isAdminOrderTask_(t) {
   return !!(t && (t.createdByAdminOrder === true || Number(t.orderIndex || 0) > 0));
+}
+
+function taskKey_(t) {
+  const operators = (t && t.operators || []).map(op => normalizeReportValue_(op).toLowerCase()).filter(Boolean).sort().join(",");
+  return [
+    normalizeAdminOrderDate_(t && t.date),
+    normalizeReportValue_(t && t.client).toLowerCase(),
+    operators
+  ].join("|");
+}
+
+function dedupeTasks_(tasks) {
+  const map = {};
+  (tasks || []).filter(t => t && t.date && t.client && !isAdminOrderTask_(t)).forEach(t => {
+    const key = taskKey_(t);
+    map[key] = {
+      id: t.id || key,
+      date: normalizeAdminOrderDate_(t.date),
+      client: String(t.client || ""),
+      operators: Array.isArray(t.operators) ? t.operators : String(t.operators || "").split(",").map(x => x.trim()).filter(Boolean),
+      status: String(t.status || "pending"),
+      changeLog: Array.isArray(t.changeLog) ? t.changeLog : [],
+      orderIndex: Number(t.orderIndex || 0),
+      adminNote: String(t.adminNote || ""),
+      createdByAdminOrder: t.createdByAdminOrder === true
+    };
+  });
+  return Object.keys(map).map(k => map[k]);
 }
 
 function getAdminOrders_(ss) {
