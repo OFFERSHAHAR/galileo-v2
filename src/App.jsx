@@ -374,6 +374,8 @@ function initOneSignal() {
         if (!window.OneSignalInitialized) {
           await OneSignal.init({
             appId: ONESIGNAL_APP_ID,
+            serviceWorkerPath: "sw.js",
+            serviceWorkerParam: { scope: "/" },
             allowLocalhostAsSecureOrigin: true,
             notifyButton: { enable: false },
           });
@@ -1118,6 +1120,8 @@ function LicensesTab({C2, inp2, showMsg}) {
     script.onload = () => {
       window.OneSignal.init({
         appId: ONESIGNAL_APP_ID,
+        serviceWorkerPath: "sw.js",
+        serviceWorkerParam: { scope: "/" },
         allowLocalhostAsSecureOrigin: true,
         notifyButton: { enable: false },
       }).then(() => {
