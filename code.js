@@ -1699,8 +1699,9 @@ function saveUserPushSubscription_(ss, data) {
     const token = String(data.token || "").trim();
     const hasActiveFlag = Object.prototype.hasOwnProperty.call(data, "active");
     const active = data.active === true || String(data.active || "").toLowerCase() === "true";
-    if (subIdx >= 0) sheet.getRange(row, subIdx + 1).setValue(subscriptionId);
-    if (tokenIdx >= 0) sheet.getRange(row, tokenIdx + 1).setValue(token);
+    const isExplicitReset = hasActiveFlag && !active && !subscriptionId && !token;
+    if (subIdx >= 0 && (subscriptionId || isExplicitReset)) sheet.getRange(row, subIdx + 1).setValue(subscriptionId);
+    if (tokenIdx >= 0 && (token || isExplicitReset)) sheet.getRange(row, tokenIdx + 1).setValue(token);
     if (enabledIdx >= 0 && (hasActiveFlag || subscriptionId || token)) sheet.getRange(row, enabledIdx + 1).setValue(active || subscriptionId || token ? "TRUE" : "FALSE");
     if (updatedIdx >= 0) sheet.getRange(row, updatedIdx + 1).setValue(new Date());
     if (appIdx >= 0) sheet.getRange(row, appIdx + 1).setValue(String(data.appId || "").trim());
