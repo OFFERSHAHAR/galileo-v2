@@ -235,16 +235,20 @@ async function sheetCall(action, payload={}) {
 
 function getOneSignalInstance() {
   if (typeof window === "undefined") return Promise.resolve(null);
+  if (window.galileoOneSignalDisabled) return Promise.resolve(null);
   window.OneSignalDeferred = window.OneSignalDeferred || [];
   return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), 7000);
     window.OneSignalDeferred.push(async function(OneSignal) {
       try {
         if (window.galileoOneSignalInitPromise) {
           await window.galileoOneSignalInitPromise;
         }
+        clearTimeout(timer);
         resolve(OneSignal);
       } catch (e) {
         console.warn("Push init failed:", e);
+        clearTimeout(timer);
         resolve(null);
       }
     });
@@ -268,7 +272,7 @@ async function connectPushUser(username, prompt=false) {
     if (OneSignal.User?.PushSubscription?.optIn) {
       await OneSignal.User.PushSubscription.optIn();
     }
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 24; i++) {
       const activeNow = !!OneSignal.User?.PushSubscription?.optedIn && !!OneSignal.User?.PushSubscription?.id;
       if (activeNow) break;
       await new Promise(resolve => setTimeout(resolve, 450));
@@ -276,11 +280,25 @@ async function connectPushUser(username, prompt=false) {
       if (OneSignal.User?.PushSubscription?.optIn) await OneSignal.User.PushSubscription.optIn();
     }
     const active = !!OneSignal.User?.PushSubscription?.optedIn && !!OneSignal.User?.PushSubscription?.id;
+    if (typeof OneSignal.login === "function") await OneSignal.login(externalId);
+    let testSent = true;
+    let testResponse = null;
+    if (prompt && active) {
+      testResponse = await sendAppNotificationToUserDetailed(
+        "בדיקת התראות",
+        "ההתראות חוברו בהצלחה",
+        externalId
+      ).catch(e => ({ success:false, error:String(e?.message || e) }));
+      testSent = !!(testResponse?.success || testResponse?.sent || Number(testResponse?.recipients || 0) > 0);
+    }
     return {
-      success: active || !prompt,
+      success: prompt ? (active && testSent) : (active || OneSignal.Notifications?.permission === true),
       externalId,
       permission: OneSignal.Notifications?.permission,
       subscriptionId: OneSignal.User?.PushSubscription?.id || "",
+      token: OneSignal.User?.PushSubscription?.token || "",
+      testSent,
+      testResponse,
       optedIn: !!OneSignal.User?.PushSubscription?.optedIn,
     };
   } catch (e) {
@@ -294,6 +312,13 @@ async function sendAppNotificationToUser(title, message, username) {
   if (!externalUserId) return false;
   const res = await sheetCall("sendAppNotificationToUser", { externalUserId, title, message });
   return !!(res?.success || res?.sent || Number(res?.recipients || 0) > 0);
+}
+
+async function sendAppNotificationToUserDetailed(title, message, username) {
+  const externalUserId = String(username || "").trim().toLowerCase();
+  if (!externalUserId) return { success:false, error:"missing_external_user_id" };
+  const res = await sheetCall("sendAppNotificationToUser", { externalUserId, title, message });
+  return res || { success:false, error:"script_no_response" };
 }
 
 const normalizeWhatsAppPhone = (phone) => {
@@ -1469,6 +1494,17 @@ useEffect(() => {
   const clientGateCode = (n) => (clients.find(c=>c.name===n)||{}).gateCode||"";
   const normalizeDate = (d) => String(d||"").trim().slice(0,10);
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
+  const findPushUser = (value) => {
+    if (!value) return null;
+    if (typeof value === "object" && value.username) return value;
+    const key = normalizeName(typeof value === "object" ? (value.username || value.name || value.phone) : value);
+    if (!key) return null;
+    return allUsers.find(u =>
+      normalizeName(u?.username) === key ||
+      normalizeName(u?.name) === key ||
+      normalizeName(u?.phone) === key
+    ) || null;
+  };
   const isAdminRole = (role) => ["admin", "מנהל", "אדמין"].includes(String(role || "").trim().toLowerCase());
   const isOperatorRole = (role) => ["operator", "op", "מפעיל", "מפעיל קבוע", "מפעיל_קבוע"].includes(String(role || "").trim().toLowerCase());
   const isSubOperatorRole = (role) => ["sub_operator", "sub operator", "sub-operator", "suboperator", "sub_admin", "sub admin", "sub-admin", "subadmin", "עוזר", "עוזר מפעיל", "עוזר_מפעיל", "עוזר-מפעיל"].includes(String(role || "").trim().toLowerCase());
@@ -1796,10 +1832,7 @@ useEffect(() => {
   const sendNotificationToOperators = async (ops=[], title, message) => {
     const names = Array.isArray(ops) ? ops : [ops];
     const targets = names
-      .map(name => allUsers.find(u =>
-        normalizeName(u.name) === normalizeName(name) ||
-        normalizeName(u.username) === normalizeName(name)
-      ))
+      .map(findPushUser)
       .filter(u => u?.username);
     const results = await Promise.all(targets.map(u => sendAppNotificationToUser(title, message, u.username).catch(()=>false)));
     return results.filter(Boolean).length;
@@ -1807,10 +1840,7 @@ useEffect(() => {
   const sendNotificationToSubOperators = async (subs=[], title, message) => {
     const list = Array.isArray(subs) ? subs : [subs];
     const targets = list
-      .map(item => typeof item === "string"
-        ? allUsers.find(u => normalizeName(u.username) === normalizeName(item) || normalizeName(u.name) === normalizeName(item))
-        : item
-      )
+      .map(findPushUser)
       .filter(u => u?.username);
     const results = await Promise.all(targets.map(u => sendAppNotificationToUser(title, message, u.username).catch(()=>false)));
     return results.filter(Boolean).length;
@@ -4371,7 +4401,7 @@ const report = {
                     setTimeout(async () => {
                       const clientList = notifyClients.map(c=>c.name.split(" - ")[0]).join(", ");
                       const targets = notifyOps.map(opName => {
-                        const opUser = allUsers.find(u=>normalizeName(u.name)===normalizeName(opName));
+                        const opUser = findPushUser(opName);
                         if (!opUser?.username) {
                           console.warn("Notification target user not found or missing username", opName, opUser);
                           return null;

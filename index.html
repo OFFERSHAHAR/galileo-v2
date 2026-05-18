@@ -18,17 +18,26 @@
     <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
     <script>
       window.OneSignalDeferred = window.OneSignalDeferred || [];
-      OneSignalDeferred.push(async function(OneSignal) {
-        window.galileoOneSignalInitPromise = OneSignal.init({
-          appId: "17b43ba4-9ebf-4b66-934c-ee8eb0c98930",
-          safari_web_id: "web.onesignal.auto.6b1e0125-c07a-4d4d-8123-db80df1063df",
-          notifyButton: {
-            enable: true,
-          },
+      if (["localhost", "127.0.0.1", "::1"].includes(window.location.hostname)) {
+        window.galileoOneSignalDisabled = true;
+      } else {
+        OneSignalDeferred.push(async function(OneSignal) {
+          try {
+            window.galileoOneSignalInitPromise = OneSignal.init({
+              appId: "17b43ba4-9ebf-4b66-934c-ee8eb0c98930",
+              safari_web_id: "web.onesignal.auto.6b1e0125-c07a-4d4d-8123-db80df1063df",
+              notifyButton: {
+                enable: true,
+              },
+            });
+            await window.galileoOneSignalInitPromise;
+            window.galileoOneSignalReady = true;
+          } catch (error) {
+            window.galileoOneSignalReady = false;
+            window.galileoOneSignalError = String(error && error.message ? error.message : error);
+          }
         });
-        await window.galileoOneSignalInitPromise;
-        window.galileoOneSignalReady = true;
-      });
+      }
     </script>
   </head>
   <body>
