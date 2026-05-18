@@ -66,6 +66,16 @@ function forgetPushEnabled(username) {
   const users = getRememberedPushUsers().filter(u => u !== key);
   localStorage.setItem(PUSH_ENABLED_USERS_KEY, JSON.stringify(users));
 }
+function getCurrentPushUsername() {
+  try {
+    const remembered = localStorage.getItem(PUSH_RECONNECT_USER_KEY);
+    if (remembered) return String(remembered).trim();
+    const saved = JSON.parse(localStorage.getItem("galileo_user") || "null");
+    return String(saved?.username || "").trim();
+  } catch {
+    return "";
+  }
+}
 async function unregisterPushServiceWorkers() {
   if (typeof navigator === "undefined" || !navigator.serviceWorker?.getRegistrations) return 0;
   const regs = await navigator.serviceWorker.getRegistrations();
@@ -427,6 +437,7 @@ function initOneSignal() {
           window.OneSignalInitialized = true;
           console.log("OneSignal ready");
         }
+        setupOneSignalSubscriptionListener(OneSignal);
         finish(true);
       } catch (e) {
         console.warn("OneSignal init error:", e);
@@ -481,6 +492,21 @@ async function runOneSignal(callback) {
   });
 }
 
+function setupOneSignalSubscriptionListener(OneSignal) {
+  if (typeof window === "undefined" || window.OneSignalSubscriptionListenerReady) return;
+  const push = OneSignal?.User?.PushSubscription;
+  if (!push || typeof push.addEventListener !== "function") return;
+  window.OneSignalSubscriptionListenerReady = true;
+  push.addEventListener("change", async () => {
+    const username = getCurrentPushUsername();
+    if (!username) return;
+    const state = await readOneSignalPushState(OneSignal, username);
+    if (!state.subscriptionId || !state.token) return;
+    await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state)
+      .catch(e => console.warn("Push subscription listener save failed:", e));
+  });
+}
+
 async function loginOneSignalUser(username) {
   if (!username) return false;
   return runOneSignal(async (OneSignal) => {
@@ -493,7 +519,8 @@ async function loginOneSignalUser(username) {
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function readOneSignalPushState(OneSignal, externalId) {
-  for (let i = 0; i < 5; i++) {
+  let latest = null;
+  for (let i = 0; i < 12; i++) {
     const push = OneSignal?.User?.PushSubscription || {};
     const subscriptionId = String(
       push.id ||
@@ -510,9 +537,9 @@ async function readOneSignalPushState(OneSignal, externalId) {
       : (typeof push.getOptedIn === "function" ? await push.getOptedIn() : undefined);
     const permission = OneSignal?.Notifications?.permission === true ||
       (typeof Notification !== "undefined" && Notification.permission === "granted");
-    const active = !!subscriptionId && permission && optedIn !== false;
+    const active = !!subscriptionId && !!token && permission && optedIn !== false;
     if (subscriptionId || token) {
-      return {
+      latest = {
         externalUserId: externalId,
         subscriptionId,
         token,
@@ -522,9 +549,11 @@ async function readOneSignalPushState(OneSignal, externalId) {
         appId: ONESIGNAL_APP_ID,
         userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
       };
+      if (subscriptionId && token) return latest;
     }
-    await sleep(500);
+    await sleep(750);
   }
+  if (latest) return latest;
   return {
     externalUserId: externalId,
     subscriptionId: "",
@@ -2113,11 +2142,11 @@ useEffect(() => {
           }
         }
 
+        localStorage.setItem(PUSH_RECONNECT_USER_KEY, externalId);
+        await OneSignal.login(externalId);
         if (OneSignal.User?.PushSubscription?.optIn) {
           await OneSignal.User.PushSubscription.optIn();
         }
-        await sleep(700);
-        await OneSignal.login(externalId);
         const state = await readOneSignalPushState(OneSignal, externalId);
         await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
         return state.active ? true : "no-subscription";
