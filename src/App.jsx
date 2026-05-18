@@ -60,6 +60,12 @@ function rememberPushEnabled(username) {
   users.add(key);
   localStorage.setItem(PUSH_ENABLED_USERS_KEY, JSON.stringify([...users]));
 }
+function forgetPushEnabled(username) {
+  const key = normalizePushUsername(username);
+  if (!key) return;
+  const users = getRememberedPushUsers().filter(u => u !== key);
+  localStorage.setItem(PUSH_ENABLED_USERS_KEY, JSON.stringify(users));
+}
 async function unregisterPushServiceWorkers() {
   if (typeof navigator === "undefined" || !navigator.serviceWorker?.getRegistrations) return 0;
   const regs = await navigator.serviceWorker.getRegistrations();
@@ -2113,7 +2119,8 @@ useEffect(() => {
       try {
         if (typeof OneSignal.logout === "function") await OneSignal.logout();
         if (OneSignal.User?.PushSubscription?.optOut) await OneSignal.User.PushSubscription.optOut();
-        localStorage.setItem(PUSH_RECONNECT_USER_KEY, externalId);
+        forgetPushEnabled(externalId);
+        localStorage.removeItem(PUSH_RECONNECT_USER_KEY);
         await unregisterPushServiceWorkers();
         window.OneSignalInitialized = false;
         window.OneSignalReadyPromise = null;
@@ -2127,11 +2134,10 @@ useEffect(() => {
     });
 
     if (ok) {
-      rememberPushEnabled(externalId);
       setAction("pushReset", "success", 1800);
-      setAction("push", "success", 1800);
-      setPushCardOpen(false);
-      showToast("✅ ההתראות אופסו וחוברו מחדש");
+      setAction("push", "idle");
+      setPushCardOpen(true);
+      showToast("✅ ההתראות אופסו. יש להפעיל מחדש");
     } else {
       setAction("pushReset", "error", 2500);
       showToast("⚠️ איפוס נכשל, בדוק הרשאת התראות בדפדפן");
@@ -2224,17 +2230,6 @@ useEffect(() => {
   const resetPushForCurrentUser = async () => resetPushForUsername(user?.username);
 
   const enablePushForCurrentUser = async () => enablePushForUsername(user?.username);
-
-  useEffect(() => {
-    const reconnectUser = localStorage.getItem(PUSH_RECONNECT_USER_KEY);
-    if (!reconnectUser || !user?.username) return;
-    if (normalizePushUsername(reconnectUser) !== normalizePushUsername(user.username)) return;
-    localStorage.removeItem(PUSH_RECONNECT_USER_KEY);
-    const timer = setTimeout(() => {
-      enablePushForUsername(user.username).catch(e => console.warn("Push reconnect failed", e));
-    }, 900);
-    return () => clearTimeout(timer);
-  }, [user?.username]);
 
   const writeLocalArray = (key, value) => {
     localStorage.setItem(key, JSON.stringify(value || []));
@@ -3556,7 +3551,11 @@ const report = {
           </Press>
         </div>
         <InstallAppCard/>
-        <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:16,marginBottom:0,letterSpacing:"0.05em",fontWeight:800}}>POOLMANG.BY.OR2026 {APP_VERSION} · CREATED BY OR MUSA 2026-all rights reserved</p>
+        <p style={{textAlign:"center",fontSize:10.5,color:C.muted,marginTop:16,marginBottom:0,letterSpacing:"0.03em",fontWeight:800,lineHeight:1.55}}>
+          © 2026 Poolmang™ by Or Musa. All rights reserved.
+          <br/>
+          {APP_VERSION}
+        </p>
       </div>
       <Toast msg={toast.msg} visible={toast.visible}/>
     </div>
