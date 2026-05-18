@@ -416,7 +416,7 @@
 
       if (action === "saveSupplyDB") {
         const sheet = ss.getSheetByName("ציוד_לקוחות");
-        ensureColumns(sheet, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים"]);
+        ensureColumns(sheet, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate"]);
         const last = sheet.getLastRow();
         if (last > 3) sheet.deleteRows(4, last - 3);
         dedupeRowsByFirstCell_(data.rows || []).forEach(r => sheet.appendRow(r));
@@ -429,10 +429,11 @@
         const db = {};
         rows.slice(3).filter(r => r[0]).forEach(r => {
           db[String(r[0])] = {
-            acid: r[1] === "כן", phUp: r[2] === "כן",
+            acid: r[1] === "כן", phUp: r[2] === "כן", phUpSupply: r[2] === "כן",
             saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 1,
             updatedAt: String(r[5]),
-            supplyNote: String(r[6]||"")
+            supplyNote: String(r[6]||""),
+            nextSupplyDate: String(r[7]||"")
           };
         });
         return json({ supplyDB: db });
@@ -494,6 +495,11 @@
         const sheet = ss.getSheetByName("לקוחות");
         return json(saveClients_(sheet, data.clients || []));
     }
+
+      if (action === "deleteClient") {
+        const sheet = ss.getSheetByName("לקוחות");
+        return json(deleteClient_(sheet, data));
+      }
 
       if (action === "getLastReadings") {
         const sheet = ss.getSheetByName("דוחות");
@@ -1866,6 +1872,37 @@ function saveClients_(sheet, clients) {
   return { success:true, count:clients.length, updated, appended, matched };
 }
 
+function deleteClient_(sheet, data) {
+  if (!sheet) return { success:false, error:"clients sheet not found" };
+
+  const targetName = String(data.originalName || data.clientName || data.name || "").trim();
+  if (!targetName) return { success:false, error:"missing client name" };
+
+  const headerRowIndex = findHeaderRowIndex_(sheet, ["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח"]);
+  const headerRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 3;
+  const dataStart = headerRow + 1;
+  const lastRow = sheet.getLastRow();
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  if (lastRow < dataStart) return { success:false, error:"client not found", clientName:targetName };
+
+  const headers = sheet.getRange(headerRow, 1, 1, lastCol).getValues()[0].map(h => String(h || "").trim());
+  let nameIdx = headers.findIndex(h => isClientNameHeader_(h));
+  if (nameIdx < 0) nameIdx = 0;
+
+  const targetKey = normalizeReportValue_(targetName).toLowerCase();
+  const rows = sheet.getRange(dataStart, 1, lastRow - headerRow, lastCol).getValues();
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const rowName = String(rows[i][nameIdx] || "").trim();
+    if (normalizeReportValue_(rowName).toLowerCase() === targetKey) {
+      const rowNumber = dataStart + i;
+      sheet.deleteRow(rowNumber);
+      return { success:true, deleted:true, row:rowNumber, clientName:targetName };
+    }
+  }
+
+  return { success:false, error:"client not found", clientName:targetName };
+}
+
 function getTasks_(ss) {
   const sheet = ss.getSheetByName("משימות");
   if (!sheet) return [];
@@ -2169,10 +2206,11 @@ function getSupplyDB_(ss) {
   const db = {};
   rows.slice(3).filter(r => r[0]).forEach(r => {
     db[String(r[0])] = {
-      acid: r[1] === "כן", phUp: r[2] === "כן",
+      acid: r[1] === "כן", phUp: r[2] === "כן", phUpSupply: r[2] === "כן",
       saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 1,
       updatedAt: String(r[5]),
-      supplyNote: String(r[6]||"")
+      supplyNote: String(r[6]||""),
+      nextSupplyDate: String(r[7]||"")
     };
   });
   return db;
