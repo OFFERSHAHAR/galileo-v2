@@ -275,11 +275,19 @@ async function connectPushUser(username, prompt=false) {
       const permission = await OneSignal.Notifications.requestPermission();
       if (permission === false) return { success:false, error:"permission_denied" };
     }
-    if (prompt && OneSignal.User?.PushSubscription?.optIn) {
+    if (OneSignal.User?.PushSubscription?.optIn) {
       await OneSignal.User.PushSubscription.optIn();
     }
+    for (let i = 0; i < 10; i++) {
+      const activeNow = !!OneSignal.User?.PushSubscription?.optedIn && !!OneSignal.User?.PushSubscription?.id;
+      if (activeNow) break;
+      await new Promise(resolve => setTimeout(resolve, 450));
+      if (typeof OneSignal.login === "function") await OneSignal.login(externalId);
+      if (OneSignal.User?.PushSubscription?.optIn) await OneSignal.User.PushSubscription.optIn();
+    }
+    const active = !!OneSignal.User?.PushSubscription?.optedIn && !!OneSignal.User?.PushSubscription?.id;
     return {
-      success:true,
+      success: active || !prompt,
       externalId,
       permission: OneSignal.Notifications?.permission,
       subscriptionId: OneSignal.User?.PushSubscription?.id || "",
