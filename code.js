@@ -1291,8 +1291,24 @@
     };
   }
 
+  function getNotificationSyncSpreadsheet_() {
+    const active = SpreadsheetApp.getActiveSpreadsheet();
+    if (active) return active;
+
+    const props = PropertiesService.getScriptProperties();
+    const sheetId = String(
+      props.getProperty("GALILEO_SHEET_ID") ||
+      props.getProperty("SHEET_ID") ||
+      props.getProperty("CLIENT_SHEET_ID") ||
+      "1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no"
+    ).trim();
+
+    if (!sheetId) throw new Error("missing sheet id");
+    return SpreadsheetApp.openById(sheetId);
+  }
+
   function syncAppNotificationUsers() {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const ss = getNotificationSyncSpreadsheet_();
     const res = syncAppNotificationUsers_(ss);
     Logger.log(JSON.stringify(res));
     return res;
