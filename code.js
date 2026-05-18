@@ -10,33 +10,8 @@
       const SHEET_ID = data.sheetId || "1am5BQh6oesQXoJgdeTpiDTIEuzf8UdfWotPXSoqOLiU";
       const ss = SpreadsheetApp.openById(SHEET_ID);
 
-      if (action === "sendOneSignalToAdmins" || action === "sendNotificationToAdmins") {
-        return json(sendOneSignalToAdmins_(ss, data));
-      }
 
-      if (
-        action === "sendOneSignalToUser" ||
-        action === "sendOneSignal" ||
-        action === "sendOneSignalNotification" ||
-        action === "sendPushNotification" ||
-        action === "sendPushToUser" ||
-        action === "sendNotification" ||
-        action === "sendNotificationToUser" ||
-        action === "sendUserNotification" ||
-        action === "sendPush" ||
-        action === "pushToUser" ||
-        action === "notifyUser"
-      ) {
-        return json(sendOneSignalToUser_(data, ss));
-      }
 
-      if (action === "saveUserPushSubscription") {
-        return json(saveUserPushSubscription_(ss, data));
-      }
-
-      if (action === "diagnoseOneSignalUser") {
-        return json(diagnoseOneSignalUser_(ss, data));
-      }
 
       if (action === "sendGreenApiWhatsApp") {
         return json(sendGreenApiWhatsApp_(data));
@@ -231,7 +206,7 @@
         if (duplicateRow) return json({ success:true, duplicate:true, row:duplicateRow });
         sheet.appendRow([Date.now(), data.operator, data.client, data.desc, data.priority, "פתוח", "", data.date||new Date().toISOString().slice(0,10)]);
         if (String(data.priority || "") === "קריטי" || String(data.priority || "") === "׳§׳¨׳™׳˜׳™") {
-          sendOneSignalToAdmins_(ss, {
+          sendAppNotificationToAdmins_(ss, {
             title: "🚨 תקלה קריטית",
             message: `${data.client || ""} · מפעיל: ${data.operator || ""} · ${data.desc || ""}`
           });
@@ -408,17 +383,6 @@
             // Email failed silently — report still saved
           }
         }
-        
-        // TODO: OneSignal notification to admin (requires REST API key)
-        // Uncomment when REST API key is configured in Apps Script
-        // const notifyAdmin = () => {
-        //   const payload = {
-        //     "include_email_tokens": [data.adminEmail],
-        //     "headings": {"en": "New Report: " + r.client},
-        //     "contents": {"en": "Chlorine: " + r.chlorine},
-        //   };
-        //   UrlFetchApp.fetch("https://onesignal.com/api/v1/notifications", {...});
-        // };
 
         return json({ success: true });
       }
@@ -593,9 +557,9 @@
     let s = clientSS.getSheetByName("Users");
     if(!s) {
       s = clientSS.insertSheet("Users");
-      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator","pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"]);
+      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"]);
     } else {
-      ensureColumns(s, ["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator","pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"]);
+      ensureColumns(s, ["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"]);
     }
     
     // ── לקוחות ──
@@ -758,7 +722,7 @@
       );
 
       if(urgent.length > 0 && shouldSendIssueReminder_(ss)) {
-        const res = sendOneSignalToAdmins_(ss, {
+        const res = sendAppNotificationToAdmins_(ss, {
           title: `🚨 ${urgent.length} תקלות קריטיות לא טופלו!`,
           message: urgent.map(r => r[2]).join(", ")
         });
@@ -803,7 +767,7 @@
       const start = String(rows[i][3] || "").trim();
       if (!username) continue;
 
-      const res = sendOneSignalToUser_({
+      const res = sendAppNotificationToUser_({
         externalUserId: username,
         title: "⏰ תזכורת: שעון עבודה",
         message: `השעון פעיל מ-${start || "הבוקר"} — אם יצאת להפסקה, אל תשכח לכבות`
@@ -998,14 +962,8 @@
       if (sameUser && sameDate) sheet.deleteRow(i + 1);
     }
   }
-
-  function sendOneSignalNotification(title, message) {
-    Logger.log("Broadcast notification blocked. Use sendOneSignalToAdmins_ or sendOneSignalToUser_ instead.");
-    return {
-      success: false,
-      blocked: true,
-      reason: "Broadcast to All is disabled"
-    };
+  function sendAppNotification(title, message) {
+    return { success:false, disabled:true };
   }
 
   function getGreenApiConfig_() {
@@ -1185,415 +1143,12 @@
     sheet.getRange(targetRow, 17).setValue(note);
     return { success:true, row:targetRow, client:client, note:note };
   }
-  
-
-  function sendOneSignalRequest_(APP_ID, REST_API_KEY, payload, targetLabel) {
-    const options = {
-      method: "post",
-      contentType: "application/json",
-      headers: {
-        Authorization: "Key " + REST_API_KEY
-      },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    };
-
-    const res = UrlFetchApp.fetch("https://api.onesignal.com/notifications", options);
-    const code = res.getResponseCode();
-    const text = res.getContentText();
-
-    Logger.log("OneSignal targeted user: " + targetLabel);
-    Logger.log("OneSignal targeted status: " + code);
-    Logger.log("OneSignal targeted response: " + text);
-
-    let parsed = {};
-    try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      parsed = { raw:text };
-    }
-
-    const recipients = Number(parsed.recipients || 0);
-    const ok = code >= 200 && code < 300 && !parsed.errors && recipients > 0;
-    return { code, parsed, recipients, ok };
+  function sendAppNotificationToUser_(data, ss) {
+    return { success:false, disabled:true, sent:false };
   }
 
-  function sendOneSignalLegacyPlayerRequest_(APP_ID, REST_API_KEY, subscriptionId, title, message, ttl, targetLabel) {
-    const payload = {
-      app_id: APP_ID,
-      include_player_ids: [subscriptionId],
-      headings: { en: title, he: title },
-      contents: { en: message, he: message },
-      ttl: ttl
-    };
-
-    const options = {
-      method: "post",
-      contentType: "application/json",
-      headers: {
-        Authorization: "Basic " + REST_API_KEY
-      },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    };
-
-    const res = UrlFetchApp.fetch("https://onesignal.com/api/v1/notifications", options);
-    const code = res.getResponseCode();
-    const text = res.getContentText();
-    Logger.log("OneSignal legacy player user: " + targetLabel);
-    Logger.log("OneSignal legacy player status: " + code);
-    Logger.log("OneSignal legacy player response: " + text);
-
-    let parsed = {};
-    try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      parsed = { raw:text };
-    }
-
-    const recipients = Number(parsed.recipients || 0);
-    const ok = code >= 200 && code < 300 && !parsed.errors && recipients > 0;
-    return { code, parsed, recipients, ok };
-  }
-
-  function sendOneSignalLegacyExternalRequest_(APP_ID, REST_API_KEY, externalUserId, title, message, ttl) {
-    const payload = {
-      app_id: APP_ID,
-      include_external_user_ids: [externalUserId],
-      channel_for_external_user_ids: "push",
-      headings: { en: title, he: title },
-      contents: { en: message, he: message },
-      ttl: ttl
-    };
-
-    const options = {
-      method: "post",
-      contentType: "application/json",
-      headers: {
-        Authorization: "Basic " + REST_API_KEY
-      },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    };
-
-    const res = UrlFetchApp.fetch("https://onesignal.com/api/v1/notifications", options);
-    const code = res.getResponseCode();
-    const text = res.getContentText();
-    Logger.log("OneSignal legacy external user: " + externalUserId);
-    Logger.log("OneSignal legacy external status: " + code);
-    Logger.log("OneSignal legacy external response: " + text);
-
-    let parsed = {};
-    try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      parsed = { raw:text };
-    }
-
-    const recipients = Number(parsed.recipients || 0);
-    const ok = code >= 200 && code < 300 && !parsed.errors && recipients > 0;
-    return { code, parsed, recipients, ok };
-  }
-
-  function transferOneSignalSubscription_(subscriptionId, externalUserId) {
-    const props = PropertiesService.getScriptProperties();
-    const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
-    const REST_API_KEY = String(props.getProperty("ONESIGNAL_REST_API_KEY") || "").trim();
-    const id = String(subscriptionId || "").trim();
-    const user = String(externalUserId || "").trim();
-    if (!APP_ID || !REST_API_KEY || !id || !user) return { success:false, skipped:true };
-
-    const options = {
-      method: "patch",
-      contentType: "application/json",
-      headers: {
-        Authorization: "Key " + REST_API_KEY
-      },
-      payload: JSON.stringify({
-        identity: {
-          external_id: user
-        }
-      }),
-      muteHttpExceptions: true
-    };
-
-    const res = UrlFetchApp.fetch("https://api.onesignal.com/apps/" + encodeURIComponent(APP_ID) + "/subscriptions/" + encodeURIComponent(id) + "/owner", options);
-    const code = res.getResponseCode();
-    const text = res.getContentText();
-    let parsed = {};
-    try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      parsed = { raw:text };
-    }
-    Logger.log("OneSignal transfer subscription status: " + code);
-    Logger.log("OneSignal transfer subscription response: " + text);
-    return { success:code >= 200 && code < 300, status:code, response:parsed };
-  }
-
-  function identifyOneSignalSubscription_(subscriptionId, externalUserId) {
-    const props = PropertiesService.getScriptProperties();
-    const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
-    const REST_API_KEY = String(props.getProperty("ONESIGNAL_REST_API_KEY") || "").trim();
-    const id = String(subscriptionId || "").trim();
-    const user = String(externalUserId || "").trim();
-    if (!APP_ID || !REST_API_KEY || !id || !user) return { success:false, skipped:true };
-
-    const options = {
-      method: "patch",
-      contentType: "application/json",
-      headers: {
-        Authorization: "Key " + REST_API_KEY
-      },
-      payload: JSON.stringify({
-        identity: {
-          external_id: user
-        }
-      }),
-      muteHttpExceptions: true
-    };
-
-    const res = UrlFetchApp.fetch("https://api.onesignal.com/apps/" + encodeURIComponent(APP_ID) + "/subscriptions/" + encodeURIComponent(id) + "/user/identity", options);
-    const code = res.getResponseCode();
-    const text = res.getContentText();
-    let parsed = {};
-    try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      parsed = { raw:text };
-    }
-    Logger.log("OneSignal identify subscription status: " + code);
-    Logger.log("OneSignal identify subscription response: " + text);
-    return { success:code >= 200 && code < 300, status:code, response:parsed };
-  }
-
-  function fetchOneSignalSubscriptionIdentity_(subscriptionId) {
-    const props = PropertiesService.getScriptProperties();
-    const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
-    const REST_API_KEY = String(props.getProperty("ONESIGNAL_REST_API_KEY") || "").trim();
-    const id = String(subscriptionId || "").trim();
-    if (!APP_ID || !REST_API_KEY || !id) return { success:false, skipped:true };
-
-    const options = {
-      method: "get",
-      headers: {
-        Authorization: "Key " + REST_API_KEY
-      },
-      muteHttpExceptions: true
-    };
-
-    const res = UrlFetchApp.fetch("https://api.onesignal.com/apps/" + encodeURIComponent(APP_ID) + "/subscriptions/" + encodeURIComponent(id) + "/user/identity", options);
-    const code = res.getResponseCode();
-    const text = res.getContentText();
-    let parsed = {};
-    try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      parsed = { raw:text };
-    }
-    Logger.log("OneSignal subscription identity status: " + code);
-    Logger.log("OneSignal subscription identity response: " + text);
-    return { success:code >= 200 && code < 300, status:code, response:parsed };
-  }
-
-  function fetchOneSignalSubscription_(subscriptionId) {
-    const props = PropertiesService.getScriptProperties();
-    const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
-    const REST_API_KEY = String(props.getProperty("ONESIGNAL_REST_API_KEY") || "").trim();
-    const id = String(subscriptionId || "").trim();
-    if (!APP_ID || !REST_API_KEY || !id) return { success:false, skipped:true };
-
-    const options = {
-      method: "get",
-      headers: {
-        Authorization: "Key " + REST_API_KEY
-      },
-      muteHttpExceptions: true
-    };
-
-    const res = UrlFetchApp.fetch("https://api.onesignal.com/apps/" + encodeURIComponent(APP_ID) + "/subscriptions/" + encodeURIComponent(id), options);
-    const code = res.getResponseCode();
-    const text = res.getContentText();
-    let parsed = {};
-    try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      parsed = { raw:text };
-    }
-    Logger.log("OneSignal subscription status: " + code);
-    Logger.log("OneSignal subscription response: " + text);
-    return { success:code >= 200 && code < 300, status:code, response:parsed };
-  }
-
-  function diagnoseOneSignalUser_(ss, data) {
-    const externalUserId = String(data.externalUserId || data.username || data.externalId || "").trim();
-    if (!externalUserId) return { success:false, error:"missing externalUserId" };
-    const ids = getPushSubscriptionIdsForUser_(ss, externalUserId);
-    const subscriptions = ids.map(id => ({
-      subscriptionId: id,
-      identity: fetchOneSignalSubscriptionIdentity_(id),
-      subscription: fetchOneSignalSubscription_(id)
-    }));
-    return {
-      success:true,
-      externalUserId,
-      subscriptionCount: ids.length,
-      subscriptions
-    };
-  }
-
-  function getOneSignalTtl_(data) {
-    const raw = Number(
-      data.ttl ||
-      data.ttlSeconds ||
-      data.timeToLive ||
-      259200
-    );
-    if (!isFinite(raw) || raw < 0) return 259200;
-    return Math.min(Math.floor(raw), 2419200);
-  }
-
-  function sendOneSignalToUser_(data, ss) {
-    const props = PropertiesService.getScriptProperties();
-    const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
-    const REST_API_KEY = String(props.getProperty("ONESIGNAL_REST_API_KEY") || "").trim();
-
-    const title = String(data.title || data.heading || "Pool Alert");
-    const message = String(data.message || data.body || data.text || data.content || "New notification");
-    const ttl = getOneSignalTtl_(data);
-    const externalUserId = String(
-      data.externalUserId ||
-      data.externalId ||
-      data.external_id ||
-      data.username ||
-      data.userId ||
-      data.recipient ||
-      data.to ||
-      data.targetUser ||
-      ""
-    ).trim();
-
-    if (!externalUserId) {
-      return { success:false, error:"missing externalUserId" };
-    }
-
-    if (!REST_API_KEY) {
-      return { success:false, error:"missing OneSignal REST API key" };
-    }
-
-    const payload = {
-      app_id: APP_ID,
-      target_channel: "push",
-      include_aliases: {
-        external_id: [externalUserId]
-      },
-      headings: { en: title, he: title },
-      contents: { en: message, he: message },
-      ttl: ttl
-    };
-
-    const primary = sendOneSignalRequest_(APP_ID, REST_API_KEY, payload, externalUserId);
-    let code = primary.code;
-    let parsed = primary.parsed;
-    let recipients = primary.recipients;
-    let ok = primary.ok;
-    let fallbackResults = [];
-
-    if (!ok) {
-      const legacyExternal = sendOneSignalLegacyExternalRequest_(APP_ID, REST_API_KEY, externalUserId, title, message, ttl);
-      fallbackResults.push({ externalUserId, legacyExternalStatus: legacyExternal.code, recipients: legacyExternal.recipients, response: legacyExternal.parsed });
-      code = legacyExternal.code;
-      parsed = legacyExternal.parsed;
-      recipients = legacyExternal.recipients;
-      ok = legacyExternal.ok;
-    }
-
-    if (!ok && ss) {
-      const subscriptionIds = getPushSubscriptionIdsForUser_(ss, externalUserId);
-      subscriptionIds.forEach(id => {
-        if (ok) return;
-        const beforeIdentity = fetchOneSignalSubscriptionIdentity_(id);
-        const identify = identifyOneSignalSubscription_(id, externalUserId);
-        const afterIdentity = fetchOneSignalSubscriptionIdentity_(id);
-        const fallbackPayload = {
-          app_id: APP_ID,
-          include_subscription_ids: [id],
-          headings: { en: title, he: title },
-          contents: { en: message, he: message },
-          ttl: ttl
-        };
-        const fallback = sendOneSignalRequest_(APP_ID, REST_API_KEY, fallbackPayload, externalUserId + " subscription");
-        fallbackResults.push({ subscriptionId: id, beforeIdentity, identify, afterIdentity, status: fallback.code, recipients: fallback.recipients, response: fallback.parsed });
-        code = fallback.code;
-        parsed = fallback.parsed;
-        recipients = fallback.recipients;
-        ok = fallback.ok;
-        if (!ok) {
-          const legacyPlayer = sendOneSignalLegacyPlayerRequest_(APP_ID, REST_API_KEY, id, title, message, ttl, externalUserId + " subscription");
-          fallbackResults.push({ subscriptionId: id, legacyPlayerStatus: legacyPlayer.code, recipients: legacyPlayer.recipients, response: legacyPlayer.parsed });
-          code = legacyPlayer.code;
-          parsed = legacyPlayer.parsed;
-          recipients = legacyPlayer.recipients;
-          ok = legacyPlayer.ok;
-        }
-      });
-    }
-
-    return {
-      success: ok,
-      ok,
-      sent: ok,
-      status: code,
-      recipients,
-      id: parsed.id || "",
-      externalUserId,
-      response: parsed,
-      fallbackResults
-    };
-  }
-
-  function sendOneSignalToAdmins_(ss, data) {
-    const usersSheet = ss.getSheetByName("Users");
-    if (!usersSheet) return { success:false, error:"Users sheet not found" };
-
-    const rows = usersSheet.getDataRange().getValues();
-    let hi = rows.findIndex(r => r.some(c => String(c).toLowerCase().trim() === "username"));
-    if (hi === -1) hi = 0;
-
-    const headers = rows[hi].map(h => String(h).trim());
-    const usernameIdx = headers.findIndex(h => h.toLowerCase() === "username");
-    const roleIdx = headers.findIndex(h => h.toLowerCase() === "role");
-    const nameIdx = headers.findIndex(h => h.toLowerCase() === "name");
-
-    const admins = rows.slice(hi + 1)
-      .filter(r => r[0])
-      .map(r => ({
-        username: String(r[usernameIdx >= 0 ? usernameIdx : 0] || "").trim(),
-        role: String(r[roleIdx >= 0 ? roleIdx : 2] || "").trim().toLowerCase(),
-        name: String(r[nameIdx >= 0 ? nameIdx : 3] || "").trim(),
-      }))
-      .filter(u => u.username && isAdminRole_(u.role));
-
-    Logger.log("Admin notification targets: " + JSON.stringify(admins));
-
-    let sent = 0;
-    const results = [];
-    admins.forEach(admin => {
-      const res = sendOneSignalToUser_({
-        externalUserId: admin.username,
-        title: data.title || data.heading || "Pool Alert",
-        message: data.message || data.body || data.text || "New notification"
-      }, ss);
-      results.push({ username: admin.username, name: admin.name, result: res });
-      if (res && res.success) sent++;
-    });
-
-    return {
-      success: sent > 0,
-      sent,
-      total: admins.length,
-      results
-    };
+  function sendAppNotificationToAdmins_(ss, data) {
+    return { success:false, disabled:true, sent:0, total:0, results:[] };
   }
 
   function isAdminRole_(role) {
@@ -1617,7 +1172,7 @@
       response ? `תגובת אדמין: ${response}` : ""
     ].filter(Boolean);
 
-    const res = sendOneSignalToUser_({
+    const res = sendAppNotificationToUser_({
       externalUserId: user.username,
       title: "✅ התקלה סומנה כטופלה",
       message: messageParts.join(" · ") || "התקלה שפתחת טופלה"
@@ -1643,7 +1198,7 @@
       response ? `אישור אדמין: ${response}` : ""
     ].filter(Boolean);
 
-    const res = sendOneSignalToUser_({
+    const res = sendAppNotificationToUser_({
       externalUserId: user.username,
       title: "🚨 תקלה קריטית אושרה",
       message: messageParts.join(" · ") || "תקלה קריטית אושרה ונמצאת בטיפול מיידי"
@@ -1920,68 +1475,6 @@ function getUsers_(ss) {
     obj.assignedOperator = String(obj.assignedOperator || linkedOperator || "").trim();
     return obj;
   });
-}
-
-function saveUserPushSubscription_(ss, data) {
-  const sheet = ss.getSheetByName("Users");
-  if (!sheet) return { success:false, error:"Users sheet not found" };
-  ensureColumns(sheet, ["pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"]);
-  const rows = sheet.getDataRange().getValues();
-  let hi = rows.findIndex(r => r.some(c => String(c).toLowerCase().trim() === "username"));
-  if (hi === -1) hi = 0;
-  const headers = rows[hi].map(h => String(h || "").trim());
-  const usernameIdx = headers.findIndex(h => h.toLowerCase() === "username");
-  const subIdx = headers.indexOf("pushSubscriptionId");
-  const tokenIdx = headers.indexOf("pushToken");
-  const enabledIdx = headers.indexOf("pushEnabled");
-  const updatedIdx = headers.indexOf("pushUpdatedAt");
-  const appIdx = headers.indexOf("pushAppId");
-  const agentIdx = headers.indexOf("pushUserAgent");
-  const target = String(data.externalUserId || data.username || data.externalId || "").trim().toLowerCase();
-  if (!target || usernameIdx < 0) return { success:false, error:"missing username" };
-  for (let i = hi + 1; i < rows.length; i++) {
-    if (String(rows[i][usernameIdx] || "").trim().toLowerCase() !== target) continue;
-    const row = i + 1;
-    const subscriptionId = String(data.subscriptionId || data.onesignalId || "").trim();
-    const token = String(data.token || "").trim();
-    const hasActiveFlag = Object.prototype.hasOwnProperty.call(data, "active");
-    const active = data.active === true || String(data.active || "").toLowerCase() === "true";
-    const isExplicitReset = hasActiveFlag && !active && !subscriptionId && !token;
-    if (subIdx >= 0 && (subscriptionId || isExplicitReset)) sheet.getRange(row, subIdx + 1).setValue(subscriptionId);
-    if (tokenIdx >= 0 && (token || isExplicitReset)) sheet.getRange(row, tokenIdx + 1).setValue(token);
-    if (enabledIdx >= 0 && (hasActiveFlag || subscriptionId || token)) sheet.getRange(row, enabledIdx + 1).setValue(active ? "TRUE" : "FALSE");
-    if (updatedIdx >= 0) sheet.getRange(row, updatedIdx + 1).setValue(new Date());
-    if (appIdx >= 0) sheet.getRange(row, appIdx + 1).setValue(String(data.appId || "").trim());
-    if (agentIdx >= 0) sheet.getRange(row, agentIdx + 1).setValue(String(data.userAgent || "").slice(0, 500));
-    const owner = String(data.externalUserId || data.username || data.externalId || "").trim();
-    const identify = subscriptionId && token ? identifyOneSignalSubscription_(subscriptionId, owner) : { skipped:true };
-    const transfer = subscriptionId && token ? transferOneSignalSubscription_(subscriptionId, owner) : { skipped:true };
-    const identity = subscriptionId ? fetchOneSignalSubscriptionIdentity_(subscriptionId) : { skipped:true };
-    return { success:true, row, username:target, active, subscriptionId:subscriptionId ? "saved" : "", token:token ? "saved" : "", identify, transfer, identity };
-  }
-  return { success:false, error:"user not found", username:target };
-}
-
-function getPushSubscriptionIdsForUser_(ss, username) {
-  if (!ss || !username) return [];
-  const sheet = ss.getSheetByName("Users");
-  if (!sheet) return [];
-  const rows = sheet.getDataRange().getValues();
-  let hi = rows.findIndex(r => r.some(c => String(c).toLowerCase().trim() === "username"));
-  if (hi === -1) hi = 0;
-  const headers = rows[hi].map(h => String(h || "").trim());
-  const usernameIdx = headers.findIndex(h => h.toLowerCase() === "username");
-  const subIdx = headers.indexOf("pushSubscriptionId");
-  const enabledIdx = headers.indexOf("pushEnabled");
-  if (usernameIdx < 0 || subIdx < 0) return [];
-  const target = String(username || "").trim().toLowerCase();
-  const ids = [];
-  for (let i = hi + 1; i < rows.length; i++) {
-    if (String(rows[i][usernameIdx] || "").trim().toLowerCase() !== target) continue;
-    const id = String(rows[i][subIdx] || "").trim();
-    if (id) ids.push(id);
-  }
-  return [...new Set(ids)];
 }
 
 function saveSubOperatorAssignment_(ss, data) {
@@ -2566,7 +2059,7 @@ function json(obj) {
     const usersSheet = ss.getSheetByName("Users");
     if(usersSheet) {
       const usersHeaders = usersSheet.getRange(1,1,1,usersSheet.getLastColumn()).getValues()[0];
-      const neededUsers = ["welcomeImage","welcomeInstagram","linkedOperator","assignedOperator","pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"];
+      const neededUsers = ["welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"];
       let lastCol = usersSheet.getLastColumn();
       neededUsers.forEach(name => {
         if(!usersHeaders.includes(name)) {
@@ -2579,7 +2072,7 @@ function json(obj) {
       });
     } else {
       const s = ss.insertSheet("Users");
-      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator","pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"]);
+      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"]);
       Logger.log("✅ נוצר טאב: Users");
     }
 
@@ -2656,27 +2149,18 @@ function json(obj) {
     Logger.log("🎉 setupSheet הסתיים");
   }
   function testNotification() {
-    sendOneSignalNotification("בדיקה", "זוהי הודעת בדיקה");
+    Logger.log(JSON.stringify({success:false, disabled:true}));
   }
 
   function testClientAdminNotification() {
     const ss = SpreadsheetApp.openById("1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no");
-    const res = sendOneSignalToAdmins_(ss, {
+    const res = sendAppNotificationToAdmins_(ss, {
       title: "Client admin notification test",
       message: "Test notification for internal admin only"
     });
     Logger.log(JSON.stringify(res));
   }
 
-  function testOneSignalToUser() {
-    const targetUsername = "admin";
-    const res = sendOneSignalToUser_({
-      externalUserId: targetUsername,
-      title: "בדיקת התראה",
-      message: "אם קיבלת את זה, החיבור להתראות תקין"
-    });
-    Logger.log(JSON.stringify(res));
-  }
   const DESIGN_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
 
   function designMySystemSheets() {

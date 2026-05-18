@@ -38,83 +38,6 @@ const getDailyGreeting = (username) => {
   return list[Math.floor(Math.random() * list.length)];
 };
 
-const PUSH_ENABLED_USERS_KEY = "galileo_push_enabled_users";
-const PUSH_RECONNECT_USER_KEY = "galileo_push_reconnect_user";
-const normalizePushUsername = (username) => String(username || "").trim().toLowerCase();
-function getRememberedPushUsers() {
-  try {
-    const value = JSON.parse(localStorage.getItem(PUSH_ENABLED_USERS_KEY) || "[]");
-    return Array.isArray(value) ? value.map(normalizePushUsername).filter(Boolean) : [];
-  } catch {
-    return [];
-  }
-}
-function isPushRemembered(username) {
-  const key = normalizePushUsername(username);
-  return !!key && getRememberedPushUsers().includes(key);
-}
-function rememberPushEnabled(username) {
-  const key = normalizePushUsername(username);
-  if (!key) return;
-  const users = new Set(getRememberedPushUsers());
-  users.add(key);
-  localStorage.setItem(PUSH_ENABLED_USERS_KEY, JSON.stringify([...users]));
-}
-function forgetPushEnabled(username) {
-  const key = normalizePushUsername(username);
-  if (!key) return;
-  const users = getRememberedPushUsers().filter(u => u !== key);
-  localStorage.setItem(PUSH_ENABLED_USERS_KEY, JSON.stringify(users));
-}
-function getCurrentPushUsername() {
-  try {
-    const remembered = localStorage.getItem(PUSH_RECONNECT_USER_KEY);
-    if (remembered) return String(remembered).trim();
-    const saved = JSON.parse(localStorage.getItem("galileo_user") || "null");
-    return String(saved?.username || "").trim();
-  } catch {
-    return "";
-  }
-}
-async function unregisterPushServiceWorkers() {
-  if (typeof navigator === "undefined" || !navigator.serviceWorker?.getRegistrations) return 0;
-  const regs = await navigator.serviceWorker.getRegistrations();
-  let count = 0;
-  for (const reg of regs) {
-    const script = reg.active?.scriptURL || reg.installing?.scriptURL || reg.waiting?.scriptURL || "";
-    if (reg.scope?.startsWith(window.location.origin) || script.includes("OneSignal") || script.endsWith("/sw.js")) {
-      const ok = await reg.unregister().catch(() => false);
-      if (ok) count++;
-    }
-  }
-  return count;
-}
-
-async function clearBrowserPushSubscription() {
-  if (typeof navigator === "undefined" || !navigator.serviceWorker?.getRegistrations) return 0;
-  const regs = await navigator.serviceWorker.getRegistrations();
-  let count = 0;
-  for (const reg of regs) {
-    const sub = await reg.pushManager?.getSubscription?.().catch(() => null);
-    if (sub && await sub.unsubscribe().catch(() => false)) count++;
-  }
-  return count;
-}
-
-function clearOneSignalStorage() {
-  if (typeof window === "undefined") return;
-  try {
-    Object.keys(localStorage || {}).forEach(key => {
-      if (String(key).toLowerCase().includes("onesignal")) localStorage.removeItem(key);
-    });
-    Object.keys(sessionStorage || {}).forEach(key => {
-      if (String(key).toLowerCase().includes("onesignal")) sessionStorage.removeItem(key);
-    });
-  } catch (e) {
-    console.warn("OneSignal storage cleanup failed:", e);
-  }
-}
-
 const CITY = "ישראל";
 const wazeUrl = (a) => `https://waze.com/ul?q=${encodeURIComponent(a+", "+CITY)}&navigate=yes`;
 const todayStr = () => new Date().toISOString().slice(0,10);
@@ -283,24 +206,10 @@ function saveCompany(data) {
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
 const DEFAULT_SUPER_PASS = "039076914";
-const ONESIGNAL_APP_ID = "dc1af269-2502-41a4-89d5-a3aa8d5be956";
 
 function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
 const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
-const PUSH_SCRIPT_ACTIONS = [
-  "sendOneSignalToUser",
-  "sendOneSignal",
-  "sendOneSignalNotification",
-  "sendPushNotification",
-  "sendPushToUser",
-  "sendNotification",
-  "sendNotificationToUser",
-  "sendUserNotification",
-  "sendPush",
-  "pushToUser",
-  "notifyUser",
-];
 
 async function mgmtCall(action, payload={}) {
   try {
@@ -333,251 +242,7 @@ const normalizeWhatsAppPhone = (phone) => {
   return digits;
 };
 
-async function postScriptAction(scriptUrl, action, payload={}) {
-  try {
-    const company = getCompany();
-    const sheetId = company.sheetId || localStorage.getItem("galileo_sheet_id") || "";
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
-    const r = await fetch(scriptUrl, {
-      method: "POST",
-      headers: {"Content-Type":"text/plain"},
-      body: JSON.stringify({action, sheetId, ...payload}),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    const text = await r.text();
-    try { return JSON.parse(text); }
-    catch {
-      const clean = text.trim().toLowerCase();
-      if (["ok","sent","success","true"].includes(clean)) return {success:true, raw:text};
-      return {success:false, raw:text};
-    }
-  } catch(e) {
-    console.warn("Script action failed:", action, e);
-    return null;
-  }
-}
-
-function pushScriptResponseOk(res) {
-  if (!res) return false;
-  const recipients = Number(res.recipients || res.recipientCount || res.sentCount || res.response?.recipients || 0);
-  if (recipients > 0) return true;
-  if (res.errors || res.error || res.response?.errors) return false;
-  if (res.id || res.notificationId || res.response?.id) return recipients > 0;
-  if (res.success === true || res.sent === true || res.ok === true) return recipients > 0;
-  if (typeof res.raw === "string" && /ok|sent|success/i.test(res.raw)) return true;
-  return false;
-}
-
-async function sendPushViaScript(title, message, externalUserId) {
-  const payload = {
-    title,
-    heading: title,
-    headings: {"en": title, "he": title},
-    message,
-    body: message,
-    text: message,
-    content: message,
-    contents: {"en": message, "he": message},
-    externalUserId,
-    externalId: externalUserId,
-    external_id: externalUserId,
-    userId: externalUserId,
-    username: externalUserId,
-    recipient: externalUserId,
-    to: externalUserId,
-    targetUser: externalUserId,
-    include_aliases: {external_id: [externalUserId]},
-  };
-  const res = await postScriptAction(getScriptUrl(), "sendOneSignalToUser", payload);
-  if (pushScriptResponseOk(res)) {
-    console.log("OneSignal sent via script:", res);
-    return true;
-  }
-  if (res?.error || res?.errors) console.warn("OneSignal script error:", res.error || res.errors);
-
-  return false;
-}
-
-async function sendOneSignalToUser(title, message, externalUserId) {
-  if (!externalUserId) { console.warn("OneSignal: external user id missing; targeted push not sent"); return false; }
-
-  const sentByScript = await sendPushViaScript(title, message, externalUserId);
-  if (sentByScript) return true;
-
-  console.warn("OneSignal: script push failed; REST key is intentionally not available in the client");
-  return false;
-}
-
-function initOneSignal() {
-  if (typeof window === "undefined") return Promise.resolve(false);
-  if (window.OneSignalInitialized) return Promise.resolve(true);
-  if (window.OneSignalReadyPromise) return window.OneSignalReadyPromise;
-
-  window.OneSignalReadyPromise = new Promise((resolve) => {
-    let settled = false;
-    const finish = (ok) => {
-      if (settled) return;
-      settled = true;
-      resolve(ok);
-    };
-
-    const init = async (OneSignal) => {
-      try {
-        if (!window.OneSignalInitialized) {
-          await OneSignal.init({
-            appId: ONESIGNAL_APP_ID,
-            serviceWorkerPath: "sw.js",
-            serviceWorkerParam: { scope: "/" },
-            allowLocalhostAsSecureOrigin: true,
-            autoResubscribe: true,
-            notifyButton: { enable: false },
-          });
-          window.OneSignalInitialized = true;
-          console.log("OneSignal ready");
-        }
-        setupOneSignalSubscriptionListener(OneSignal);
-        finish(true);
-      } catch (e) {
-        console.warn("OneSignal init error:", e);
-        const msg = String(e?.message || e || "").toLowerCase();
-        if (msg.includes("already") || msg.includes("initialized")) {
-          window.OneSignalInitialized = true;
-          finish(true);
-        } else {
-          finish(false);
-        }
-      }
-    };
-
-    if (window.OneSignal?.init) {
-      init(window.OneSignal);
-      return;
-    }
-
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    window.OneSignalDeferred.push(init);
-
-    if (!window.OneSignalLoaded) {
-      window.OneSignalLoaded = true;
-      const script = document.createElement("script");
-      script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
-      script.defer = true;
-      script.onerror = () => finish(false);
-      document.head.appendChild(script);
-    }
-
-    setTimeout(() => finish(!!window.OneSignalInitialized), 8000);
-  });
-
-  return window.OneSignalReadyPromise;
-}
-
-async function runOneSignal(callback) {
-  const ready = await initOneSignal();
-  if (!ready) return false;
-
-  if (window.OneSignal?.login || window.OneSignal?.Notifications) {
-    try { return await callback(window.OneSignal); }
-    catch (e) { console.warn("OneSignal action error:", e); return false; }
-  }
-
-  if (!window.OneSignalDeferred) return false;
-  return new Promise((resolve) => {
-    window.OneSignalDeferred.push(async function(OneSignal) {
-      try { resolve(await callback(OneSignal)); }
-      catch (e) { console.warn("OneSignal deferred action error:", e); resolve(false); }
-    });
-  });
-}
-
-function setupOneSignalSubscriptionListener(OneSignal) {
-  if (typeof window === "undefined" || window.OneSignalSubscriptionListenerReady) return;
-  const push = OneSignal?.User?.PushSubscription;
-  if (!push || typeof push.addEventListener !== "function") return;
-  window.OneSignalSubscriptionListenerReady = true;
-  push.addEventListener("change", async () => {
-    const username = getCurrentPushUsername();
-    if (!username) return;
-    const state = await readOneSignalPushState(OneSignal, username);
-    if (!state.subscriptionId || !state.token) return;
-    await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state)
-      .catch(e => console.warn("Push subscription listener save failed:", e));
-  });
-}
-
-async function loginOneSignalUser(username) {
-  if (!username) return false;
-  return runOneSignal(async (OneSignal) => {
-    await OneSignal.login(username);
-    console.log("OneSignal external_id:", username);
-    return true;
-  });
-}
-
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-async function readOneSignalPushState(OneSignal, externalId) {
-  let latest = null;
-  for (let i = 0; i < 12; i++) {
-    const push = OneSignal?.User?.PushSubscription || {};
-    const subscriptionId = String(
-      push.id ||
-      (typeof push.getId === "function" ? await push.getId() : "") ||
-      ""
-    ).trim();
-    const token = String(
-      push.token ||
-      (typeof push.getToken === "function" ? await push.getToken() : "") ||
-      ""
-    ).trim();
-    const optedIn = typeof push.optedIn === "boolean"
-      ? push.optedIn
-      : (typeof push.getOptedIn === "function" ? await push.getOptedIn() : undefined);
-    const permission = OneSignal?.Notifications?.permission === true ||
-      (typeof Notification !== "undefined" && Notification.permission === "granted");
-    const active = !!subscriptionId && !!token && permission && optedIn === true;
-    if (subscriptionId || token) {
-      latest = {
-        externalUserId: externalId,
-        subscriptionId,
-        token,
-        optedIn,
-        permission,
-        active,
-        appId: ONESIGNAL_APP_ID,
-        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
-      };
-      if (active) return latest;
-    }
-    await sleep(750);
-  }
-  if (latest) return latest;
-  return {
-    externalUserId: externalId,
-    subscriptionId: "",
-    token: "",
-    optedIn: false,
-    permission: OneSignal?.Notifications?.permission === true ||
-      (typeof Notification !== "undefined" && Notification.permission === "granted"),
-    active: false,
-    appId: ONESIGNAL_APP_ID,
-    userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
-  };
-}
-
-async function registerPushSubscription(externalId) {
-  const username = String(externalId || "").trim();
-  if (!username) return null;
-  return runOneSignal(async (OneSignal) => {
-    await OneSignal.login(username);
-    const state = await readOneSignalPushState(OneSignal, username);
-    await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
-    return state;
-  });
-}
+async function sendAppNotificationToUser() { return false; }
 
 const haptic = (t="light") => navigator.vibrate?.({light:30,medium:50,success:[30,50,30]}[t]||30);
 
@@ -1092,7 +757,7 @@ function QRScanner({ onResult, onClose }) {
           <input type="file" accept="image/*" style={{display:"none"}} onChange={handleFile}/>
         </label>
       </div>
-      <style>{`@keyframes scanLine{0%{top:10%}50%{top:90%}100%{top:10%}}#onesignal-bell-container{display:none!important}`}</style>
+      <style>{`@keyframes scanLine{0%{top:10%}50%{top:90%}100%{top:10%}}`}</style>
     </div>
   );
 }
@@ -1143,7 +808,7 @@ function LicenseScreen({ onDone, onSuperAdmin }) {
   };
   return (
     <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}#onesignal-bell-container{display:none!important}`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}`}</style>
       <div style={{width:"100%",maxWidth:380}}>
         <div style={{textAlign:"center",marginBottom:36}}>
           <div style={{width:92,height:92,margin:"0 auto 14px",borderRadius:28,background:"rgba(232,241,253,0.82)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:52,boxShadow:"0 24px 60px rgba(37,99,235,0.14), 0 1px 0 rgba(255,255,255,0.8) inset",border:"1px solid rgba(148,163,184,0.22)",backdropFilter:"blur(18px)"}}>🌊</div>
@@ -1193,26 +858,6 @@ function LicensesTab({C2, inp2, showMsg}) {
 
   useEffect(()=>{ loadLicenses(); },[]);
 
-  const initOneSignal = () => {
-    if(typeof window==="undefined" || window.OneSignalLoaded) return;
-    window.OneSignalLoaded = true;
-    window.OneSignal = window.OneSignal || [];
-    const script = document.createElement("script");
-    script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
-    script.defer = true;
-    script.onload = () => {
-      window.OneSignal.init({
-        appId: ONESIGNAL_APP_ID,
-        serviceWorkerPath: "sw.js",
-        serviceWorkerParam: { scope: "/" },
-        allowLocalhostAsSecureOrigin: true,
-        notifyButton: { enable: false },
-      }).then(() => {
-        console.log("OneSignal ready");
-      }).catch(e => console.warn("OneSignal init error:", e));
-    };
-    document.head.appendChild(script);
-  };
 
   const loadLicenses = async () => { setLoading(true); const res = await mgmtCall("getLicenses"); if(res?.licenses) setLicenses(res.licenses); setLoading(false); };
   const createLicense = async () => {
@@ -1983,21 +1628,7 @@ useEffect(() => {
     return dateMatch && nameMatch;
   });
 
-  const sendNotificationToAdmins = async (title, message) => {
-    const adminUsers = allUsers.filter(u => {
-      const role = String(u.role || "").trim().toLowerCase();
-      return (role === "admin" || role === "\u05de\u05e0\u05d4\u05dc" || role === "\u05d0\u05d3\u05de\u05d9\u05df") && u.username;
-    });
-    let sentCount = (await Promise.all(adminUsers.map(admin => sendOneSignalToUser(title, message, admin.username)))).filter(Boolean).length;
-
-    if (sentCount === 0 && sheetId) {
-      const res = await sheetCall("sendOneSignalToAdmins", {title, message});
-      sentCount = Number(res?.sent || 0);
-      if (!sentCount) console.warn("OneSignal: admin notification not sent", res);
-    }
-
-    return sentCount;
-  };
+  const sendNotificationToAdmins = async () => 0;
 
   const loadTreatmentCounts = async () => {
     const res = await sheetCall("getTreatmentCounts");
@@ -2066,16 +1697,7 @@ useEffect(() => {
     localStorage.setItem("galileo_dismissed_critical_issues", JSON.stringify(next));
   };
 
-  const notifyOperatorIssueAcknowledged = async (issue, note) => {
-    const operatorName = normalizeName(issue?.[1] || "");
-    const opUser = allUsers.find(u => isOperatorRole(u.role) && u.username && normalizeName(u.name) === operatorName);
-    if (!opUser?.username) {
-      console.warn("OneSignal: operator user not found for critical issue ack", issue?.[1]);
-      return false;
-    }
-    const clientName = String(issue?.[2] || "").split(" - ")[0];
-    return sendOneSignalToUser("🚨 תקלה קריטית אושרה", `${clientName} — ${note}`, opUser.username);
-  };
+  const notifyOperatorIssueAcknowledged = async () => false;
 
   const acknowledgeCriticalIssue = async (issue, index) => {
     const note = `אושר על ידי ${user?.name || "אדמין"} - תקלה קריטית בטיפול מיידי`;
@@ -2092,166 +1714,10 @@ useEffect(() => {
     haptic("success");
   };
 
-  const sendNotificationToOperators = async (operatorNames, title, message) => {
-    const names = [...new Set((operatorNames || []).filter(Boolean).map(normalizeName))];
-    const targets = allUsers.filter(u =>
-      isOperatorRole(u.role) &&
-      u.username &&
-      names.includes(normalizeName(u.name))
-    );
+  const sendNotificationToOperators = async () => 0;
+  const sendNotificationToSubOperators = async () => 0;
 
-    if (!targets.length) {
-      console.warn("OneSignal: no operator users found for task notification", operatorNames);
-      return 0;
-    }
 
-    const sentCount = (await Promise.all(targets.map(op => sendOneSignalToUser(title, message, op.username)))).filter(Boolean).length;
-    return sentCount;
-  };
-  const sendNotificationToSubOperators = async (subUsers, title, message) => {
-    const targets = (subUsers || []).filter(u => u?.username);
-    const sentCount = (await Promise.all(targets.map(sub => sendOneSignalToUser(title, message, sub.username)))).filter(Boolean).length;
-    if (!targets.length) console.warn("OneSignal: no sub-operator users found for notification");
-    return sentCount;
-  };
-
-  const enablePushForUsername = async (username) => {
-    const externalId = String(username || "").trim();
-    if (!externalId) {
-      showToast("⚠️ הזן שם משתמש לפני הפעלת התראות");
-      return;
-    }
-
-    if (isActionLoading("push")) return;
-    setAction("push", "loading");
-
-    if (!window.isSecureContext && !["localhost","127.0.0.1"].includes(window.location.hostname)) {
-      setAction("push", "error", 2200);
-      showToast("⚠️ התראות דורשות HTTPS");
-      return;
-    }
-
-    const ok = await runOneSignal(async (OneSignal) => {
-        if (OneSignal.Notifications?.isPushSupported && !OneSignal.Notifications.isPushSupported()) {
-          return "unsupported";
-        }
-
-        if (OneSignal.Notifications?.permission !== true && OneSignal.Notifications?.requestPermission) {
-          await OneSignal.Notifications.requestPermission();
-          if (OneSignal.Notifications.permission !== true) {
-            return "denied";
-          }
-        }
-
-        localStorage.setItem(PUSH_RECONNECT_USER_KEY, externalId);
-        await OneSignal.login(externalId);
-        for (let i = 0; i < 3; i++) {
-          if (OneSignal.User?.PushSubscription?.optIn) {
-            await OneSignal.User.PushSubscription.optIn();
-          }
-          const state = await readOneSignalPushState(OneSignal, externalId);
-          if (state.active) {
-            await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
-            return true;
-          }
-          await sleep(900);
-        }
-        const state = await readOneSignalPushState(OneSignal, externalId);
-        await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
-        return state.active ? true : "no-subscription";
-    });
-
-    if (ok === true) {
-      rememberPushEnabled(externalId);
-      setAction("push", "success", 1800);
-      setPushCardOpen(false);
-      showToast("✅ התראות הופעלו למשתמש");
-    } else if (ok === "denied") {
-      setAction("push", "error", 2200);
-      showToast("⚠️ הרשאת התראות לא אושרה");
-    } else if (ok === "unsupported") {
-      setAction("push", "error", 2200);
-      showToast("⚠️ הדפדפן לא תומך בהתראות");
-    } else {
-      setAction("push", "error", 2200);
-      showToast("⚠️ לא ניתן להפעיל התראות");
-    }
-  };
-
-  const resetPushForUsername = async (username) => {
-    const externalId = String(username || "").trim();
-    if (!externalId) {
-      showToast("⚠️ הזן שם משתמש לפני איפוס התראות");
-      return;
-    }
-    if (isActionLoading("pushReset")) return;
-    setAction("pushReset", "loading");
-
-    const ok = await runOneSignal(async (OneSignal) => {
-      try {
-        await clearBrowserPushSubscription();
-        if (typeof OneSignal.logout === "function") await OneSignal.logout();
-        await postScriptAction(getScriptUrl(), "saveUserPushSubscription", {
-          externalUserId: externalId,
-          subscriptionId: "",
-          token: "",
-          active: false,
-          appId: ONESIGNAL_APP_ID,
-          userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
-        }).catch(e => console.warn("Push reset server update failed:", e));
-        forgetPushEnabled(externalId);
-        localStorage.removeItem(PUSH_RECONNECT_USER_KEY);
-        clearOneSignalStorage();
-        await unregisterPushServiceWorkers();
-        window.OneSignalInitialized = false;
-        window.OneSignalReadyPromise = null;
-        window.OneSignalLoaded = false;
-        setTimeout(() => window.location.reload(), 250);
-        return true;
-      } catch (e) {
-        console.warn("Push reset error:", e);
-        return false;
-      }
-    });
-
-    if (ok) {
-      setAction("pushReset", "success", 1800);
-      setAction("push", "idle");
-      setPushCardOpen(true);
-      showToast("✅ ההתראות אופסו. יש להפעיל מחדש");
-    } else {
-      setAction("pushReset", "error", 2500);
-      showToast("⚠️ איפוס נכשל, בדוק הרשאת התראות בדפדפן");
-    }
-  };
-
-  const PushSetupCard = ({compact=false}) => (
-    <div style={{...card({marginBottom: compact ? 10 : 12,background: "#e3f2fd",border: `1px solid ${C.lightBlue}`}),padding: compact ? "10px 14px" : "12px 16px"}}>
-      <Press onClick={()=>setPushCardOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:10}}>
-        <span style={{fontSize:18}}>🔔</span>
-        <div style={{flex:1}}>
-          <div style={{fontWeight:800,fontSize:13,color:C.blue}}>התראות אישיות</div>
-          {pushCardOpen&&<div style={{fontSize:11,color:C.muted}}>נדרש לקבלת משימות ועדכונים לפי משתמש</div>}
-        </div>
-        <span style={{fontSize:12,fontWeight:800,color:C.blue,display:"inline-flex",alignItems:"center",gap:8}}>
-          {actionLabel("push",{idle:"הפעל",loading:"⏳",success:"✅",error:"נסה שוב"})}
-          <span style={{fontSize:14,display:"inline-block",transform:pushCardOpen?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▾</span>
-        </span>
-      </Press>
-      {pushCardOpen&&(
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
-          <Press onClick={enablePushForCurrentUser} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,background:C.blue,color:"#fff",fontSize:12,fontWeight:800}}>
-            <span>🔔</span>
-            <span>{actionLabel("push",{idle:"הפעל",loading:"מפעיל...",success:"הופעל",error:"נסה שוב"})}</span>
-          </Press>
-          <Press onClick={resetPushForCurrentUser} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,background:"#fff",border:`1px solid ${C.border}`,color:C.muted,fontSize:12,fontWeight:800}}>
-            <span>↻</span>
-            <span>{actionLabel("pushReset",{idle:"איפוס התראות",loading:"מאפס...",success:"אופס",error:"נסה שוב"})}</span>
-          </Press>
-        </div>
-      )}
-    </div>
-  );
 
   useEffect(()=>{
     if(!user) return;
@@ -2308,9 +1774,6 @@ useEffect(() => {
     }
   };
 
-  const resetPushForCurrentUser = async () => resetPushForUsername(user?.username);
-
-  const enablePushForCurrentUser = async () => enablePushForUsername(user?.username);
 
   const writeLocalArray = (key, value) => {
     localStorage.setItem(key, JSON.stringify(value || []));
@@ -2433,11 +1896,11 @@ useEffect(() => {
       }
     }
     if (nextUser?.username) {
-      void sendOneSignalToUser("שיוך עוזר מפעיל", `שויכת למפעיל ${opName} לתאריך ${fmtDate(date)}`, nextUser.username)
+      void sendAppNotificationToUser("שיוך עוזר מפעיל", `שויכת למפעיל ${opName} לתאריך ${fmtDate(date)}`, nextUser.username)
         .catch(e => console.warn("Sub-operator assignment notification failed", e));
     }
     if (previousUser?.username && previousUser.username !== nextUser?.username) {
-      void sendOneSignalToUser("שיוך עוזר מפעיל הוסר", `השיוך למפעיל ${opName} לתאריך ${fmtDate(date)} הוסר`, previousUser.username)
+      void sendAppNotificationToUser("שיוך עוזר מפעיל הוסר", `השיוך למפעיל ${opName} לתאריך ${fmtDate(date)} הוסר`, previousUser.username)
         .catch(e => console.warn("Sub-operator unassignment notification failed", e));
     }
   };
@@ -2489,7 +1952,7 @@ useEffect(() => {
       await saveSubOperatorApprovals(next);
       localStorage.setItem(subOperatorApprovalKey(date, opName, subUsername), "yes");
       setSubOperatorRefresh(x=>x+1);
-      void sendOneSignalToUser("אישור מילוי דוחות", `אושרת למילוי דוחות עבור ${opName} בתאריך ${fmtDate(date)}`, subUsername)
+      void sendAppNotificationToUser("אישור מילוי דוחות", `אושרת למילוי דוחות עבור ${opName} בתאריך ${fmtDate(date)}`, subUsername)
         .catch(e => console.warn("Sub-operator approval notification failed", e));
       showToast("✅ עוזר מפעיל אושר למילוי דוחות");
       haptic("success");
@@ -2996,9 +2459,6 @@ useEffect(() => {
     setScreen(isAdminPanelRole(found.role) ? "admin" : "daily");
     haptic("medium");
     connectSheets(true);
-    if (isPushRemembered(found.username)) {
-      registerPushSubscription(found.username).catch(e => console.warn("Push subscription refresh failed", e));
-    }
     // בדיקת מנוי מושהה ברקע — לא חוסם כניסה
     setTimeout(async () => {
       try {
@@ -3598,11 +3058,9 @@ const report = {
   );
 
   if(screen==="login") {
-    const loginPushEnabled = isPushRemembered(loginUser);
-    const loginPushIdleLabel = loginPushEnabled ? "✅ מופעל" : "🔔 הפעל התראות";
     return (
     <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#1565c0;box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}#onesignal-bell-container{display:none!important}`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#1565c0;box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}`}</style>
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
       <div style={{width:"100%",maxWidth:360}}>
         <div style={{textAlign:"center",marginBottom:36}} onPointerDown={()=>{ logoLongPress.current = setTimeout(()=>{ haptic("success"); setShowSetup(true); }, 3000); }} onPointerUp={()=>clearTimeout(logoLongPress.current)} onPointerLeave={()=>clearTimeout(logoLongPress.current)}>
@@ -3623,12 +3081,6 @@ const report = {
           {loginErr&&<div style={{background:"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:16,color:C.red,fontSize:13,fontWeight:700,textAlign:"center"}}>⚠️ {loginErr}</div>}
           <Press onClick={handleLogin} style={{padding:16,borderRadius:18,background:loginLoading?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:loginLoading?"none":"0 16px 36px rgba(79,70,229,0.24)"}}>
             {actionLabel("login",{idle:"כניסה →",loading:"⏳ מתחבר...",success:"✅ התחברת",error:"⚠️ נסה שוב"})}
-          </Press>
-          <Press onClick={()=>resetPushForUsername(loginUser)} style={{marginTop:10,padding:13,borderRadius:18,background:"rgba(255,255,255,0.62)",border:"1px solid rgba(148,163,184,0.28)",color:C.muted,fontWeight:900,fontSize:14,textAlign:"center"}}>
-            {actionLabel("pushReset",{idle:"↻ אפס התראות",loading:"⏳ מאפס התראות...",success:"✅ אופס",error:"⚠️ נסה שוב"})}
-          </Press>
-          <Press onClick={()=>enablePushForUsername(loginUser)} style={{marginTop:10,padding:13,borderRadius:18,background:"rgba(30,64,175,0.12)",border:"1px solid rgba(37,99,235,0.18)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center"}}>
-            {actionLabel("push",{idle:loginPushIdleLabel,loading:"⏳ מפעיל התראות...",success:"✅ מופעל",error:"⚠️ נסה שוב"})}
           </Press>
         </div>
         <InstallAppCard/>
@@ -3832,7 +3284,7 @@ const report = {
             </div>
           );
         })()}
-        <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}#onesignal-bell-container{display:none!important}`}</style>
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}`}</style>
         <div style={{margin:"12px 14px 0",background:operatorHeroBg,border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px 24px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
           <div style={{position:"relative",display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
             <div>
@@ -4257,7 +3709,7 @@ const report = {
 
   if(screen==="form") return (
     <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:100}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:8px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}select option{background:#fff}#onesignal-bell-container{display:none!important}`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:8px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}select option{background:#fff}`}</style>
       <div style={{margin:"12px 14px 0",background:"linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))",border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
           <div><p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:"בחר לקוח"}</p><h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>📝 דוח טיפול</h1></div>
@@ -4448,7 +3900,7 @@ const report = {
     const last = reports[reports.length-1];
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,textAlign:"center",color:C.text}}>
-        <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}@keyframes pop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}#onesignal-bell-container{display:none!important}`}</style>
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}@keyframes pop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}`}</style>
         <div style={{position:"absolute",top:14,left:14}}><RefreshTopButton compact/></div>
         <div style={{width:104,height:104,borderRadius:32,background:"rgba(232,241,253,0.82)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(37,99,235,0.12), 0 1px 0 rgba(232,241,253,0.82) inset",display:"flex",alignItems:"center",justifyContent:"center",fontSize:58,marginBottom:18,animation:"pop 0.5s cubic-bezier(0.34,1.56,0.64,1)"}}>✅</div>
         <h1 style={{fontSize:26,fontWeight:900,color:C.text,margin:"0 0 8px"}}>הדוח נשלח!</h1>
@@ -4595,7 +4047,7 @@ const report = {
             </div>
           </div>
         )}
-        <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}select option{background:#fff}#onesignal-bell-container{display:none!important}`}</style>
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}select option{background:#fff}`}</style>
         <div style={{margin:"12px 14px 0",background:adminHeroBg,border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px 20px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <div>
@@ -4814,13 +4266,13 @@ const report = {
                       const targets = notifyOps.map(opName => {
                         const opUser = allUsers.find(u=>normalizeName(u.name)===normalizeName(opName));
                         if (!opUser?.username) {
-                          console.warn("OneSignal: operator user not found or missing username", opName, opUser);
+                          console.warn("Notification target user not found or missing username", opName, opUser);
                           return null;
                         }
                         return opUser;
                       }).filter(Boolean);
                       const missingCount = notifyOps.length - targets.length;
-                      const sentCount = (await Promise.all(targets.map(opUser => sendOneSignalToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(notifyDate)}`, opUser.username)))).filter(Boolean).length;
+                      const sentCount = (await Promise.all(targets.map(opUser => sendAppNotificationToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(notifyDate)}`, opUser.username)))).filter(Boolean).length;
                       if (sentCount === notifyOps.length) showToast(`✅ ההתראות נשלחו`);
                       else if (missingCount) showToast(`⚠️ חסר שם משתמש ל-${missingCount} מפעילים`);
                       else showToast(`⚠️ ${sentCount}/${notifyOps.length} התראות נשלחו`);

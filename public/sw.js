@@ -1,7 +1,3 @@
-try {
-  importScripts("https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js");
-} catch (e) {}
-
 const CACHE = "galileo-v2-cache-v6";
 const STATIC = [
   "/",
