@@ -27,7 +27,11 @@
         action === "pushToUser" ||
         action === "notifyUser"
       ) {
-        return json(sendOneSignalToUser_(data));
+        return json(sendOneSignalToUser_(data, ss));
+      }
+
+      if (action === "saveUserPushSubscription") {
+        return json(saveUserPushSubscription_(ss, data));
       }
 
       if (action === "sendGreenApiWhatsApp") {
@@ -585,9 +589,9 @@
     let s = clientSS.getSheetByName("Users");
     if(!s) {
       s = clientSS.insertSheet("Users");
-      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"]);
+      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator","pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"]);
     } else {
-      ensureColumns(s, ["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"]);
+      ensureColumns(s, ["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator","pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"]);
     }
     
     // ── לקוחות ──
@@ -1179,7 +1183,38 @@
   }
   
 
-  function sendOneSignalToUser_(data) {
+  function sendOneSignalRequest_(APP_ID, REST_API_KEY, payload, targetLabel) {
+    const options = {
+      method: "post",
+      contentType: "application/json",
+      headers: {
+        Authorization: "Key " + REST_API_KEY
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+
+    const res = UrlFetchApp.fetch("https://api.onesignal.com/notifications", options);
+    const code = res.getResponseCode();
+    const text = res.getContentText();
+
+    Logger.log("OneSignal targeted user: " + targetLabel);
+    Logger.log("OneSignal targeted status: " + code);
+    Logger.log("OneSignal targeted response: " + text);
+
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+
+    const recipients = Number(parsed.recipients || 0);
+    const ok = code >= 200 && code < 300 && !parsed.errors && recipients > 0;
+    return { code, parsed, recipients, ok };
+  }
+
+  function sendOneSignalToUser_(data, ss) {
     const props = PropertiesService.getScriptProperties();
     const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
     const REST_API_KEY = String(props.getProperty("ONESIGNAL_REST_API_KEY") || "").trim();
@@ -1216,33 +1251,32 @@
       contents: { en: message, he: message }
     };
 
-    const options = {
-      method: "post",
-      contentType: "application/json",
-      headers: {
-        Authorization: "Key " + REST_API_KEY
-      },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    };
+    const primary = sendOneSignalRequest_(APP_ID, REST_API_KEY, payload, externalUserId);
+    let code = primary.code;
+    let parsed = primary.parsed;
+    let recipients = primary.recipients;
+    let ok = primary.ok;
+    let fallbackResults = [];
 
-    const res = UrlFetchApp.fetch("https://api.onesignal.com/notifications", options);
-    const code = res.getResponseCode();
-    const text = res.getContentText();
-
-    Logger.log("OneSignal targeted user: " + externalUserId);
-    Logger.log("OneSignal targeted status: " + code);
-    Logger.log("OneSignal targeted response: " + text);
-
-    let parsed = {};
-    try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      parsed = { raw:text };
+    if (!ok && ss) {
+      const subscriptionIds = getPushSubscriptionIdsForUser_(ss, externalUserId);
+      subscriptionIds.forEach(id => {
+        if (ok) return;
+        const fallbackPayload = {
+          app_id: APP_ID,
+          target_channel: "push",
+          include_subscription_ids: [id],
+          headings: { en: title, he: title },
+          contents: { en: message, he: message }
+        };
+        const fallback = sendOneSignalRequest_(APP_ID, REST_API_KEY, fallbackPayload, externalUserId + " subscription");
+        fallbackResults.push({ subscriptionId: id, status: fallback.code, recipients: fallback.recipients, response: fallback.parsed });
+        code = fallback.code;
+        parsed = fallback.parsed;
+        recipients = fallback.recipients;
+        ok = fallback.ok;
+      });
     }
-
-    const recipients = Number(parsed.recipients || 0);
-    const ok = code >= 200 && code < 300 && !parsed.errors && recipients > 0;
 
     return {
       success: ok,
@@ -1252,7 +1286,8 @@
       recipients,
       id: parsed.id || "",
       externalUserId,
-      response: parsed
+      response: parsed,
+      fallbackResults
     };
   }
 
@@ -1287,7 +1322,7 @@
         externalUserId: admin.username,
         title: data.title || data.heading || "Pool Alert",
         message: data.message || data.body || data.text || "New notification"
-      });
+      }, ss);
       results.push({ username: admin.username, name: admin.name, result: res });
       if (res && res.success) sent++;
     });
@@ -1325,7 +1360,7 @@
       externalUserId: user.username,
       title: "✅ התקלה סומנה כטופלה",
       message: messageParts.join(" · ") || "התקלה שפתחת טופלה"
-    });
+    }, ss);
 
     Logger.log("Operator issue done notification: " + JSON.stringify(res));
     return res;
@@ -1351,7 +1386,7 @@
       externalUserId: user.username,
       title: "🚨 תקלה קריטית אושרה",
       message: messageParts.join(" · ") || "תקלה קריטית אושרה ונמצאת בטיפול מיידי"
-    });
+    }, ss);
 
     Logger.log("Operator critical issue ack notification: " + JSON.stringify(res));
     return res;
@@ -1624,6 +1659,60 @@ function getUsers_(ss) {
     obj.assignedOperator = String(obj.assignedOperator || linkedOperator || "").trim();
     return obj;
   });
+}
+
+function saveUserPushSubscription_(ss, data) {
+  const sheet = ss.getSheetByName("Users");
+  if (!sheet) return { success:false, error:"Users sheet not found" };
+  ensureColumns(sheet, ["pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"]);
+  const rows = sheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => r.some(c => String(c).toLowerCase().trim() === "username"));
+  if (hi === -1) hi = 0;
+  const headers = rows[hi].map(h => String(h || "").trim());
+  const usernameIdx = headers.findIndex(h => h.toLowerCase() === "username");
+  const subIdx = headers.indexOf("pushSubscriptionId");
+  const tokenIdx = headers.indexOf("pushToken");
+  const enabledIdx = headers.indexOf("pushEnabled");
+  const updatedIdx = headers.indexOf("pushUpdatedAt");
+  const appIdx = headers.indexOf("pushAppId");
+  const agentIdx = headers.indexOf("pushUserAgent");
+  const target = String(data.externalUserId || data.username || data.externalId || "").trim().toLowerCase();
+  if (!target || usernameIdx < 0) return { success:false, error:"missing username" };
+  for (let i = hi + 1; i < rows.length; i++) {
+    if (String(rows[i][usernameIdx] || "").trim().toLowerCase() !== target) continue;
+    const row = i + 1;
+    const subscriptionId = String(data.subscriptionId || data.onesignalId || "").trim();
+    const token = String(data.token || "").trim();
+    if (subIdx >= 0) sheet.getRange(row, subIdx + 1).setValue(subscriptionId);
+    if (tokenIdx >= 0) sheet.getRange(row, tokenIdx + 1).setValue(token);
+    if (enabledIdx >= 0) sheet.getRange(row, enabledIdx + 1).setValue(subscriptionId || token ? "TRUE" : "FALSE");
+    if (updatedIdx >= 0) sheet.getRange(row, updatedIdx + 1).setValue(new Date());
+    if (appIdx >= 0) sheet.getRange(row, appIdx + 1).setValue(String(data.appId || "").trim());
+    if (agentIdx >= 0) sheet.getRange(row, agentIdx + 1).setValue(String(data.userAgent || "").slice(0, 500));
+    return { success:true, row, username:target, subscriptionId:subscriptionId ? "saved" : "", token:token ? "saved" : "" };
+  }
+  return { success:false, error:"user not found", username:target };
+}
+
+function getPushSubscriptionIdsForUser_(ss, username) {
+  if (!ss || !username) return [];
+  const sheet = ss.getSheetByName("Users");
+  if (!sheet) return [];
+  const rows = sheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => r.some(c => String(c).toLowerCase().trim() === "username"));
+  if (hi === -1) hi = 0;
+  const headers = rows[hi].map(h => String(h || "").trim());
+  const usernameIdx = headers.findIndex(h => h.toLowerCase() === "username");
+  const subIdx = headers.indexOf("pushSubscriptionId");
+  if (usernameIdx < 0 || subIdx < 0) return [];
+  const target = String(username || "").trim().toLowerCase();
+  const ids = [];
+  for (let i = hi + 1; i < rows.length; i++) {
+    if (String(rows[i][usernameIdx] || "").trim().toLowerCase() !== target) continue;
+    const id = String(rows[i][subIdx] || "").trim();
+    if (id) ids.push(id);
+  }
+  return [...new Set(ids)];
 }
 
 function saveSubOperatorAssignment_(ss, data) {
@@ -2208,7 +2297,7 @@ function json(obj) {
     const usersSheet = ss.getSheetByName("Users");
     if(usersSheet) {
       const usersHeaders = usersSheet.getRange(1,1,1,usersSheet.getLastColumn()).getValues()[0];
-      const neededUsers = ["welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"];
+      const neededUsers = ["welcomeImage","welcomeInstagram","linkedOperator","assignedOperator","pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"];
       let lastCol = usersSheet.getLastColumn();
       neededUsers.forEach(name => {
         if(!usersHeaders.includes(name)) {
@@ -2221,7 +2310,7 @@ function json(obj) {
       });
     } else {
       const s = ss.insertSheet("Users");
-      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"]);
+      s.appendRow(["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator","pushSubscriptionId","pushToken","pushEnabled","pushUpdatedAt","pushAppId","pushUserAgent"]);
       Logger.log("✅ נוצר טאב: Users");
     }
 

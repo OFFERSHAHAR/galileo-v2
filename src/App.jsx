@@ -443,6 +443,57 @@ async function loginOneSignalUser(username) {
   });
 }
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function readOneSignalPushState(OneSignal, externalId) {
+  for (let i = 0; i < 5; i++) {
+    const push = OneSignal?.User?.PushSubscription || {};
+    const subscriptionId = String(
+      push.id ||
+      (typeof push.getId === "function" ? await push.getId() : "") ||
+      ""
+    ).trim();
+    const token = String(
+      push.token ||
+      (typeof push.getToken === "function" ? await push.getToken() : "") ||
+      ""
+    ).trim();
+    const optedIn = typeof push.optedIn === "boolean" ? push.optedIn : undefined;
+    if (subscriptionId || token) {
+      return {
+        externalUserId: externalId,
+        subscriptionId,
+        token,
+        optedIn,
+        permission: OneSignal?.Notifications?.permission === true,
+        appId: ONESIGNAL_APP_ID,
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      };
+    }
+    await sleep(500);
+  }
+  return {
+    externalUserId: externalId,
+    subscriptionId: "",
+    token: "",
+    optedIn: false,
+    permission: OneSignal?.Notifications?.permission === true,
+    appId: ONESIGNAL_APP_ID,
+    userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+  };
+}
+
+async function registerPushSubscription(externalId) {
+  const username = String(externalId || "").trim();
+  if (!username) return null;
+  return runOneSignal(async (OneSignal) => {
+    await OneSignal.login(username);
+    const state = await readOneSignalPushState(OneSignal, username);
+    await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
+    return state;
+  });
+}
+
 const haptic = (t="light") => navigator.vibrate?.({light:30,medium:50,success:[30,50,30]}[t]||30);
 
 function Press({children,onClick,style={},disabled=false,tag="div"}) {
@@ -2005,8 +2056,13 @@ useEffect(() => {
           }
         }
 
+        if (OneSignal.User?.PushSubscription?.optIn) {
+          await OneSignal.User.PushSubscription.optIn();
+        }
         await OneSignal.login(externalId);
-        return true;
+        const state = await readOneSignalPushState(OneSignal, externalId);
+        await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
+        return state.subscriptionId || state.token ? true : "no-subscription";
     });
 
     if (ok === true) {
@@ -2044,7 +2100,9 @@ useEffect(() => {
           await OneSignal.Notifications.requestPermission();
         }
         await OneSignal.login(externalId);
-        return true;
+        const state = await readOneSignalPushState(OneSignal, externalId);
+        await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
+        return !!(state.subscriptionId || state.token);
       } catch (e) {
         console.warn("Push reset error:", e);
         return false;
@@ -2833,6 +2891,9 @@ useEffect(() => {
     setScreen(isAdminPanelRole(found.role) ? "admin" : "daily");
     haptic("medium");
     connectSheets(true);
+    if (isPushRemembered(found.username)) {
+      registerPushSubscription(found.username).catch(e => console.warn("Push subscription refresh failed", e));
+    }
     // בדיקת מנוי מושהה ברקע — לא חוסם כניסה
     setTimeout(async () => {
       try {
