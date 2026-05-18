@@ -1321,6 +1321,21 @@ const [screen,setScreen] = useState(() => {
 });
 
 useEffect(() => {
+  if (typeof document === "undefined") return;
+  const styleId = "galileo-hide-push-bell-after-login";
+  let style = document.getElementById(styleId);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = styleId;
+    document.head.appendChild(style);
+  }
+  style.textContent = screen === "login" ? "" : "#onesignal-bell-container{display:none!important}";
+  return () => {
+    if (style && style.parentNode) style.parentNode.removeChild(style);
+  };
+}, [screen]);
+
+useEffect(() => {
   const enforceDailyProfileLogin = () => {
     if (!localStorage.getItem("galileo_user")) return;
     const loginDay = localStorage.getItem(LOGIN_DAY_KEY);
