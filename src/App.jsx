@@ -233,6 +233,68 @@ async function sheetCall(action, payload={}) {
   } catch { return null; }
 }
 
+const ONESIGNAL_APP_ID = "17b43ba4-9ebf-4b66-934c-ee8eb0c98930";
+const ONESIGNAL_SAFARI_WEB_ID = "web.onesignal.auto.6b1e0125-c07a-4d4d-8123-db80df1063df";
+
+function getOneSignalInstance() {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  return new Promise((resolve) => {
+    window.OneSignalDeferred.push(async function(OneSignal) {
+      try {
+        if (!window.galileoOneSignalInitPromise) {
+          window.galileoOneSignalInitPromise = OneSignal.init({
+            appId: ONESIGNAL_APP_ID,
+            safari_web_id: ONESIGNAL_SAFARI_WEB_ID,
+            serviceWorkerPath: "/OneSignalSDKWorker.js",
+            serviceWorkerParam: { scope: "/" },
+            notifyButton: { enable: true },
+          });
+        }
+        await window.galileoOneSignalInitPromise;
+        resolve(OneSignal);
+      } catch (e) {
+        console.warn("Push init failed:", e);
+        resolve(null);
+      }
+    });
+  });
+}
+
+async function connectPushUser(username, prompt=false) {
+  const externalId = String(username || "").trim().toLowerCase();
+  if (!externalId) return { success:false, error:"missing_user" };
+  const OneSignal = await getOneSignalInstance();
+  if (!OneSignal) return { success:false, error:"sdk_unavailable" };
+  try {
+    if (typeof OneSignal.login === "function") await OneSignal.login(externalId);
+    if (prompt && OneSignal.Notifications?.requestPermission) {
+      const permission = await OneSignal.Notifications.requestPermission();
+      if (permission === false) return { success:false, error:"permission_denied" };
+    }
+    if (prompt && OneSignal.User?.PushSubscription?.optIn) {
+      await OneSignal.User.PushSubscription.optIn();
+    }
+    return {
+      success:true,
+      externalId,
+      permission: OneSignal.Notifications?.permission,
+      subscriptionId: OneSignal.User?.PushSubscription?.id || "",
+      optedIn: !!OneSignal.User?.PushSubscription?.optedIn,
+    };
+  } catch (e) {
+    console.warn("Push user connect failed:", e);
+    return { success:false, error:String(e?.message || e) };
+  }
+}
+
+async function sendAppNotificationToUser(title, message, username) {
+  const externalUserId = String(username || "").trim().toLowerCase();
+  if (!externalUserId) return false;
+  const res = await sheetCall("sendAppNotificationToUser", { externalUserId, title, message });
+  return !!(res?.success || res?.sent || Number(res?.recipients || 0) > 0);
+}
+
 const normalizeWhatsAppPhone = (phone) => {
   const digits = String(phone || "").replace(/\D/g, "");
   if (!digits) return "";
@@ -241,8 +303,6 @@ const normalizeWhatsAppPhone = (phone) => {
   if (digits.length === 9 && digits.startsWith("5")) return `972${digits}`;
   return digits;
 };
-
-async function sendAppNotificationToUser() { return false; }
 
 const haptic = (t="light") => navigator.vibrate?.({light:30,medium:50,success:[30,50,30]}[t]||30);
 
@@ -1628,7 +1688,10 @@ useEffect(() => {
     return dateMatch && nameMatch;
   });
 
-  const sendNotificationToAdmins = async () => 0;
+  const sendNotificationToAdmins = async (title, message) => {
+    const res = await sheetCall("sendAppNotificationToAdmins", { title, message }).catch(()=>null);
+    return Number(res?.sent || res?.recipients || 0);
+  };
 
   const loadTreatmentCounts = async () => {
     const res = await sheetCall("getTreatmentCounts");
@@ -1714,8 +1777,28 @@ useEffect(() => {
     haptic("success");
   };
 
-  const sendNotificationToOperators = async () => 0;
-  const sendNotificationToSubOperators = async () => 0;
+  const sendNotificationToOperators = async (ops=[], title, message) => {
+    const names = Array.isArray(ops) ? ops : [ops];
+    const targets = names
+      .map(name => allUsers.find(u =>
+        normalizeName(u.name) === normalizeName(name) ||
+        normalizeName(u.username) === normalizeName(name)
+      ))
+      .filter(u => u?.username);
+    const results = await Promise.all(targets.map(u => sendAppNotificationToUser(title, message, u.username).catch(()=>false)));
+    return results.filter(Boolean).length;
+  };
+  const sendNotificationToSubOperators = async (subs=[], title, message) => {
+    const list = Array.isArray(subs) ? subs : [subs];
+    const targets = list
+      .map(item => typeof item === "string"
+        ? allUsers.find(u => normalizeName(u.username) === normalizeName(item) || normalizeName(u.name) === normalizeName(item))
+        : item
+      )
+      .filter(u => u?.username);
+    const results = await Promise.all(targets.map(u => sendAppNotificationToUser(title, message, u.username).catch(()=>false)));
+    return results.filter(Boolean).length;
+  };
 
 
 
@@ -2459,6 +2542,7 @@ useEffect(() => {
     setScreen(isAdminPanelRole(found.role) ? "admin" : "daily");
     haptic("medium");
     connectSheets(true);
+    connectPushUser(found.username, false).catch(e => console.warn("Push identity connect failed:", e));
     // בדיקת מנוי מושהה ברקע — לא חוסם כניסה
     setTimeout(async () => {
       try {
@@ -3081,6 +3165,9 @@ const report = {
           {loginErr&&<div style={{background:"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:16,color:C.red,fontSize:13,fontWeight:700,textAlign:"center"}}>⚠️ {loginErr}</div>}
           <Press onClick={handleLogin} style={{padding:16,borderRadius:18,background:loginLoading?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:loginLoading?"none":"0 16px 36px rgba(79,70,229,0.24)"}}>
             {actionLabel("login",{idle:"כניסה →",loading:"⏳ מתחבר...",success:"✅ התחברת",error:"⚠️ נסה שוב"})}
+          </Press>
+          <Press onClick={async()=>{ setAction("push","loading"); const res = await connectPushUser(loginUser, true); setAction("push", res?.success ? "success" : "error", 2200); showToast(res?.success ? "✅ ההתראות הופעלו" : "⚠️ לא ניתן להפעיל התראות"); }} style={{marginTop:10,padding:13,borderRadius:18,background:"rgba(30,64,175,0.12)",border:"1px solid rgba(37,99,235,0.18)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center"}}>
+            {actionLabel("push",{idle:"🔔 הפעל התראות",loading:"⏳ מפעיל...",success:"✅ מופעל",error:"⚠️ נסה שוב"})}
           </Press>
         </div>
         <InstallAppCard/>

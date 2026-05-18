@@ -10,8 +10,20 @@
       const SHEET_ID = data.sheetId || "1am5BQh6oesQXoJgdeTpiDTIEuzf8UdfWotPXSoqOLiU";
       const ss = SpreadsheetApp.openById(SHEET_ID);
 
+      if (
+        action === "sendAppNotificationToUser" ||
+        action === "sendNotificationToUser" ||
+        action === "sendUserNotification"
+      ) {
+        return json(sendAppNotificationToUser_(data, ss));
+      }
 
-
+      if (
+        action === "sendAppNotificationToAdmins" ||
+        action === "sendNotificationToAdmins"
+      ) {
+        return json(sendAppNotificationToAdmins_(ss, data));
+      }
 
       if (action === "sendGreenApiWhatsApp") {
         return json(sendGreenApiWhatsApp_(data));
@@ -962,8 +974,16 @@
       if (sameUser && sameDate) sheet.deleteRow(i + 1);
     }
   }
+  function getOneSignalConfig_() {
+    const props = PropertiesService.getScriptProperties();
+    return {
+      appId: String(props.getProperty("ONESIGNAL_APP_ID") || "17b43ba4-9ebf-4b66-934c-ee8eb0c98930").trim(),
+      apiKey: String(props.getProperty("ONESIGNAL_REST_API_KEY") || "").trim()
+    };
+  }
+
   function sendAppNotification(title, message) {
-    return { success:false, disabled:true };
+    return sendAppNotificationToAdmins_(SpreadsheetApp.getActiveSpreadsheet(), { title:title, message:message });
   }
 
   function getGreenApiConfig_() {
@@ -1143,12 +1163,92 @@
     sheet.getRange(targetRow, 17).setValue(note);
     return { success:true, row:targetRow, client:client, note:note };
   }
+  function sendOneSignalRequest_(payload, label) {
+    const config = getOneSignalConfig_();
+    if (!config.appId) return { success:false, ok:false, error:"missing_app_id", recipients:0 };
+    if (!config.apiKey) return { success:false, ok:false, error:"missing_rest_api_key", recipients:0 };
+
+    const body = Object.assign({
+      app_id: config.appId,
+      target_channel: "push",
+      ttl: 259200
+    }, payload || {});
+
+    const res = UrlFetchApp.fetch("https://api.onesignal.com/notifications", {
+      method: "post",
+      contentType: "application/json",
+      headers: { Authorization: "Key " + config.apiKey },
+      payload: JSON.stringify(body),
+      muteHttpExceptions: true
+    });
+
+    const status = res.getResponseCode();
+    const text = res.getContentText();
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+
+    Logger.log("Push target: " + label);
+    Logger.log("Push status: " + status);
+    Logger.log("Push response: " + text);
+
+    const recipients = Number(parsed.recipients || 0);
+    const ok = status >= 200 && status < 300 && recipients > 0 && !parsed.errors;
+    return {
+      success: ok,
+      ok: ok,
+      sent: ok,
+      status: status,
+      recipients: recipients,
+      id: parsed.id || "",
+      response: parsed
+    };
+  }
+
   function sendAppNotificationToUser_(data, ss) {
-    return { success:false, disabled:true, sent:false };
+    const externalUserId = String(
+      data.externalUserId ||
+      data.externalId ||
+      data.username ||
+      data.to ||
+      data.recipient ||
+      ""
+    ).trim().toLowerCase();
+
+    if (!externalUserId) return { success:false, sent:false, error:"missing_external_user_id" };
+
+    const title = String(data.title || data.heading || "Galileo").trim();
+    const message = String(data.message || data.body || data.text || "עדכון חדש").trim();
+
+    const result = sendOneSignalRequest_({
+      include_aliases: { external_id: [externalUserId] },
+      headings: { he:title, en:title },
+      contents: { he:message, en:message }
+    }, externalUserId);
+
+    result.externalUserId = externalUserId;
+    return result;
   }
 
   function sendAppNotificationToAdmins_(ss, data) {
-    return { success:false, disabled:true, sent:0, total:0, results:[] };
+    const users = getUsers_(ss) || [];
+    const admins = users.filter(u => u.username && isAdminRole_(u.role));
+    const results = admins.map(admin => sendAppNotificationToUser_({
+      externalUserId: admin.username,
+      title: data.title,
+      message: data.message || data.body || data.text
+    }, ss));
+    const sent = results.filter(r => r && (r.success || r.sent || Number(r.recipients || 0) > 0)).length;
+    return {
+      success: sent > 0,
+      sent: sent,
+      total: admins.length,
+      recipients: sent,
+      results: results
+    };
   }
 
   function isAdminRole_(role) {
