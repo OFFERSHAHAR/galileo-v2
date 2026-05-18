@@ -1214,6 +1214,42 @@
     return { code, parsed, recipients, ok };
   }
 
+  function transferOneSignalSubscription_(subscriptionId, externalUserId) {
+    const props = PropertiesService.getScriptProperties();
+    const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
+    const REST_API_KEY = String(props.getProperty("ONESIGNAL_REST_API_KEY") || "").trim();
+    const id = String(subscriptionId || "").trim();
+    const user = String(externalUserId || "").trim();
+    if (!APP_ID || !REST_API_KEY || !id || !user) return { success:false, skipped:true };
+
+    const options = {
+      method: "patch",
+      contentType: "application/json",
+      headers: {
+        Authorization: "Key " + REST_API_KEY
+      },
+      payload: JSON.stringify({
+        identity: {
+          external_id: user
+        }
+      }),
+      muteHttpExceptions: true
+    };
+
+    const res = UrlFetchApp.fetch("https://api.onesignal.com/apps/" + encodeURIComponent(APP_ID) + "/subscriptions/" + encodeURIComponent(id) + "/owner", options);
+    const code = res.getResponseCode();
+    const text = res.getContentText();
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+    Logger.log("OneSignal transfer subscription status: " + code);
+    Logger.log("OneSignal transfer subscription response: " + text);
+    return { success:code >= 200 && code < 300, status:code, response:parsed };
+  }
+
   function getOneSignalTtl_(data) {
     const raw = Number(
       data.ttl ||
@@ -1706,7 +1742,8 @@ function saveUserPushSubscription_(ss, data) {
     if (updatedIdx >= 0) sheet.getRange(row, updatedIdx + 1).setValue(new Date());
     if (appIdx >= 0) sheet.getRange(row, appIdx + 1).setValue(String(data.appId || "").trim());
     if (agentIdx >= 0) sheet.getRange(row, agentIdx + 1).setValue(String(data.userAgent || "").slice(0, 500));
-    return { success:true, row, username:target, active, subscriptionId:subscriptionId ? "saved" : "", token:token ? "saved" : "" };
+    const transfer = subscriptionId && token ? transferOneSignalSubscription_(subscriptionId, String(data.externalUserId || data.username || data.externalId || "").trim()) : { skipped:true };
+    return { success:true, row, username:target, active, subscriptionId:subscriptionId ? "saved" : "", token:token ? "saved" : "", transfer };
   }
   return { success:false, error:"user not found", username:target };
 }
