@@ -1214,6 +1214,17 @@
     return { code, parsed, recipients, ok };
   }
 
+  function getOneSignalTtl_(data) {
+    const raw = Number(
+      data.ttl ||
+      data.ttlSeconds ||
+      data.timeToLive ||
+      259200
+    );
+    if (!isFinite(raw) || raw < 0) return 259200;
+    return Math.min(Math.floor(raw), 2419200);
+  }
+
   function sendOneSignalToUser_(data, ss) {
     const props = PropertiesService.getScriptProperties();
     const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
@@ -1221,6 +1232,7 @@
 
     const title = String(data.title || data.heading || "Pool Alert");
     const message = String(data.message || data.body || data.text || data.content || "New notification");
+    const ttl = getOneSignalTtl_(data);
     const externalUserId = String(
       data.externalUserId ||
       data.externalId ||
@@ -1248,7 +1260,8 @@
         external_id: [externalUserId]
       },
       headings: { en: title, he: title },
-      contents: { en: message, he: message }
+      contents: { en: message, he: message },
+      ttl: ttl
     };
 
     const primary = sendOneSignalRequest_(APP_ID, REST_API_KEY, payload, externalUserId);
@@ -1267,7 +1280,8 @@
           target_channel: "push",
           include_subscription_ids: [id],
           headings: { en: title, he: title },
-          contents: { en: message, he: message }
+          contents: { en: message, he: message },
+          ttl: ttl
         };
         const fallback = sendOneSignalRequest_(APP_ID, REST_API_KEY, fallbackPayload, externalUserId + " subscription");
         fallbackResults.push({ subscriptionId: id, status: fallback.code, recipients: fallback.recipients, response: fallback.parsed });
