@@ -39,6 +39,7 @@ const getDailyGreeting = (username) => {
 };
 
 const PUSH_ENABLED_USERS_KEY = "galileo_push_enabled_users";
+const PUSH_RECONNECT_USER_KEY = "galileo_push_reconnect_user";
 const normalizePushUsername = (username) => String(username || "").trim().toLowerCase();
 function getRememberedPushUsers() {
   try {
@@ -58,6 +59,19 @@ function rememberPushEnabled(username) {
   const users = new Set(getRememberedPushUsers());
   users.add(key);
   localStorage.setItem(PUSH_ENABLED_USERS_KEY, JSON.stringify([...users]));
+}
+async function unregisterPushServiceWorkers() {
+  if (typeof navigator === "undefined" || !navigator.serviceWorker?.getRegistrations) return 0;
+  const regs = await navigator.serviceWorker.getRegistrations();
+  let count = 0;
+  for (const reg of regs) {
+    const script = reg.active?.scriptURL || reg.installing?.scriptURL || reg.waiting?.scriptURL || "";
+    if (reg.scope?.startsWith(window.location.origin) || script.includes("OneSignal") || script.endsWith("/sw.js")) {
+      const ok = await reg.unregister().catch(() => false);
+      if (ok) count++;
+    }
+  }
+  return count;
 }
 
 const CITY = "ישראל";
@@ -2099,14 +2113,13 @@ useEffect(() => {
       try {
         if (typeof OneSignal.logout === "function") await OneSignal.logout();
         if (OneSignal.User?.PushSubscription?.optOut) await OneSignal.User.PushSubscription.optOut();
-        if (OneSignal.User?.PushSubscription?.optIn) await OneSignal.User.PushSubscription.optIn();
-        if (OneSignal.Notifications?.permission !== true && OneSignal.Notifications?.requestPermission) {
-          await OneSignal.Notifications.requestPermission();
-        }
-        await OneSignal.login(externalId);
-        const state = await readOneSignalPushState(OneSignal, externalId);
-        await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
-        return !!(state.subscriptionId || state.token);
+        localStorage.setItem(PUSH_RECONNECT_USER_KEY, externalId);
+        await unregisterPushServiceWorkers();
+        window.OneSignalInitialized = false;
+        window.OneSignalReadyPromise = null;
+        window.OneSignalLoaded = false;
+        setTimeout(() => window.location.reload(), 250);
+        return true;
       } catch (e) {
         console.warn("Push reset error:", e);
         return false;
@@ -2211,6 +2224,18 @@ useEffect(() => {
   const resetPushForCurrentUser = async () => resetPushForUsername(user?.username);
 
   const enablePushForCurrentUser = async () => enablePushForUsername(user?.username);
+
+  useEffect(() => {
+    const reconnectUser = localStorage.getItem(PUSH_RECONNECT_USER_KEY);
+    if (!reconnectUser || !user?.username) return;
+    if (normalizePushUsername(reconnectUser) !== normalizePushUsername(user.username)) return;
+    localStorage.removeItem(PUSH_RECONNECT_USER_KEY);
+    const timer = setTimeout(() => {
+      enablePushForUsername(user.username).catch(e => console.warn("Push reconnect failed", e));
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [user?.username]);
+
   const writeLocalArray = (key, value) => {
     localStorage.setItem(key, JSON.stringify(value || []));
   };
