@@ -233,25 +233,15 @@ async function sheetCall(action, payload={}) {
   } catch { return null; }
 }
 
-const ONESIGNAL_APP_ID = "17b43ba4-9ebf-4b66-934c-ee8eb0c98930";
-const ONESIGNAL_SAFARI_WEB_ID = "web.onesignal.auto.6b1e0125-c07a-4d4d-8123-db80df1063df";
-
 function getOneSignalInstance() {
   if (typeof window === "undefined") return Promise.resolve(null);
   window.OneSignalDeferred = window.OneSignalDeferred || [];
   return new Promise((resolve) => {
     window.OneSignalDeferred.push(async function(OneSignal) {
       try {
-        if (!window.galileoOneSignalInitPromise) {
-          window.galileoOneSignalInitPromise = OneSignal.init({
-            appId: ONESIGNAL_APP_ID,
-            safari_web_id: ONESIGNAL_SAFARI_WEB_ID,
-            serviceWorkerPath: "/OneSignalSDKWorker.js",
-            serviceWorkerParam: { scope: "/" },
-            notifyButton: { enable: true },
-          });
+        if (window.galileoOneSignalInitPromise) {
+          await window.galileoOneSignalInitPromise;
         }
-        await window.galileoOneSignalInitPromise;
         resolve(OneSignal);
       } catch (e) {
         console.warn("Push init failed:", e);
