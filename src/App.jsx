@@ -432,6 +432,7 @@ function initOneSignal() {
             serviceWorkerPath: "sw.js",
             serviceWorkerParam: { scope: "/" },
             allowLocalhostAsSecureOrigin: true,
+            autoResubscribe: true,
             notifyButton: { enable: false },
           });
           window.OneSignalInitialized = true;
@@ -537,7 +538,7 @@ async function readOneSignalPushState(OneSignal, externalId) {
       : (typeof push.getOptedIn === "function" ? await push.getOptedIn() : undefined);
     const permission = OneSignal?.Notifications?.permission === true ||
       (typeof Notification !== "undefined" && Notification.permission === "granted");
-    const active = !!subscriptionId && !!token && permission && optedIn !== false;
+    const active = !!subscriptionId && !!token && permission && optedIn === true;
     if (subscriptionId || token) {
       latest = {
         externalUserId: externalId,
@@ -549,7 +550,7 @@ async function readOneSignalPushState(OneSignal, externalId) {
         appId: ONESIGNAL_APP_ID,
         userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
       };
-      if (subscriptionId && token) return latest;
+      if (active) return latest;
     }
     await sleep(750);
   }
@@ -2144,8 +2145,16 @@ useEffect(() => {
 
         localStorage.setItem(PUSH_RECONNECT_USER_KEY, externalId);
         await OneSignal.login(externalId);
-        if (OneSignal.User?.PushSubscription?.optIn) {
-          await OneSignal.User.PushSubscription.optIn();
+        for (let i = 0; i < 3; i++) {
+          if (OneSignal.User?.PushSubscription?.optIn) {
+            await OneSignal.User.PushSubscription.optIn();
+          }
+          const state = await readOneSignalPushState(OneSignal, externalId);
+          if (state.active) {
+            await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
+            return true;
+          }
+          await sleep(900);
         }
         const state = await readOneSignalPushState(OneSignal, externalId);
         await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
@@ -2180,7 +2189,6 @@ useEffect(() => {
 
     const ok = await runOneSignal(async (OneSignal) => {
       try {
-        if (OneSignal.User?.PushSubscription?.optOut) await OneSignal.User.PushSubscription.optOut();
         await clearBrowserPushSubscription();
         if (typeof OneSignal.logout === "function") await OneSignal.logout();
         await postScriptAction(getScriptUrl(), "saveUserPushSubscription", {

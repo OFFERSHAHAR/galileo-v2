@@ -1214,6 +1214,83 @@
     return { code, parsed, recipients, ok };
   }
 
+  function sendOneSignalLegacyPlayerRequest_(APP_ID, REST_API_KEY, subscriptionId, title, message, ttl, targetLabel) {
+    const payload = {
+      app_id: APP_ID,
+      include_player_ids: [subscriptionId],
+      headings: { en: title, he: title },
+      contents: { en: message, he: message },
+      ttl: ttl
+    };
+
+    const options = {
+      method: "post",
+      contentType: "application/json",
+      headers: {
+        Authorization: "Basic " + REST_API_KEY
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+
+    const res = UrlFetchApp.fetch("https://onesignal.com/api/v1/notifications", options);
+    const code = res.getResponseCode();
+    const text = res.getContentText();
+    Logger.log("OneSignal legacy player user: " + targetLabel);
+    Logger.log("OneSignal legacy player status: " + code);
+    Logger.log("OneSignal legacy player response: " + text);
+
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+
+    const recipients = Number(parsed.recipients || 0);
+    const ok = code >= 200 && code < 300 && !parsed.errors && recipients > 0;
+    return { code, parsed, recipients, ok };
+  }
+
+  function sendOneSignalLegacyExternalRequest_(APP_ID, REST_API_KEY, externalUserId, title, message, ttl) {
+    const payload = {
+      app_id: APP_ID,
+      include_external_user_ids: [externalUserId],
+      channel_for_external_user_ids: "push",
+      headings: { en: title, he: title },
+      contents: { en: message, he: message },
+      ttl: ttl
+    };
+
+    const options = {
+      method: "post",
+      contentType: "application/json",
+      headers: {
+        Authorization: "Basic " + REST_API_KEY
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+
+    const res = UrlFetchApp.fetch("https://onesignal.com/api/v1/notifications", options);
+    const code = res.getResponseCode();
+    const text = res.getContentText();
+    Logger.log("OneSignal legacy external user: " + externalUserId);
+    Logger.log("OneSignal legacy external status: " + code);
+    Logger.log("OneSignal legacy external response: " + text);
+
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+
+    const recipients = Number(parsed.recipients || 0);
+    const ok = code >= 200 && code < 300 && !parsed.errors && recipients > 0;
+    return { code, parsed, recipients, ok };
+  }
+
   function transferOneSignalSubscription_(subscriptionId, externalUserId) {
     const props = PropertiesService.getScriptProperties();
     const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
@@ -1372,6 +1449,15 @@
     let ok = primary.ok;
     let fallbackResults = [];
 
+    if (!ok) {
+      const legacyExternal = sendOneSignalLegacyExternalRequest_(APP_ID, REST_API_KEY, externalUserId, title, message, ttl);
+      fallbackResults.push({ externalUserId, legacyExternalStatus: legacyExternal.code, recipients: legacyExternal.recipients, response: legacyExternal.parsed });
+      code = legacyExternal.code;
+      parsed = legacyExternal.parsed;
+      recipients = legacyExternal.recipients;
+      ok = legacyExternal.ok;
+    }
+
     if (!ok && ss) {
       const subscriptionIds = getPushSubscriptionIdsForUser_(ss, externalUserId);
       subscriptionIds.forEach(id => {
@@ -1381,7 +1467,6 @@
         const afterIdentity = fetchOneSignalSubscriptionIdentity_(id);
         const fallbackPayload = {
           app_id: APP_ID,
-          target_channel: "push",
           include_subscription_ids: [id],
           headings: { en: title, he: title },
           contents: { en: message, he: message },
@@ -1393,6 +1478,14 @@
         parsed = fallback.parsed;
         recipients = fallback.recipients;
         ok = fallback.ok;
+        if (!ok) {
+          const legacyPlayer = sendOneSignalLegacyPlayerRequest_(APP_ID, REST_API_KEY, id, title, message, ttl, externalUserId + " subscription");
+          fallbackResults.push({ subscriptionId: id, legacyPlayerStatus: legacyPlayer.code, recipients: legacyPlayer.recipients, response: legacyPlayer.parsed });
+          code = legacyPlayer.code;
+          parsed = legacyPlayer.parsed;
+          recipients = legacyPlayer.recipients;
+          ok = legacyPlayer.ok;
+        }
       });
     }
 
