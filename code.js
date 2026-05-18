@@ -7,7 +7,7 @@
       const action = data.action;
 
       // sheetId מגיע מהאפליקציה — כל לקוח שולח את שלו
-      const SHEET_ID = data.sheetId || "1am5BQh6oesQXoJgdeTpiDTIEuzf8UdfWotPXSoqOLiU";
+      const SHEET_ID = data.sheetId || "1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no";
       const ss = SpreadsheetApp.openById(SHEET_ID);
 
       if (
@@ -705,7 +705,7 @@
 
   function getNotificationSpreadsheets_() {
     const ids = {};
-    ids["1am5BQh6oesQXoJgdeTpiDTIEuzf8UdfWotPXSoqOLiU"] = true;
+    ids["1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no"] = true;
     ids["17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk"] = true;
 
     try {
@@ -1316,6 +1316,17 @@
 
   function syncOneSignalUsersFromSheet() {
     return syncAppNotificationUsers();
+  }
+
+  function testPushToGil() {
+    const ss = getNotificationSyncSpreadsheet_();
+    const res = sendAppNotificationToUser_({
+      externalUserId: "גיל",
+      title: "בדיקת התראה",
+      message: "בדיקה מגוגל סקריפט"
+    }, ss);
+    Logger.log(JSON.stringify(res));
+    return res;
   }
 
   function sendAppNotificationToUser_(data, ss) {
