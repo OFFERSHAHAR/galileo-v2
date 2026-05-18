@@ -80,6 +80,31 @@ async function unregisterPushServiceWorkers() {
   return count;
 }
 
+async function clearBrowserPushSubscription() {
+  if (typeof navigator === "undefined" || !navigator.serviceWorker?.getRegistrations) return 0;
+  const regs = await navigator.serviceWorker.getRegistrations();
+  let count = 0;
+  for (const reg of regs) {
+    const sub = await reg.pushManager?.getSubscription?.().catch(() => null);
+    if (sub && await sub.unsubscribe().catch(() => false)) count++;
+  }
+  return count;
+}
+
+function clearOneSignalStorage() {
+  if (typeof window === "undefined") return;
+  try {
+    Object.keys(localStorage || {}).forEach(key => {
+      if (String(key).toLowerCase().includes("onesignal")) localStorage.removeItem(key);
+    });
+    Object.keys(sessionStorage || {}).forEach(key => {
+      if (String(key).toLowerCase().includes("onesignal")) sessionStorage.removeItem(key);
+    });
+  } catch (e) {
+    console.warn("OneSignal storage cleanup failed:", e);
+  }
+}
+
 const CITY = "ישראל";
 const wazeUrl = (a) => `https://waze.com/ul?q=${encodeURIComponent(a+", "+CITY)}&navigate=yes`;
 const todayStr = () => new Date().toISOString().slice(0,10);
@@ -480,8 +505,11 @@ async function readOneSignalPushState(OneSignal, externalId) {
       (typeof push.getToken === "function" ? await push.getToken() : "") ||
       ""
     ).trim();
-    const optedIn = typeof push.optedIn === "boolean" ? push.optedIn : undefined;
-    const permission = OneSignal?.Notifications?.permission === true;
+    const optedIn = typeof push.optedIn === "boolean"
+      ? push.optedIn
+      : (typeof push.getOptedIn === "function" ? await push.getOptedIn() : undefined);
+    const permission = OneSignal?.Notifications?.permission === true ||
+      (typeof Notification !== "undefined" && Notification.permission === "granted");
     const active = !!subscriptionId && permission && optedIn !== false;
     if (subscriptionId || token) {
       return {
@@ -502,7 +530,8 @@ async function readOneSignalPushState(OneSignal, externalId) {
     subscriptionId: "",
     token: "",
     optedIn: false,
-    permission: OneSignal?.Notifications?.permission === true,
+    permission: OneSignal?.Notifications?.permission === true ||
+      (typeof Notification !== "undefined" && Notification.permission === "granted"),
     active: false,
     appId: ONESIGNAL_APP_ID,
     userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
@@ -2084,10 +2113,11 @@ useEffect(() => {
           }
         }
 
-        await OneSignal.login(externalId);
         if (OneSignal.User?.PushSubscription?.optIn) {
           await OneSignal.User.PushSubscription.optIn();
         }
+        await sleep(700);
+        await OneSignal.login(externalId);
         const state = await readOneSignalPushState(OneSignal, externalId);
         await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
         return state.active ? true : "no-subscription";
@@ -2121,10 +2151,20 @@ useEffect(() => {
 
     const ok = await runOneSignal(async (OneSignal) => {
       try {
-        if (typeof OneSignal.logout === "function") await OneSignal.logout();
         if (OneSignal.User?.PushSubscription?.optOut) await OneSignal.User.PushSubscription.optOut();
+        await clearBrowserPushSubscription();
+        if (typeof OneSignal.logout === "function") await OneSignal.logout();
+        await postScriptAction(getScriptUrl(), "saveUserPushSubscription", {
+          externalUserId: externalId,
+          subscriptionId: "",
+          token: "",
+          active: false,
+          appId: ONESIGNAL_APP_ID,
+          userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+        }).catch(e => console.warn("Push reset server update failed:", e));
         forgetPushEnabled(externalId);
         localStorage.removeItem(PUSH_RECONNECT_USER_KEY);
+        clearOneSignalStorage();
         await unregisterPushServiceWorkers();
         window.OneSignalInitialized = false;
         window.OneSignalReadyPromise = null;
