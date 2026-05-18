@@ -268,6 +268,9 @@ async function connectPushUser(username, prompt=false) {
   if (!OneSignal) return { success:false, error:"sdk_unavailable" };
   try {
     if (typeof OneSignal.login === "function") await OneSignal.login(externalId);
+    if (prompt && OneSignal.Slidedown?.promptPush) {
+      await OneSignal.Slidedown.promptPush({ force: true });
+    }
     if (prompt && OneSignal.Notifications?.requestPermission) {
       const permission = await OneSignal.Notifications.requestPermission();
       if (permission === false) return { success:false, error:"permission_denied" };
@@ -1801,6 +1804,10 @@ useEffect(() => {
   };
 
 
+
+  useEffect(()=>{
+    getOneSignalInstance().catch(e => console.warn("Push preload failed:", e));
+  },[]);
 
   useEffect(()=>{
     if(!user) return;
