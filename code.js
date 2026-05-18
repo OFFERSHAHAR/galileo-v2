@@ -34,6 +34,10 @@
         return json(saveUserPushSubscription_(ss, data));
       }
 
+      if (action === "diagnoseOneSignalUser") {
+        return json(diagnoseOneSignalUser_(ss, data));
+      }
+
       if (action === "sendGreenApiWhatsApp") {
         return json(sendGreenApiWhatsApp_(data));
       }
@@ -1390,6 +1394,52 @@
     Logger.log("OneSignal subscription identity status: " + code);
     Logger.log("OneSignal subscription identity response: " + text);
     return { success:code >= 200 && code < 300, status:code, response:parsed };
+  }
+
+  function fetchOneSignalSubscription_(subscriptionId) {
+    const props = PropertiesService.getScriptProperties();
+    const APP_ID = String(props.getProperty("ONESIGNAL_APP_ID") || "dc1af269-2502-41a4-89d5-a3aa8d5be956").trim();
+    const REST_API_KEY = String(props.getProperty("ONESIGNAL_REST_API_KEY") || "").trim();
+    const id = String(subscriptionId || "").trim();
+    if (!APP_ID || !REST_API_KEY || !id) return { success:false, skipped:true };
+
+    const options = {
+      method: "get",
+      headers: {
+        Authorization: "Key " + REST_API_KEY
+      },
+      muteHttpExceptions: true
+    };
+
+    const res = UrlFetchApp.fetch("https://api.onesignal.com/apps/" + encodeURIComponent(APP_ID) + "/subscriptions/" + encodeURIComponent(id), options);
+    const code = res.getResponseCode();
+    const text = res.getContentText();
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+    Logger.log("OneSignal subscription status: " + code);
+    Logger.log("OneSignal subscription response: " + text);
+    return { success:code >= 200 && code < 300, status:code, response:parsed };
+  }
+
+  function diagnoseOneSignalUser_(ss, data) {
+    const externalUserId = String(data.externalUserId || data.username || data.externalId || "").trim();
+    if (!externalUserId) return { success:false, error:"missing externalUserId" };
+    const ids = getPushSubscriptionIdsForUser_(ss, externalUserId);
+    const subscriptions = ids.map(id => ({
+      subscriptionId: id,
+      identity: fetchOneSignalSubscriptionIdentity_(id),
+      subscription: fetchOneSignalSubscription_(id)
+    }));
+    return {
+      success:true,
+      externalUserId,
+      subscriptionCount: ids.length,
+      subscriptions
+    };
   }
 
   function getOneSignalTtl_(data) {
