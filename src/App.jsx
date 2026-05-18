@@ -246,7 +246,7 @@ function getOneSignalInstance() {
           window.galileoOneSignalInitPromise = OneSignal.init({
             appId: ONESIGNAL_APP_ID,
             safari_web_id: ONESIGNAL_SAFARI_WEB_ID,
-            serviceWorkerPath: "/OneSignalSDKWorker.js",
+            serviceWorkerPath: "/sw.js",
             serviceWorkerParam: { scope: "/" },
             notifyButton: { enable: true },
           });
