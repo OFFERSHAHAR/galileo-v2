@@ -25,6 +25,10 @@
         return json(sendAppNotificationToAdmins_(ss, data));
       }
 
+      if (action === "syncAppNotificationUsers" || action === "syncOneSignalUsersFromSheet") {
+        return json(syncAppNotificationUsers_(ss));
+      }
+
       if (action === "sendGreenApiWhatsApp") {
         return json(sendGreenApiWhatsApp_(data));
       }
@@ -1205,6 +1209,85 @@
       recipients: recipients,
       id: parsed.id || "",
       response: parsed
+    };
+  }
+
+  function createOneSignalUser_(user) {
+    const config = getOneSignalConfig_();
+    if (!config.appId) return { success:false, error:"missing_app_id" };
+    if (!config.apiKey) return { success:false, error:"missing_rest_api_key" };
+
+    const username = String(user.username || "").trim().toLowerCase();
+    if (!username) return { success:false, error:"missing_username" };
+
+    const payload = {
+      identity: {
+        external_id: username
+      },
+      properties: {
+        tags: {
+          username: username,
+          name: String(user.name || ""),
+          role: String(user.role || ""),
+          phone: String(user.phone || "")
+        }
+      }
+    };
+
+    const res = UrlFetchApp.fetch("https://api.onesignal.com/apps/" + encodeURIComponent(config.appId) + "/users", {
+      method: "post",
+      contentType: "application/json",
+      headers: { Authorization: "Key " + config.apiKey },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    const status = res.getResponseCode();
+    const text = res.getContentText();
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+
+    const duplicate = status === 409 || String(text || "").toLowerCase().indexOf("already") >= 0;
+    Logger.log("Push user sync " + username + " status: " + status);
+    Logger.log("Push user sync " + username + " response: " + text);
+
+    return {
+      success: (status >= 200 && status < 300) || duplicate,
+      status: status,
+      duplicate: duplicate,
+      username: username,
+      response: parsed
+    };
+  }
+
+  function syncAppNotificationUsers_(ss) {
+    const users = (getUsers_(ss) || [])
+      .filter(u => String(u.username || "").trim())
+      .map(u => ({
+        username: String(u.username || "").trim().toLowerCase(),
+        name: String(u.name || ""),
+        role: String(u.role || ""),
+        phone: String(u.phone || "")
+      }));
+
+    const seen = {};
+    const uniqueUsers = users.filter(u => {
+      if (seen[u.username]) return false;
+      seen[u.username] = true;
+      return true;
+    });
+
+    const results = uniqueUsers.map(createOneSignalUser_);
+    const ok = results.filter(r => r && r.success).length;
+    return {
+      success: ok === uniqueUsers.length,
+      synced: ok,
+      total: uniqueUsers.length,
+      results: results
     };
   }
 
