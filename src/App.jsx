@@ -481,13 +481,16 @@ async function readOneSignalPushState(OneSignal, externalId) {
       ""
     ).trim();
     const optedIn = typeof push.optedIn === "boolean" ? push.optedIn : undefined;
+    const permission = OneSignal?.Notifications?.permission === true;
+    const active = !!subscriptionId && permission && optedIn !== false;
     if (subscriptionId || token) {
       return {
         externalUserId: externalId,
         subscriptionId,
         token,
         optedIn,
-        permission: OneSignal?.Notifications?.permission === true,
+        permission,
+        active,
         appId: ONESIGNAL_APP_ID,
         userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
       };
@@ -500,6 +503,7 @@ async function readOneSignalPushState(OneSignal, externalId) {
     token: "",
     optedIn: false,
     permission: OneSignal?.Notifications?.permission === true,
+    active: false,
     appId: ONESIGNAL_APP_ID,
     userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
   };
@@ -2080,13 +2084,13 @@ useEffect(() => {
           }
         }
 
+        await OneSignal.login(externalId);
         if (OneSignal.User?.PushSubscription?.optIn) {
           await OneSignal.User.PushSubscription.optIn();
         }
-        await OneSignal.login(externalId);
         const state = await readOneSignalPushState(OneSignal, externalId);
         await postScriptAction(getScriptUrl(), "saveUserPushSubscription", state);
-        return state.subscriptionId || state.token ? true : "no-subscription";
+        return state.active ? true : "no-subscription";
     });
 
     if (ok === true) {

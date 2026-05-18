@@ -1697,13 +1697,14 @@ function saveUserPushSubscription_(ss, data) {
     const row = i + 1;
     const subscriptionId = String(data.subscriptionId || data.onesignalId || "").trim();
     const token = String(data.token || "").trim();
+    const active = data.active === true || String(data.active || "").toLowerCase() === "true";
     if (subIdx >= 0) sheet.getRange(row, subIdx + 1).setValue(subscriptionId);
     if (tokenIdx >= 0) sheet.getRange(row, tokenIdx + 1).setValue(token);
-    if (enabledIdx >= 0) sheet.getRange(row, enabledIdx + 1).setValue(subscriptionId || token ? "TRUE" : "FALSE");
+    if (enabledIdx >= 0) sheet.getRange(row, enabledIdx + 1).setValue(active ? "TRUE" : "FALSE");
     if (updatedIdx >= 0) sheet.getRange(row, updatedIdx + 1).setValue(new Date());
     if (appIdx >= 0) sheet.getRange(row, appIdx + 1).setValue(String(data.appId || "").trim());
     if (agentIdx >= 0) sheet.getRange(row, agentIdx + 1).setValue(String(data.userAgent || "").slice(0, 500));
-    return { success:true, row, username:target, subscriptionId:subscriptionId ? "saved" : "", token:token ? "saved" : "" };
+    return { success:true, row, username:target, active, subscriptionId:subscriptionId ? "saved" : "", token:token ? "saved" : "" };
   }
   return { success:false, error:"user not found", username:target };
 }
@@ -1718,11 +1719,13 @@ function getPushSubscriptionIdsForUser_(ss, username) {
   const headers = rows[hi].map(h => String(h || "").trim());
   const usernameIdx = headers.findIndex(h => h.toLowerCase() === "username");
   const subIdx = headers.indexOf("pushSubscriptionId");
+  const enabledIdx = headers.indexOf("pushEnabled");
   if (usernameIdx < 0 || subIdx < 0) return [];
   const target = String(username || "").trim().toLowerCase();
   const ids = [];
   for (let i = hi + 1; i < rows.length; i++) {
     if (String(rows[i][usernameIdx] || "").trim().toLowerCase() !== target) continue;
+    if (enabledIdx >= 0 && String(rows[i][enabledIdx] || "").trim().toUpperCase() !== "TRUE") continue;
     const id = String(rows[i][subIdx] || "").trim();
     if (id) ids.push(id);
   }
