@@ -1291,6 +1291,17 @@
     };
   }
 
+  function syncAppNotificationUsers() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const res = syncAppNotificationUsers_(ss);
+    Logger.log(JSON.stringify(res));
+    return res;
+  }
+
+  function syncOneSignalUsersFromSheet() {
+    return syncAppNotificationUsers();
+  }
+
   function sendAppNotificationToUser_(data, ss) {
     const externalUserId = String(
       data.externalUserId ||
