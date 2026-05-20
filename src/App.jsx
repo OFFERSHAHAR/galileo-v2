@@ -4743,9 +4743,11 @@ const report = {
       return groups;
     }, {});
     const goAdminBubble = (tab) => {
-      setAdminTab(tab);
-      window.scrollTo({top:0,left:0,behavior:"smooth"});
-      haptic("medium");
+      haptic("light");
+      setTimeout(() => {
+        setAdminTab(tab);
+        window.scrollTo({top:0,left:0,behavior:"smooth"});
+      }, 160);
     };
     const adminTabs = isSubAdminPanel
       ? [["daily","📋 חלוקת עבודה"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"]]
