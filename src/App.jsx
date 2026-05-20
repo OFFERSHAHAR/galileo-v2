@@ -4753,6 +4753,7 @@ const report = {
     adminTabs.unshift(["dashboard","מחוונים"]);
     if (!isSubAdminPanel) adminTabs.push(["settings","⚙️ הגדרות"]);
     const adminDashboardBubbles = [
+      {tab:"daily", icon:"📋", title:"חלוקת עבודה", value:operatorUsers.length, meta:"יצירת סדר יום למפעיל", tone:"#2563eb"},
       {tab:"tasks", icon:"📌", title:"משימות", value:dashboardOpenTasks, meta:"פתוחות לטיפול", tone:"#7c3aed", hidden:isSubAdminPanel},
       {tab:"adminreport", icon:"📝", title:"דוח ידני", value:"+", meta:"פתיחת דוח ללקוח", tone:"#4f46e5", hidden:isSubAdminPanel},
       {tab:"progress", icon:"📊", title:"התקדמות", value:`${dashboardDoneToday}/${dashboardTasksToday.length}`, meta:"ביצוע יומי", tone:"#0891b2"},
