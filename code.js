@@ -37,6 +37,14 @@
         return json(getGreenApiStatus_());
       }
 
+      if (action === "getClientSettings") {
+        return json({ settings: getClientSettings_(ss) });
+      }
+
+      if (action === "saveClientSettings") {
+        return json(saveClientSettings_(ss, data.settings || {}));
+      }
+
       if (action === "validateLicense") {
         const sheet = ss.getSheetByName("רישיונות");
         if(!sheet) return json({ valid:false, reason:"טבלת רישיונות לא נמצאה" });
@@ -196,6 +204,7 @@
         sharedSubOrders: getSubOperatorShares_(ss),
         subOperatorApprovals: getSubOperatorApprovals_(ss),
         pendingSubReports: getPendingSubReports_(ss),
+        settings: getClientSettings_(ss),
         supplyDB: getSupplyDB_(ss),
         lastReadings: getLastReadings_(ss),
         unassignedClients: getUnassignedClients_(ss)
@@ -632,6 +641,14 @@
     if(!s) {
       s = clientSS.insertSheet("תקלות_מפעילים");
       s.appendRow(["id","מפעיל","לקוח","תיאור","דחיפות","סטטוס","תגובת_אדמין","תאריך"]);
+    }
+
+    s = clientSS.getSheetByName("ClientSettings");
+    if(!s) {
+      s = clientSS.insertSheet("ClientSettings");
+      s.appendRow(["key","value"]);
+    } else if (s.getLastRow() === 0) {
+      s.appendRow(["key","value"]);
     }
     
     Logger.log("✅ Client sheet setup complete: " + clientSS.getName());
@@ -1722,15 +1739,20 @@ function saveSubOperatorAssignment_(ss, data) {
 
 function getClientsByHeaders_(ss) {
   const sheets = ss.getSheets();
-  const sheet = sheets.find(sh => {
+  const hasClientHeader = (sh, allColumns) => {
     const lastRow = Math.min(sh.getLastRow(), 8);
     if (!lastRow) return false;
-    return sh.getRange(1, 1, lastRow, 1).getValues().some(row => isClientNameHeader_(row[0]));
-  });
+    const lastCol = allColumns ? Math.max(sh.getLastColumn(), 1) : 1;
+    return sh.getRange(1, 1, lastRow, lastCol).getValues().some(row => row.some(cell => isClientNameHeader_(cell)));
+  };
+  const clientSheet = ss.getSheetByName("לקוחות");
+  const sheet = (clientSheet && hasClientHeader(clientSheet, true))
+    ? clientSheet
+    : sheets.find(sh => hasClientHeader(sh, false));
   if (!sheet) return [];
 
   const rows = sheet.getDataRange().getValues();
-  let hi = rows.findIndex(r => isClientNameHeader_(r[0]));
+  let hi = rows.findIndex(r => r.some(cell => isClientNameHeader_(cell)));
   if (hi === -1) hi = 2;
   const headers = (rows[hi] || []).map(h => String(h || "").trim());
   const normalizeHeader = (value) => String(value || "").replace(/[\s_\-]/g, "").toLowerCase();
@@ -1793,6 +1815,49 @@ function getClientsByHeaders_(ss) {
 
 function getClients_(ss) {
   return getClientsByHeaders_(ss);
+}
+
+function getClientSettingsSheet_(ss) {
+  let sheet = ss.getSheetByName("ClientSettings");
+  if (!sheet) {
+    sheet = ss.insertSheet("ClientSettings");
+    sheet.appendRow(["key","value"]);
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["key","value"]);
+  }
+  return sheet;
+}
+
+function getClientSettings_(ss) {
+  const sheet = getClientSettingsSheet_(ss);
+  const rows = sheet.getDataRange().getValues();
+  const settings = {};
+  rows.slice(1).forEach(row => {
+    const key = String(row[0] || "").trim();
+    if (key) settings[key] = String(row[1] || "");
+  });
+  return settings;
+}
+
+function saveClientSettings_(ss, settings) {
+  const sheet = getClientSettingsSheet_(ss);
+  const rows = sheet.getDataRange().getValues();
+  const indexByKey = {};
+  rows.slice(1).forEach((row, i) => {
+    const key = String(row[0] || "").trim();
+    if (key) indexByKey[key] = i + 2;
+  });
+
+  Object.keys(settings || {}).forEach(key => {
+    const value = String(settings[key] || "");
+    const row = indexByKey[key];
+    if (row) {
+      sheet.getRange(row, 2).setValue(value);
+    } else {
+      sheet.appendRow([key, value]);
+    }
+  });
+  return { success:true, settings:getClientSettings_(ss) };
 }
 
 function saveClients_(sheet, clients) {
@@ -2118,15 +2183,27 @@ function getSubOperatorShares_(ss) {
       orderIndex: Number(r[5] || 0),
       note: String(r[6] || ""),
       sharedAt: String(r[7] || ""),
-      sharedBy: String(r[8] || "")
+      sharedBy: String(r[8] || ""),
+      id: String(r[9] || ""),
+      status: String(r[10] || ""),
+      changeLog: parseJsonArray_(r[11])
     };
   });
+}
+
+function parseJsonArray_(value) {
+  try {
+    const parsed = value ? JSON.parse(String(value)) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch(e) {
+    return [];
+  }
 }
 
 function saveSubOperatorShares_(ss, sharedSubOrders) {
   let sheet = ss.getSheetByName("SubOperatorShares");
   if (!sheet) sheet = ss.insertSheet("SubOperatorShares");
-  const headers = ["date","operator","subUsername","subOperator","client","orderIndex","note","sharedAt","sharedBy"];
+  const headers = ["date","operator","subUsername","subOperator","client","orderIndex","note","sharedAt","sharedBy","id","status","changeLog"];
   const seen = {};
   const rows = (sharedSubOrders || []).filter(r => r && r.date && r.operator && r.client).map(r => {
     const key = [
@@ -2146,7 +2223,10 @@ function saveSubOperatorShares_(ss, sharedSubOrders) {
       Number(r.orderIndex || 0),
       r.note || "",
       r.sharedAt || "",
-      r.sharedBy || ""
+      r.sharedBy || "",
+      r.id || "",
+      r.status || "",
+      JSON.stringify(r.changeLog || [])
     ];
   }).filter(Boolean);
   sheet.clearContents();

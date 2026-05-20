@@ -1357,15 +1357,6 @@ const [pendingSubReports, setPendingSubReports] = useState(() => {
     return [];
   }
 });
-const [deferredSubReportIds, setDeferredSubReportIds] = useState(() => {
-  try {
-    const value = JSON.parse(localStorage.getItem("galileo_deferred_sub_report_ids") || "[]");
-    return Array.isArray(value) ? value : [];
-  } catch {
-    return [];
-  }
-});
-const [activeSubReportApprovalId, setActiveSubReportApprovalId] = useState("");
 const [approvalEditId, setApprovalEditId] = useState("");
 
 useEffect(() => {
@@ -1378,10 +1369,6 @@ useEffect(() => {
 useEffect(() => {
   localStorage.setItem("galileo_sub_operator_pending_reports", JSON.stringify(pendingSubReports));
 }, [pendingSubReports]);
-
-useEffect(() => {
-  localStorage.setItem("galileo_deferred_sub_report_ids", JSON.stringify(deferredSubReportIds));
-}, [deferredSubReportIds]);
 
 useEffect(() => {
   localStorage.setItem("galileo_completed_reports", JSON.stringify(completedReports));
@@ -1430,12 +1417,6 @@ useEffect(() => {
 }, [screen]);
 
 useEffect(() => {
-  if (screen === "daily" && isAdminPanelRole(user?.role)) {
-    setScreen("admin");
-  }
-}, [screen, user?.role]);
-
-useEffect(() => {
   const enforceDailyProfileLogin = () => {
     if (!localStorage.getItem("galileo_user")) return;
     const loginDay = localStorage.getItem(LOGIN_DAY_KEY);
@@ -1472,7 +1453,7 @@ useEffect(() => {
     return window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator?.standalone === true;
   });
   const [form,setForm] = useState(blank());
-  const [adminTab,setAdminTab] = useState("dashboard");
+  const [adminTab,setAdminTab] = useState("progress");
   const [taskDate,setTaskDate] = useState(todayStr());
   const [taskClient,setTaskClient] = useState("");
   const [taskClientSearch,setTaskClientSearch] = useState("");
@@ -2082,8 +2063,6 @@ useEffect(() => {
       console.warn("Pending sub report removal sync failed", e);
       setPendingSubReports(next);
     }
-    setDeferredSubReportIds(ids => ids.filter(x => x !== id));
-    setActiveSubReportApprovalId(current => current === id ? "" : current);
   };
   const adminOrderKey = (date, opName) => localKey("galileo_admin_order", date, opName);
   const operatorOrderKey = (username, date) => localKey("galileo_operator_order", username, date);
@@ -2406,12 +2385,12 @@ useEffect(() => {
   const getSharedSubOrderEntries = (date, opName, subUsername) => {
     const fromSheet = sharedSubOrders
       .filter(x=>sharedSubMatch(x, date, opName, subUsername) && x?.client)
-      .map((x, i)=>({id:x.id, client:x.client, note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || []}))
+      .map((x, i)=>({client:x.client, note:x.note || "", orderIndex:Number(x.orderIndex || i + 1)}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
     if (fromSheet.length) return fromSheet;
     return readLocalArray(sharedSubOrderKey(date, opName, subUsername))
       .filter(x=>x?.client)
-      .map((x, i)=>({id:x.id, client:x.client, note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || []}))
+      .map((x, i)=>({client:x.client, note:x.note || "", orderIndex:Number(x.orderIndex || i + 1)}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
   };
   const entriesToDailyTasks = (date, opName, entries, idPrefix="order") => (entries || [])
@@ -2451,7 +2430,9 @@ useEffect(() => {
     const opName = dailyOwnerName(date);
     if (isSubOperatorRole(user?.role)) {
       const sharedEntries = getSharedSubOrderEntries(date, opName, user?.username || user?.name);
-      return sharedEntries.length ? entriesToDailyTasks(date, opName, sharedEntries, "shared") : [];
+      if (sharedEntries.length) return entriesToDailyTasks(date, opName, sharedEntries, "shared");
+      const adminEntries = getEffectiveAdminOrderEntries(date, opName);
+      return adminEntries.length ? entriesToDailyTasks(date, opName, adminEntries, "admin-sub") : [];
     }
     const adminEntries = getEffectiveAdminOrderEntries(date, opName);
     let list;
@@ -2591,11 +2572,11 @@ useEffect(() => {
   },[]);
 
   useEffect(()=>{
-    if(screen!=="admin" || adminTab!=="opissues") return;
+    if(screen!=="admin") return;
     loadOperatorIssues(true);
     const timer = setInterval(()=>loadOperatorIssues(true), 9 * 60 * 1000);
     return () => clearInterval(timer);
-  },[screen, adminTab]);
+  },[screen]);
 
   useEffect(()=>{
     if(screen!=="daily") return;
@@ -3029,8 +3010,6 @@ useEffect(() => {
   const editPendingSubReport = (item) => {
     const r = item?.report || {};
     setApprovalEditId(item.id);
-    setDeferredSubReportIds(ids => ids.filter(x => x !== item.id));
-    setActiveSubReportApprovalId("");
     setEditingReport(null);
     setForm({
       ...blank(),
@@ -3102,21 +3081,6 @@ useEffect(() => {
     }
 
     setSyncing(false);
-  };
-
-  const deferPendingSubReport = (item) => {
-    if (!item?.id) return;
-    setDeferredSubReportIds(ids => ids.includes(item.id) ? ids : [...ids, item.id]);
-    setActiveSubReportApprovalId("");
-    showToast("הדוח הועבר לרשימת המתנה לאישור");
-    haptic("medium");
-  };
-
-  const openPendingSubReportApproval = (item) => {
-    if (!item?.id) return;
-    setDeferredSubReportIds(ids => ids.filter(x => x !== item.id));
-    setActiveSubReportApprovalId(item.id);
-    haptic("medium");
   };
 
   const handleSubmit = async () => {
@@ -3526,12 +3490,9 @@ const report = {
         });
       return linked;
     })();
-    const pendingSubReportsForOperator = !isSubOperator
-      ? pendingSubReports.filter(item => item?.status === "pending" && normalizeName(item.operator) === normalizeName(user?.name))
-      : [];
-    const pendingSubReportForOperator = activeSubReportApprovalId
-      ? pendingSubReportsForOperator.find(item => item.id === activeSubReportApprovalId)
-      : pendingSubReportsForOperator.find(item => !deferredSubReportIds.includes(item.id));
+    const pendingSubReportForOperator = !isSubOperator
+      ? pendingSubReports.find(item => item?.status === "pending" && normalizeName(item.operator) === normalizeName(user?.name))
+      : null;
     const orderedDayTasks = getOperatorDailyView(dailyDate);
     const hasSharedOrderForSub = isSubOperator ? getSharedSubOrderEntries(dailyDate, currentDailyOwner, user?.username || user?.name).length > 0 : true;
     const explicitSupplyClients = new Set([
@@ -3543,18 +3504,16 @@ const report = {
     const lockedDayTasks = orderedDayTasks.filter(t=>lockedClients.has(t.client));
     const activeDayTasks = orderedDayTasks.filter(t=>!lockedClients.has(t.client));
     const dayTasks = (!isSubOperator && operatorEditOrder) ? operatorOrderDraft : activeDayTasks;
-    const todayManualTasks = myTasks(dailyDate);
-    const isDailyTaskDone = (task) => {
-      const freeClientTasks = todayManualTasks
-        .filter(ft => normalizeName(ft.client) === normalizeName(task.client) && !ft.createdByAdminOrder && Number(ft.orderIndex || 0) <= 0);
-      return task.status === "done" || isClientReportedDone(dailyDate, task.client) || freeClientTasks.some(ft => ft.status === "done");
-    };
-    const displayDayTasks = operatorEditOrder
-      ? dayTasks
-      : dayTasks
-        .map((task, sourceIndex)=>({task, sourceIndex, done:isDailyTaskDone(task)}))
-        .sort((a,b)=>Number(a.done)-Number(b.done) || a.sourceIndex-b.sourceIndex)
-        .map(x=>x.task);
+    const displayDayTasks = operatorEditOrder ? dayTasks : [
+      ...dayTasks.filter(t => {
+        const doneKey = `${dailyDate}:${t.id || t.client}`;
+        return !isClientReportedDone(dailyDate, t.client) || openDoneTasks[doneKey];
+      }),
+      ...dayTasks.filter(t => {
+        const doneKey = `${dailyDate}:${t.id || t.client}`;
+        return isClientReportedDone(dailyDate, t.client) && !openDoneTasks[doneKey];
+      })
+    ];
     const dailySupplyTasks = orderedDayTasks.filter(t=>explicitSupplyClients.has(normalizeName(t.client)) && isSupplyDueForDate(t.client, dailyDate));
     const hasTaskChanges = orderedDayTasks.some(t => {
       const lastLog = t.changeLog?.[t.changeLog.length - 1];
@@ -3568,15 +3527,17 @@ const report = {
         return;
       }
       const opName = user?.name || "";
+      const savedOperatorOrder = readLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate));
       const currentList = operatorEditOrder ? operatorOrderDraft : activeDayTasks;
-      const sharedEntries = (currentList || []).map((t, i)=>({
-        id:t.id,
-        client:t.client,
-        note:t.adminNote || t.note || "",
-        orderIndex:Number(t.orderIndex || i + 1),
-        status:t.status || (isClientReportedDone(dailyDate, t.client) ? "done" : "pending"),
-        changeLog:t.changeLog || []
-      }));
+      let sharedEntries = [];
+      if (savedOperatorOrder.length || operatorEditOrder) {
+        sharedEntries = (currentList || []).map((t, i)=>({client:t.client, note:t.adminNote || "", orderIndex:i + 1}));
+      } else {
+        const adminEntries = getEffectiveAdminOrderEntries(dailyDate, opName);
+        sharedEntries = adminEntries.length
+          ? adminEntries.map((entry, i)=>({client:entry.client, note:entry.note || "", orderIndex:i + 1}))
+          : (currentList || []).map((t, i)=>({client:t.client, note:t.adminNote || "", orderIndex:i + 1}));
+      }
       const subKeys = new Set(subs.map(su => normalizeName(su.username || su.name)).filter(Boolean));
       const shareRows = subs.flatMap(su => sharedEntries.map((entry, i)=>({
         date: dailyDate,
@@ -3585,10 +3546,7 @@ const report = {
         subOperator: su.name || su.username || "",
         client: entry.client,
         note: entry.note || "",
-        id: entry.id || "",
-        status: entry.status || "pending",
-        changeLog: entry.changeLog || [],
-        orderIndex: Number(entry.orderIndex || i + 1),
+        orderIndex: i + 1,
         sharedAt: nowStr(),
         sharedBy: user?.name || ""
       })));
@@ -3628,8 +3586,9 @@ const report = {
         normalizeName(operator) === normalizeName(user?.name) &&
         !dismissedCriticalIssueIds.includes(String(id));
     });
-    const done = dayTasks.filter(isDailyTaskDone).length;
-    const completedDayTasks = dayTasks.filter(isDailyTaskDone);
+    const done = dayTasks.filter(t=>todayReported.some(c=>normalizeName(c)===normalizeName(t.client))).length;
+    const completedDayTasks = dayTasks.filter(t=>todayReported.some(c=>normalizeName(c)===normalizeName(t.client)));
+    const todayManualTasks = myTasks(dailyDate);
     const doneManualTasks = todayManualTasks.filter(t=>t.status==="done").length;
     const dailySupplySummary = dailySupplyTasks.reduce((acc, task) => {
       const supply = supplyDB[task.client];
@@ -3678,7 +3637,6 @@ const report = {
                 <Press onClick={()=>editPendingSubReport(item)} style={{padding:"13px",borderRadius:14,background:"#fff8e1",color:C.orange,fontSize:13,fontWeight:900,textAlign:"center",border:"1px solid #ffe082"}}>ערוך לפני שליחה</Press>
                 <Press onClick={()=>approvePendingSubReport(item)} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:13,fontWeight:900,textAlign:"center",boxShadow:"0 12px 28px rgba(79,70,229,0.25)"}}>{actionLabel(`approveSubReport:${item.id}`,{idle:"אשר ושלח",loading:"שולח...",success:"נשלח",local:"נשמר"})}</Press>
               </div>
-              <Press onClick={()=>deferPendingSubReport(item)} style={{marginTop:10,padding:"12px",borderRadius:14,background:"#f0f4f8",color:C.muted,fontSize:13,fontWeight:900,textAlign:"center",border:`1px solid ${C.border}`}}>קריאה ואישור מאוחר יותר</Press>
             </div>
           </div>
         );})()}
@@ -3818,30 +3776,6 @@ const report = {
               </div>
             </div>;})}
           </div>}
-          {!isSubOperator&&pendingSubReportsForOperator.length>0&&<div style={{...card({marginBottom:12,border:"2px solid rgba(194,65,12,0.18)",background:"#fffaf3"})}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
-              <div>
-                <div style={{fontSize:13,fontWeight:900,color:C.text}}>דוחות עוזר מפעיל</div>
-                <div style={{fontSize:11,fontWeight:800,color:C.orange,marginTop:2}}>נדרש אישור מפעיל · {pendingSubReportsForOperator.length} ממתינים</div>
-              </div>
-              <Badge label={`${pendingSubReportsForOperator.length}`} col={C.orange}/>
-            </div>
-            {pendingSubReportsForOperator.map((item,i)=>{ const r=item.report||{}; const deferred=deferredSubReportIds.includes(item.id); return (
-              <div key={item.id || i} style={{display:"grid",gridTemplateColumns:"1fr auto",gap:10,alignItems:"center",padding:"10px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
-                <Press onClick={()=>openPendingSubReportApproval(item)} style={{minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(r.client||"").split(" - ")[0] || "דוח ללא לקוח"}</div>
-                  <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:3}}>
-                    {item.subName || item.subUsername || "עוזר מפעיל"} · {fmtDate(r.reportDate)} · כלור {r.chlorine ?? "-"} · pH {r.ph ?? "-"}
-                  </div>
-                  {deferred&&<div style={{display:"inline-block",marginTop:5,padding:"3px 8px",borderRadius:99,background:"#fff8e1",color:C.orange,fontSize:10,fontWeight:900}}>לאישור מאוחר יותר</div>}
-                </Press>
-                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                  <Press onClick={()=>openPendingSubReportApproval(item)} style={{padding:"7px 10px",borderRadius:10,background:"#f0f4f8",color:C.blue,fontSize:11,fontWeight:900,border:`1px solid ${C.border}`}}>קרא</Press>
-                  <Press onClick={()=>approvePendingSubReport(item)} style={{padding:"7px 10px",borderRadius:10,background:actionStatus[`approveSubReport:${item.id}`]==="success"?C.green:operatorPrimaryGradient,color:"#fff",fontSize:11,fontWeight:900}}>אשר</Press>
-                </div>
-              </div>
-            );})}
-          </div>}
           {dayTasks.length>0&&<div style={{...card(),padding:"14px 18px",marginBottom:4}}><PBar done={done} total={dayTasks.length} label="בריכות"/></div>}
           <div style={{...card({marginBottom:4})}}>
             <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>חומרים לסיפוק היום</div>
@@ -3903,16 +3837,7 @@ const report = {
               <input type="date" value={dailyDate} onClick={openDatePicker} onFocus={openDatePicker} onChange={e=>{setDailyDate(e.target.value);setOperatorEditOrder(false);}} style={{fontSize:12,fontWeight:700,color:C.blue,border:"none",background:"transparent",outline:"none",cursor:"pointer",maxWidth:112}}/>
             </div>
           </div>
-          {isSubOperator&&!hasSharedOrderForSub&&(
-            <div style={{...card({textAlign:"center",marginBottom:12,border:"2px dashed rgba(37,99,235,0.24)",background:"#f5f9ff"}),padding:28}}>
-              <div style={{fontSize:34,marginBottom:8}}>⏳</div>
-              <div style={{fontWeight:900,color:C.text,fontSize:15}}>ממתין לשיתוף מהמפעיל</div>
-              <div style={{fontWeight:800,color:C.muted,fontSize:12,marginTop:6,lineHeight:1.45}}>
-                הסדר יוצג כאן רק אחרי ש-{currentDailyOwner || "המפעיל המשויך"} ילחץ על שתף סדר.
-              </div>
-            </div>
-          )}
-          {canSubOperatorReport&&hasSharedOrderForSub&&<div style={{marginBottom:12,position:"relative"}}>
+          {canSubOperatorReport&&<div style={{marginBottom:12,position:"relative"}}>
             <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="🔍 חפש לקוח מכל הימים לפי א-ב..." style={{...inp,fontSize:13}}/>
             {clientSearch&&(
               <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:240,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
@@ -3926,8 +3851,7 @@ const report = {
               </div>
             )}
           </div>}
-          {dayTasks.length===0&&!isSubOperator&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>אין לקוחות לתאריך זה</div></div>}
-          {dayTasks.length===0&&isSubOperator&&hasSharedOrderForSub&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>הסדר שותף ללא לקוחות לתאריך זה</div></div>}
+          {dayTasks.length===0&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>אין לקוחות לתאריך זה</div></div>}
           {displayDayTasks.map((t,i)=>{
             const doneKey = `${dailyDate}:${t.id || t.client}`;
             const isDoneOpen = !!openDoneTasks[doneKey];
@@ -3941,7 +3865,7 @@ const report = {
             const freeClientTaskNotes = freeClientTasks.map(freeTaskLogNote).filter(Boolean);
             const hasFreeClientTasks = freeClientTasks.length > 0;
             const isFreeClientTaskDone = freeClientTasks.some(ft => ft.status === "done");
-            const isDone = t.status==="done" || isClientReportedDone(dailyDate, t.client) || isFreeClientTaskDone;
+            const isDone = isClientReportedDone(dailyDate, t.client) || isFreeClientTaskDone;
             if(isDone && !isDoneOpen) {
               return (
                 <div
@@ -4543,35 +4467,10 @@ const report = {
     const adminPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     const adminGlass = (extra={}) => card({background:"rgba(226,237,250,0.78)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(30,64,175,0.14), 0 1px 0 rgba(255,255,255,0.76) inset",...extra});
     const isSubAdminPanel = false;
-    const dashboardTasksToday = tasks.filter(t=>normalizeDate(t.date)===dailyDate);
-    const dashboardOpenTasks = tasks.filter(t=>t.status!=="done").length;
-    const dashboardDoneToday = dashboardTasksToday.filter(t=>t.status==="done").length;
-    const dashboardReportCount = [...sheetReports, ...reports].length;
-    const dashboardCriticalIssues = operatorIssues.filter(iss=>isCriticalIssue(iss[4]) && !isIssueDone(iss[5])).length;
-    const dashboardSupplyCount = Object.values(supplyDB || {}).filter(v=>v?.acid || v?.phUpSupply || v?.saltPkg || Number(v?.saltBags || 0)>0).length;
-    const goAdminBubble = (tab) => {
-      setAdminTab(tab);
-      window.scrollTo({top:0,left:0,behavior:"smooth"});
-      haptic("medium");
-    };
     const adminTabs = isSubAdminPanel
       ? [["daily","📋 חלוקת עבודה"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"]]
       : [["daily","📋 חלוקת עבודה"],["tasks","📌 משימות"],["adminreport","📝 דוח ידני"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["treatments","🔢 מספר טיפולים"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"],["users","👤 משתמשים"]];
-    adminTabs.unshift(["dashboard","מחוונים"]);
     if (!isSubAdminPanel) adminTabs.push(["settings","⚙️ הגדרות"]);
-    const adminDashboardBubbles = [
-      {tab:"tasks", icon:"📌", title:"משימות", value:dashboardOpenTasks, meta:"פתוחות לטיפול", tone:"#7c3aed", hidden:isSubAdminPanel},
-      {tab:"adminreport", icon:"📝", title:"דוח ידני", value:"+", meta:"פתיחת דוח ללקוח", tone:"#4f46e5", hidden:isSubAdminPanel},
-      {tab:"progress", icon:"📊", title:"התקדמות", value:`${dashboardDoneToday}/${dashboardTasksToday.length}`, meta:"ביצוע יומי", tone:"#0891b2"},
-      {tab:"hours", icon:"⏱️", title:"שעות", value:workLogs.length, meta:"רישומי עבודה מקומיים", tone:"#64748b"},
-      {tab:"clients", icon:"👥", title:"לקוחות", value:clients.length, meta:"ברשימת הלקוחות", tone:"#15803d"},
-      {tab:"treatments", icon:"🔢", title:"מספר טיפולים", value:treatmentCounts.length || "-", meta:"ייטען בכניסה", tone:"#1d4ed8", hidden:isSubAdminPanel},
-      {tab:"reports", icon:"📄", title:"דוחות", value:dashboardReportCount, meta:"טעונים כרגע", tone:"#0f766e"},
-      {tab:"opissues", icon:"🔧", title:"תקלות", value:operatorIssues.length, meta:dashboardCriticalIssues ? `${dashboardCriticalIssues} קריטיות` : "לוח תקלות", tone:dashboardCriticalIssues ? C.red : "#c2410c"},
-      {tab:"supply", icon:"📦", title:"חומרים", value:dashboardSupplyCount, meta:"לקוחות עם ציוד/חומרים", tone:"#b45309"},
-      {tab:"users", icon:"👤", title:"משתמשים", value:allUsers.length, meta:"פעילים במערכת", tone:"#475569", hidden:isSubAdminPanel},
-      {tab:"settings", icon:"⚙️", title:"הגדרות", value:"WA", meta:"מלל הודעות", tone:"#4f46e5", hidden:isSubAdminPanel}
-    ].filter(b=>!b.hidden);
     const adminDisplayName = user?.name || user?.username || (isSubAdminPanel ? "סאב אדמין" : "מנהל");
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:adminShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
@@ -4632,32 +4531,19 @@ const report = {
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <RefreshTopButton compact/>
-              <Press onClick={()=>{setAdminTab("dashboard");window.scrollTo(0,0);haptic();}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>מחוונים</Press>
+              <Press onClick={()=>{setAdminTab("daily");window.scrollTo(0,0);haptic();}} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.blue,fontSize:12,fontWeight:900,boxShadow:"0 10px 26px rgba(30,64,175,0.14)"}}>📋 חלוקת עבודה</Press>
+          {!isSubAdminPanel&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),adminReport:true});setScreen("form");haptic("medium");}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>📝 דוח</Press>}
               <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
             </div>
           </div>
         </div>
+        <div style={{position:"fixed",right:12,left:12,bottom:12,zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",gap:8,overflowX:"auto",boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
+          {adminTabs.map(([t,lbl])=>(
+            <Press key={t} onClick={()=>{setAdminTab(t);if(t==="treatments") void loadTreatmentCounts();haptic();}} style={{padding:"10px 15px",borderRadius:18,border:"none",fontSize:12,fontWeight:900,flexShrink:0,background:adminTab===t?adminPrimaryGradient:"rgba(241,245,249,0.76)",color:adminTab===t?"#fff":C.muted,boxShadow:adminTab===t?"0 12px 28px rgba(79,70,229,0.26)":"none",transition:"all 0.2s"}}>{lbl}</Press>
+          ))}
+        </div>
         <div style={{padding:"18px 16px 0"}}>
           <InstallAppCard compact/>
-          {adminTab==="dashboard"&&(
-            <div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(148px,1fr))",gap:12,marginBottom:14}}>
-                {adminDashboardBubbles.map((b,i)=>(
-                  <Press key={b.tab} onClick={()=>goAdminBubble(b.tab)} style={{position:"relative",minHeight:148,borderRadius:"50%",padding:18,background:`linear-gradient(145deg,rgba(255,255,255,0.94),${b.tone}18)`,border:`1px solid ${b.tone}30`,boxShadow:`0 22px 48px ${b.tone}18, 0 1px 0 rgba(255,255,255,0.90) inset`,display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",textAlign:"center",overflow:"hidden",transform:i%2?"translateY(10px)":"none"}}>
-                    <div style={{position:"absolute",inset:10,borderRadius:"50%",border:`1px solid ${b.tone}18`,pointerEvents:"none"}}/>
-                    <div style={{width:42,height:42,borderRadius:"50%",background:`${b.tone}16`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,marginBottom:8}}>{b.icon}</div>
-                    <div style={{fontSize:24,fontWeight:900,color:b.tone,lineHeight:1}}>{b.value}</div>
-                    <div style={{fontSize:13,fontWeight:900,color:C.text,marginTop:7}}>{b.title}</div>
-                    <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:3,lineHeight:1.25}}>{b.meta}</div>
-                  </Press>
-                ))}
-              </div>
-              <div style={{...adminGlass({padding:"13px 15px",display:"flex",alignItems:"center",gap:10,marginBottom:14})}}>
-                <div style={{width:34,height:34,borderRadius:"50%",background:"rgba(37,99,235,0.12)",color:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900}}>i</div>
-                <div style={{fontSize:12,fontWeight:800,color:C.muted,lineHeight:1.45}}>לחיצה על בועה פותחת את העמוד המקורי וטוענת רק אז את הנתונים המעודכנים שלו.</div>
-              </div>
-            </div>
-          )}
           {adminTab==="settings"&&(
             <div>
               <div style={{...adminGlass({marginBottom:14})}}>
@@ -4750,7 +4636,7 @@ const report = {
                       <div style={{fontSize:13,fontWeight:900,color:C.blue}}>סדר עבודה: {activeAdminOperator}</div>
                       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                         <Press onClick={loadDefaultAdminOrder} style={{padding:"7px 12px",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:12,fontWeight:900,border:`1px solid ${C.lightBlue}`}}>טען</Press>
-                        <Press onClick={async()=>{const sync=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);if(!sync.success){showToast("השמירה לגיליון נכשלה");haptic("medium");return;}const clean=sync.clean;setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);showToast("סדר נשמר, שולח התראה...");haptic("success");void (async()=>{const opSent=await sendNotificationToOperators([activeAdminOperator], "סדר היום עודכן", `${clean.length} בריכות לתאריך ${fmtDate(taskDate)}`);const assignedSub=subOperatorUsers.find(su=>isSameSubOperator(getAssignedSubOperator(taskDate, activeAdminOperator), su));let subSent=0;if(assignedSub?.username) subSent=await sendNotificationToSubOperators([assignedSub], "סדר היום עודכן", `סדר היום של ${activeAdminOperator} עודכן לתאריך ${fmtDate(taskDate)}`);showToast(opSent>0||subSent>0?"התראה נשלחה":"התראה לא נשלחה");})().catch(e=>{console.warn("Admin order notification failed", e);showToast("התראה לא נשלחה");});}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר ושלח למפעיל"}</Press>
+                        <Press onClick={async()=>{const sync=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);if(!sync.success){showToast("השמירה לגיליון נכשלה");haptic("medium");return;}const clean=sync.clean;setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);showToast("סדר נשמר, שולח התראה...");haptic("success");void (async()=>{const opSent=await sendNotificationToOperators([activeAdminOperator], "סדר היום עודכן", `${clean.length} בריכות לתאריך ${fmtDate(taskDate)}`);const assignedSub=subOperatorUsers.find(su=>isSameSubOperator(getAssignedSubOperator(taskDate, activeAdminOperator), su));let subSent=0;if(assignedSub?.username) subSent=await sendNotificationToSubOperators([assignedSub], "סדר היום עודכן", `סדר היום של ${activeAdminOperator} עודכן לתאריך ${fmtDate(taskDate)}`);showToast(opSent>0||subSent>0?"התראה נשלחה":"התראה לא נשלחה");})().catch(e=>{console.warn("Admin order notification failed", e);showToast("התראה לא נשלחה");});}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר"}</Press>
                       </div>
                     </div>
                     {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
