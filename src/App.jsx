@@ -465,11 +465,31 @@ function WelcomeMediaModal({media,onClose}) {
   );
 }
 
+const DAILY_EQUIPMENT_CHECKLIST = [
+  {
+    group: "בדיקות",
+    items: ["ערכת בדיקה", "מד מלח", "כוס מדידה", "סוללות / טעינה"]
+  },
+  {
+    group: "ניקוי",
+    items: ["רשת עלים", "מברשת", "מוט טלסקופי", "שואב / ראש ניקוי"]
+  },
+  {
+    group: "בטיחות",
+    items: ["כפפות", "משקפי מגן", "מים לשתייה", "טלפון טעון"]
+  }
+];
+
 function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[],onStartWork,onConfirm,onClose}) {
   const list = Array.isArray(tasks) ? tasks : [];
   const materialList = Array.isArray(supplyTasks) ? supplyTasks : [];
   const linkedSubs = Array.isArray(subOperators) ? subOperators.filter(Boolean) : [];
   const [openMaterial,setOpenMaterial] = useState(null);
+  const [equipmentChecked,setEquipmentChecked] = useState({});
+  const toggleEquipment = (group, item) => {
+    const key = `${group}:${item}`;
+    setEquipmentChecked(prev=>({...prev,[key]:!prev[key]}));
+  };
   const materials = materialList.reduce((acc, task) => {
     const supply = supplyDB?.[task.client];
     if (!supply) return acc;
@@ -523,6 +543,32 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
             הפעל שעון
           </Press>
         )}
+        <div style={{background:"#f8fbff",border:`1px solid ${C.border}`,borderRadius:14,padding:12,marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:900,color:C.text}}>צ׳ק ליסט ציוד יומי</div>
+              <div style={{fontSize:10,fontWeight:800,color:C.muted,marginTop:2}}>מתאפס בכל פתיחה של פותחים יום</div>
+            </div>
+            <Badge label={`${Object.values(equipmentChecked).filter(Boolean).length}/${DAILY_EQUIPMENT_CHECKLIST.reduce((n,g)=>n+g.items.length,0)}`} col={C.blue}/>
+          </div>
+          {DAILY_EQUIPMENT_CHECKLIST.map(group=>(
+            <div key={group.group} style={{marginTop:10}}>
+              <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>{group.group}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+                {group.items.map(item=>{
+                  const key = `${group.group}:${item}`;
+                  const checked = !!equipmentChecked[key];
+                  return (
+                    <Press key={key} onClick={()=>toggleEquipment(group.group,item)} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 10px",borderRadius:12,background:checked?"#e8f5e9":"#fff",border:`1px solid ${checked?"#c8e6c9":C.border}`,color:checked?C.green:C.text,textAlign:"right"}}>
+                      <span style={{width:22,height:22,borderRadius:7,background:checked?C.green:"#f0f4f8",border:`1px solid ${checked?C.green:C.border}`,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,flexShrink:0}}>{checked?"✓":""}</span>
+                      <span style={{fontSize:12,fontWeight:900,lineHeight:1.2}}>{item}</span>
+                    </Press>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
         <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:14,padding:12,marginBottom:12}}>
           <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>חומרים לסיפוק היום</div>
           {hasMaterials ? (
@@ -755,7 +801,7 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
 
 const clientMetaLine = (c) => [c?.regularOperator && `מפעיל: ${c.regularOperator}`, c?.regularDays && `ימים: ${c.regularDays}`].filter(Boolean).join(" · ");
 
-function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,val,fn,large,expandKey,form,sf,disabled=false,disabledReason="",zeroButtonLabel="",phLowButton=false,saltLowLightButton=false}) {
+function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,val,fn,large,expandKey,form,sf,disabled=false,disabledReason="",zeroButtonLabel="",phLowButton=false,saltLowLightButton=false,required=false}) {
   const isOpen = !!form[expandKey];
   const displayVal = Number(val) || 0;
   const zeroConfirmKey = `${expandKey}_zero`;
@@ -771,6 +817,7 @@ function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,
         style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0"}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontWeight:700,fontSize:14,color:C.text}}>{label}</span>
+          {required&&!disabled&&<span style={{background:"#ffebee",color:C.red,border:"1px solid #ffcdd2",borderRadius:99,padding:"2px 8px",fontSize:10,fontWeight:900}}>חובה</span>}
           {hasValue&&!isOpen&&<span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"2px 10px",fontSize:12,fontWeight:800}}>{phLowButton&&form.phLowConfirmed?"PH נמוך":`${displayVal}${unit}`}</span>}
         </div>
         <span style={{fontSize:16,color:C.blue,display:"inline-block",transform:isOpen?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▾</span>
@@ -1488,6 +1535,7 @@ useEffect(() => {
   const [toast,setToast] = useState({msg:"",visible:false});
   const [workStart,setWorkStart] = useState(()=>localStorage.getItem("galileo_workstart")||null);
   const [workLogs,setWorkLogs] = useState(()=>{ try{return JSON.parse(localStorage.getItem("galileo_worklogs")||"[]");}catch{return [];} });
+  const [workClockEditor,setWorkClockEditor] = useState(null);
   const [showClockReminder,setShowClockReminder] = useState(false);
   const [showQR,setShowQR] = useState(false);
   const [showQRCode,setShowQRCode] = useState(null);
@@ -1508,6 +1556,7 @@ useEffect(() => {
   const [unassignedClients,setUnassignedClients] = useState([]);
   const [editingReport,setEditingReport] = useState(null);
   const [supplySearch,setSupplySearch] = useState({date:"",dateTo:"",type:""});
+  const [adminIssueSearch,setAdminIssueSearch] = useState({date:"",client:""});
   const [freeClients,setFreeClients] = useState([]);
   const [newClient,setNewClient] = useState({name:"",phone:"",address:"",gateCode:"",regularDays:"",regularOperator:"",poolType:"מלח"});
   const [editingAdminClient,setEditingAdminClient] = useState(null);
@@ -2903,27 +2952,62 @@ useEffect(() => {
   const addOp=(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t||t.operators.includes(n))return;updateTask(id,{operators:[...t.operators,n]},`נוסף ${n} למשימה`,true);};
   const markDone=(id)=>updateTask(id,{status:"done"},"דוח הוגש — בוצעה",false);
 
-  const handleStartWork = () => {
-    const now=new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
-    localStorage.setItem("galileo_workstart",now);
-    setWorkStart(now);
-    haptic("medium");
-    showToast("▶ יום עבודה התחיל!");
-    if(sheetId) sheetCall("saveWorkStart",{log:{username:user?.username||"",operator:user?.name,date:todayStr(),start:now}});
+  const timeToMinutes = (value) => {
+    const [h,m] = String(value || "").split(":").map(Number);
+    return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
   };
-  const handleEndWork = () => {
-    if(!workStart)return;
-    const end=new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
-    const [sh,sm]=workStart.split(":").map(Number); const [eh,em]=end.split(":").map(Number);
-    const tot=(eh*60+em)-(sh*60+sm); const totalStr=`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;
-    const log={id:Date.now(),operator:user?.name,date:todayStr(),start:workStart,end,total:totalStr};
-    const newLogs=[...workLogs,log]; setWorkLogs(newLogs); localStorage.setItem("galileo_worklogs",JSON.stringify(newLogs)); localStorage.removeItem("galileo_workstart");
-    setWorkStart(null); haptic("success"); showToast(`⏹ ${totalStr} שעות עבודה נשמרו`);
+  const totalWorkMinutes = (start, end) => {
+    const s = timeToMinutes(start);
+    const e = timeToMinutes(end);
+    if (s === null || e === null) return 0;
+    return e >= s ? e - s : e + 1440 - s;
+  };
+  const minutesToHM = (minutes) => `${Math.floor(Math.max(0, minutes) / 60)}:${String(Math.max(0, minutes) % 60).padStart(2,"0")}`;
+  const openWorkClockEditor = (mode="edit") => {
+    const now = new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
+    setWorkClockEditor({
+      mode,
+      date: todayStr(),
+      start: workStart || now,
+      end: mode === "end" ? now : "",
+    });
+    haptic("medium");
+  };
+  const saveWorkClockEditor = async () => {
+    if (!workClockEditor?.date || !workClockEditor?.start) {
+      showToast("⚠️ חובה להזין תאריך ושעת כניסה");
+      haptic("medium");
+      return;
+    }
+    const cleanStart = workClockEditor.start;
+    const cleanEnd = workClockEditor.end || "";
+    if (!cleanEnd) {
+      localStorage.setItem("galileo_workstart", cleanStart);
+      setWorkStart(cleanStart);
+      setWorkClockEditor(null);
+      showToast("▶ שעת כניסה נשמרה");
+      haptic("success");
+      if(sheetId) await sheetCall("saveWorkStart",{log:{username:user?.username||"",operator:user?.name,date:workClockEditor.date,start:cleanStart}});
+      return;
+    }
+    const totalMinutes = totalWorkMinutes(cleanStart, cleanEnd);
+    const totalStr = minutesToHM(totalMinutes);
+    const log = {id:Date.now(),operator:user?.name,date:workClockEditor.date,start:cleanStart,end:cleanEnd,total:totalStr};
+    const newLogs = [...workLogs, log].sort((a,b)=>String(b.date).localeCompare(String(a.date)) || String(b.start).localeCompare(String(a.start)));
+    setWorkLogs(newLogs);
+    localStorage.setItem("galileo_worklogs",JSON.stringify(newLogs));
+    localStorage.removeItem("galileo_workstart");
+    setWorkStart(null);
+    setWorkClockEditor(null);
+    showToast(`⏹ ${totalStr} שעות עבודה נשמרו`);
+    haptic("success");
     if(sheetId) {
-      sheetCall("clearWorkStart",{username:user?.username||"",operator:user?.name,date:todayStr()});
-      sheetCall("saveWorkLog",{log});
+      await sheetCall("clearWorkStart",{username:user?.username||"",operator:user?.name,date:workClockEditor.date});
+      await sheetCall("saveWorkLog",{log});
     }
   };
+  const handleStartWork = () => openWorkClockEditor("start");
+  const handleEndWork = () => openWorkClockEditor("end");
 
   useEffect(() => {
     if (!workStart || isAdminPanelRole(user?.role)) return;
@@ -3124,6 +3208,8 @@ useEffect(() => {
     const isEditingExistingReport = !!editingReport;
     if (chlorine === "" || ph === "" || !flow) {
       showToast("⚠️ חובה למלא כלור, pH וזרימה");
+      if (chlorine === "") sf("_exp_chlorine", true);
+      else if (ph === "") sf("_exp_ph", true);
       haptic("medium");
       return;
     }
@@ -3136,6 +3222,12 @@ useEffect(() => {
     if (Number(ph) === 0 && !form.phLowConfirmed) {
       showToast("⚠️ חובה לבחור ערך pH או לסמן PH נמוך");
       sf("_exp_ph", true);
+      haptic("medium");
+      return;
+    }
+    if (Number(form.chlora || 0) === 0 && !form._exp_chlora_zero) {
+      showToast("⚠️ חובה למלא טבליות כלור (TAB) או לסמן שאין צורך להוסיף");
+      sf("_exp_chlora", true);
       haptic("medium");
       return;
     }
@@ -3438,10 +3530,10 @@ const report = {
   const currentPrimaryPool = primaryPoolType(currentPoolType);
 
   const SLIDER_CONFIGS = [
-    {key:"chlorine",label:"כלור",min:0,max:8,step:0.1,unit:" ppm",warnAbove:3,optimal:1.5,val:chlorine,fn:v=>setForm(f=>({...f,chlorine:v,chlorineZeroConfirmed:Number(v)===0?f.chlorineZeroConfirmed:false}))},
-    {key:"ph",label:"pH",min:5,max:9,step:0.1,unit:"",warnAbove:8,warnBelow:6,optimal:7.4,val:ph,fn:v=>setForm(f=>({...f,ph:v,phLowConfirmed:Number(v)===0?f.phLowConfirmed:false})),phLowButton:true},
+    {key:"chlorine",label:"כלור",min:0,max:8,step:0.1,unit:" ppm",warnAbove:3,optimal:1.5,val:chlorine,fn:v=>setForm(f=>({...f,chlorine:v,chlorineZeroConfirmed:Number(v)===0?f.chlorineZeroConfirmed:false})),required:true},
+    {key:"ph",label:"pH",min:5,max:9,step:0.1,unit:"",warnAbove:8,warnBelow:6,optimal:7.4,val:ph,fn:v=>setForm(f=>({...f,ph:v,phLowConfirmed:Number(v)===0?f.phLowConfirmed:false})),phLowButton:true,required:true},
     {key:"salt",label:"רמת מלח",min:0,max:6000,step:100,unit:" PPM",optimal:3500,val:salt,fn:v=>sf("salt",v),disabled:currentPrimaryPool==="כלור",disabledReason:"נעול בבריכת כלור",saltLowLightButton:true},
-    {key:"chlora",label:"טבליות כלור (TAB)",min:0,max:5,step:0.25,unit:"",val:form.chlora??0,fn:v=>sf("chlora",v),zeroButtonLabel:"אין צורך להוסיף"},
+    {key:"chlora",label:"טבליות כלור (TAB)",min:0,max:5,step:0.25,unit:"",val:form.chlora??0,fn:v=>sf("chlora",v),zeroButtonLabel:"אין צורך להוסיף",required:true},
     {key:"hth",label:"HTH",min:0,max:5,step:0.5,unit:" cups",val:form.hth??0,fn:v=>sf("hth",v)},
     {key:"phUp",label:"מעלה pH",min:0,max:5,step:0.5,unit:" כוסות",val:form.phUp??0,fn:v=>updateMeasurement("phUp",v),disabled:currentPrimaryPool==="מלח",disabledReason:"נעול בבריכת מלח"},
     {key:"acidLiters",label:"חומצת מלח",min:0,max:5,step:0.5,unit:" L",val:form.acidLiters??0,fn:v=>sf("acidLiters",v),disabled:currentPrimaryPool==="כלור",disabledReason:"נעול בבריכת כלור"},
@@ -3631,6 +3723,17 @@ const report = {
     const done = dayTasks.filter(isDailyTaskDone).length;
     const completedDayTasks = dayTasks.filter(isDailyTaskDone);
     const doneManualTasks = todayManualTasks.filter(t=>t.status==="done").length;
+    const workMonthKey = normalizeDate(dailyDate).slice(0,7);
+    const operatorWorkLogs = workLogs.filter(log=>normalizeName(log.operator)===normalizeName(user?.name));
+    const monthWorkLogs = operatorWorkLogs.filter(log=>normalizeDate(log.date).slice(0,7)===workMonthKey);
+    const monthWorkMinutes = monthWorkLogs.reduce((sum, log)=>sum + totalWorkMinutes(log.start, log.end), 0);
+    const editorTotalMinutes = workClockEditor?.end ? totalWorkMinutes(workClockEditor.start, workClockEditor.end) : 0;
+    const openWorkClockPicker = (id) => {
+      const inputEl = document.getElementById(id);
+      inputEl?.focus?.();
+      try { inputEl?.showPicker?.(); } catch {}
+      if (!inputEl?.showPicker) inputEl?.click?.();
+    };
     const dailySupplySummary = dailySupplyTasks.reduce((acc, task) => {
       const supply = supplyDB[task.client];
       if (!supply) return acc;
@@ -3657,6 +3760,54 @@ const report = {
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
+        {workClockEditor&&(
+          <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.48)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
+            <div style={{width:"100%",maxWidth:430,maxHeight:"88vh",overflowY:"auto",background:"rgba(255,255,255,0.92)",borderRadius:26,padding:16,boxShadow:"0 28px 90px rgba(15,23,42,0.28)",border:"1px solid rgba(148,163,184,0.24)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:12}}>
+                <div>
+                  <div style={{fontSize:18,fontWeight:900,color:C.text}}>ניהול שעות עבודה</div>
+                  <div style={{fontSize:12,fontWeight:800,color:C.muted,marginTop:2}}>אפשר להזין גם תאריכים קודמים</div>
+                </div>
+                <Press onClick={()=>setWorkClockEditor(null)} style={{width:34,height:34,borderRadius:12,background:"#f0f4f8",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                <Press onPointerDown={e=>{e.preventDefault();openWorkClockPicker("work-clock-date");}} style={{gridColumn:"1 / -1",cursor:"pointer"}}>
+                  <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>תאריך עבודה</label>
+                  <input id="work-clock-date" type="date" value={workClockEditor.date} onChange={e=>setWorkClockEditor(x=>({...x,date:e.target.value}))} style={{...inp,cursor:"pointer",pointerEvents:"none"}}/>
+                </Press>
+                <Press onPointerDown={e=>{e.preventDefault();openWorkClockPicker("work-clock-start");}} style={{cursor:"pointer"}}>
+                  <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>שעת כניסה</label>
+                  <input id="work-clock-start" type="time" value={workClockEditor.start} onChange={e=>setWorkClockEditor(x=>({...x,start:e.target.value}))} style={{...inp,fontSize:20,fontWeight:900,color:C.blue,textAlign:"center",cursor:"pointer",pointerEvents:"none"}}/>
+                </Press>
+                <Press onPointerDown={e=>{e.preventDefault();openWorkClockPicker("work-clock-end");}} style={{cursor:"pointer"}}>
+                  <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>שעת יציאה</label>
+                  <input id="work-clock-end" type="time" value={workClockEditor.end} onChange={e=>setWorkClockEditor(x=>({...x,end:e.target.value}))} style={{...inp,fontSize:20,fontWeight:900,color:C.blue,textAlign:"center",cursor:"pointer",pointerEvents:"none"}}/>
+                </Press>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                <div style={{background:"#e3f2fd",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
+                  <div style={{fontSize:22,fontWeight:900,color:C.blue}}>{workClockEditor.end ? minutesToHM(editorTotalMinutes) : "--:--"}</div>
+                  <div style={{fontSize:11,fontWeight:900,color:C.muted}}>סך הכל משמרת</div>
+                </div>
+                <div style={{background:"#e8f5e9",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
+                  <div style={{fontSize:22,fontWeight:900,color:C.green}}>{minutesToHM(monthWorkMinutes)}</div>
+                  <div style={{fontSize:11,fontWeight:900,color:C.muted}}>סיכום החודש</div>
+                </div>
+              </div>
+              <Press onClick={saveWorkClockEditor} style={{padding:"14px",borderRadius:16,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:15,fontWeight:900,textAlign:"center",boxShadow:"0 14px 32px rgba(79,70,229,0.24)",marginBottom:12}}>שמור שעות</Press>
+              <div style={{border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden"}}>
+                <div style={{padding:"10px 12px",background:"#f5f9ff",fontSize:12,fontWeight:900,color:C.text}}>רישומי שעות</div>
+                {operatorWorkLogs.length===0&&<div style={{padding:14,textAlign:"center",fontSize:12,fontWeight:800,color:C.muted}}>אין רישומי שעות עדיין</div>}
+                {operatorWorkLogs.slice(0,8).map((log,i)=>(
+                  <div key={log.id || `${log.date}-${log.start}-${i}`} style={{display:"flex",justifyContent:"space-between",gap:10,padding:"10px 12px",borderTop:`1px solid ${C.border}`,background:i%2?"#fff":"#fbfdff"}}>
+                    <div><div style={{fontSize:13,fontWeight:900,color:C.text}}>{fmtDate(log.date)}</div><div style={{fontSize:11,fontWeight:800,color:C.muted}}>{log.start} - {log.end}</div></div>
+                    <Badge label={`⏱️ ${log.total}`} col={C.blue}/>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
         {pendingSubReportForOperator&&(()=>{ const item=pendingSubReportForOperator; const r=item.report||{}; return (
           <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
             <div style={{width:"100%",maxWidth:420,background:"rgba(255,255,255,0.96)",borderRadius:24,padding:18,boxShadow:"0 28px 90px rgba(15,23,42,0.34)",border:"1px solid rgba(148,163,184,0.32)"}}>
@@ -3747,11 +3898,11 @@ const report = {
               <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{doneManualTasks}/{todayManualTasks.length}</div>
               <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>משימות</div>
             </Press>
-            <div style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:"1px solid rgba(148,163,184,0.20)",boxShadow:"0 12px 28px rgba(30,64,175,0.12)"}}>
+            <Press onClick={()=>openWorkClockEditor(workStart?"end":"start")} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:"1px solid rgba(148,163,184,0.20)",boxShadow:"0 12px 28px rgba(30,64,175,0.12)",cursor:"pointer"}}>
               <div style={{fontSize:16,marginBottom:2}}>⏱️</div>
               <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{workStart?workStart:"--:--"}</div>
               <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>התחלה</div>
-            </div>
+            </Press>
           </div>
           {openTodayTasks&&(
             <div style={{marginTop:10,background:"rgba(244,249,255,0.82)",border:`1px solid ${C.border}`,borderRadius:16,padding:"10px 12px",boxShadow:"0 12px 28px rgba(30,64,175,0.10)"}}>
@@ -4292,7 +4443,7 @@ const report = {
         <Sec icon="📊" title="מדידות">
           {REPORT_SLIDER_CONFIGS.map(s=>(
             <Fragment key={s.key}>
-            <CollapsibleSlider label={s.label} min={s.min} max={s.max} step={s.step} unit={s.unit} warnAbove={s.warnAbove} warnBelow={s.warnBelow} optimal={s.optimal} val={s.val} fn={s.fn} large={largeSlider} expandKey={`_exp_${s.key}`} form={form} sf={sf} disabled={s.disabled} disabledReason={s.disabledReason} zeroButtonLabel={s.zeroButtonLabel} phLowButton={s.phLowButton} saltLowLightButton={s.saltLowLightButton}/>
+            <CollapsibleSlider label={s.label} min={s.min} max={s.max} step={s.step} unit={s.unit} warnAbove={s.warnAbove} warnBelow={s.warnBelow} optimal={s.optimal} val={s.val} fn={s.fn} large={largeSlider} expandKey={`_exp_${s.key}`} form={form} sf={sf} disabled={s.disabled} disabledReason={s.disabledReason} zeroButtonLabel={s.zeroButtonLabel} phLowButton={s.phLowButton} saltLowLightButton={s.saltLowLightButton} required={s.required}/>
               {s.key==="salt"&&(
                 <div style={{display:"flex",alignItems:"center",gap:10,margin:"6px 0 12px"}}>
                   <div style={{height:1,flex:1,background:"linear-gradient(90deg,rgba(21,101,192,0.05),rgba(21,101,192,0.32))"}}/>
@@ -4343,7 +4494,8 @@ const report = {
             ))}
           </div>
           <div style={{...card()}}>
-            <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder={poolStatus==="אחר"?"תאר את הבעיה...":"הערה קצרה על מצב הבריכה (אופציונלי)..."} style={{...inp,resize:"none",marginBottom:poolStatus==="אחר"?10:0}}/>
+            <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder={poolStatus==="אחר"?"תאר את הבעיה...":"הערה קצרה פנימית על מצב הבריכה (אופציונלי)..."} style={{...inp,resize:"none",marginBottom:poolStatus==="אחר"?10:0}}/>
+            {poolStatus==="מאוזנת"&&<div style={{fontSize:11,fontWeight:800,color:C.blue,marginTop:6}}>הערה זו נשמרת כהערה פנימית ואינה נשלחת ללקוח.</div>}
             {poolStatus==="אחר"&&(
               <>
                 <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>הגבלת שימוש עד</label>
@@ -4548,7 +4700,48 @@ const report = {
     const dashboardDoneToday = dashboardTasksToday.filter(t=>t.status==="done").length;
     const dashboardReportCount = [...sheetReports, ...reports].length;
     const dashboardCriticalIssues = operatorIssues.filter(iss=>isCriticalIssue(iss[4]) && !isIssueDone(iss[5])).length;
-    const dashboardSupplyCount = Object.values(supplyDB || {}).filter(v=>v?.acid || v?.phUpSupply || v?.saltPkg || Number(v?.saltBags || 0)>0).length;
+    const dashboardSupplyToday = Object.entries(supplyDB || {}).reduce((acc, [clientName, supply]) => {
+      if (!isSupplyDueForDate(clientName, dailyDate, supply)) return acc;
+      if (supply?.phUpSupply) acc.phUpSupply += 1;
+      if (supply?.acid) acc.acid += 1;
+      return acc;
+    }, { phUpSupply:0, acid:0 });
+    const supplyLabelParts = (label) => String(label || "").split(",").map(x=>x.trim()).filter(Boolean);
+    const allowedSupplyLabelParts = (label) => supplyLabelParts(label).filter(x=>x.includes("מעלה") || x.includes("חומצת") || x.includes("מלח"));
+    const reportHasAllowedSupply = (r) => Number(r?.phUp || 0) > 0 || Number(r?.acidLiters || 0) > 0 || allowedSupplyLabelParts(r?.supplyLabel).length > 0;
+    const reportMatchesSupplyType = (r, type) => {
+      if (!type) return true;
+      const labels = allowedSupplyLabelParts(r?.supplyLabel).join(" ");
+      if (type === "מעלה pH") return Number(r?.phUp || 0) > 0 || labels.includes("מעלה");
+      if (type === "חומצת מלח") return Number(r?.acidLiters || 0) > 0 || labels.includes("חומצת");
+      if (type === "מלח") return labels.includes("מלח");
+      return true;
+    };
+    const dailySupplyOperatorByClient = new Map();
+    operatorUsers.forEach(op => {
+      getAdminOrderEntries(dailyDate, op.name).forEach(entry => {
+        if (entry?.client) dailySupplyOperatorByClient.set(normalizeName(entry.client), op.name);
+      });
+    });
+    const dailySupplyRows = Object.entries(supplyDB || {}).reduce((rows, [clientName, supply]) => {
+      if (!isSupplyDueForDate(clientName, dailyDate, supply)) return rows;
+      const materials = [
+        supply?.phUpSupply && "סודה אש",
+        supply?.acid && "חומצת מלח",
+        supply?.saltPkg && `מלח ×${Number(supply?.saltBags || 1)}`
+      ].filter(Boolean);
+      if (!materials.length) return rows;
+      const clientObj = clients.find(c=>normalizeName(c.name)===normalizeName(clientName));
+      const operator = dailySupplyOperatorByClient.get(normalizeName(clientName)) || clientObj?.regularOperator || "ללא שיוך";
+      rows.push({operator, client:clientName, materials});
+      return rows;
+    }, []).sort((a,b)=>normalizeName(a.operator).localeCompare(normalizeName(b.operator)) || normalizeName(a.client).localeCompare(normalizeName(b.client)));
+    const dailySupplyGroups = dailySupplyRows.reduce((groups, row) => {
+      const key = row.operator || "ללא שיוך";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(row);
+      return groups;
+    }, {});
     const goAdminBubble = (tab) => {
       setAdminTab(tab);
       window.scrollTo({top:0,left:0,behavior:"smooth"});
@@ -4568,7 +4761,7 @@ const report = {
       {tab:"treatments", icon:"🔢", title:"מספר טיפולים", value:treatmentCounts.length || "-", meta:"ייטען בכניסה", tone:"#1d4ed8", hidden:isSubAdminPanel},
       {tab:"reports", icon:"📄", title:"דוחות", value:dashboardReportCount, meta:"טעונים כרגע", tone:"#0f766e"},
       {tab:"opissues", icon:"🔧", title:"תקלות", value:operatorIssues.length, meta:dashboardCriticalIssues ? `${dashboardCriticalIssues} קריטיות` : "לוח תקלות", tone:dashboardCriticalIssues ? C.red : "#c2410c"},
-      {tab:"supply", icon:"📦", title:"חומרים", value:dashboardSupplyCount, meta:"לקוחות עם ציוד/חומרים", tone:"#b45309"},
+      {tab:"supply", icon:"📦", title:"חומרים", value:<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,width:"100%",maxWidth:120}}><div><div style={{fontSize:20,fontWeight:900,color:"#6a1b9a",lineHeight:1}}>{dashboardSupplyToday.phUpSupply}</div><div style={{fontSize:9,fontWeight:900,color:C.muted,marginTop:3}}>סודה אש</div></div><div><div style={{fontSize:20,fontWeight:900,color:C.red,lineHeight:1}}>{dashboardSupplyToday.acid}</div><div style={{fontSize:9,fontWeight:900,color:C.muted,marginTop:3}}>חומצת מלח</div></div></div>, meta:"נדרש לסיפוק היום", tone:"#b45309"},
       {tab:"users", icon:"👤", title:"משתמשים", value:allUsers.length, meta:"פעילים במערכת", tone:"#475569", hidden:isSubAdminPanel},
       {tab:"settings", icon:"⚙️", title:"הגדרות", value:"WA", meta:"מלל הודעות", tone:"#4f46e5", hidden:isSubAdminPanel}
     ].filter(b=>!b.hidden);
@@ -5161,8 +5354,28 @@ const report = {
           {adminTab==="opissues"&&(
             <div>
               <div style={{...card({marginBottom:14,background:"#e3f2fd",display:"flex",alignItems:"center",gap:10}),padding:"12px 16px"}}><span style={{fontSize:16}}>🔄</span><span style={{fontWeight:700,fontSize:13,color:C.blue}}>תקלות נטענות אוטומטית ומתעדכנות כל 9 דקות</span></div>
-              {operatorIssues.length===0&&<div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תקלות מפעיל להצגה כרגע</div>}
-              {operatorIssues.map((iss,i)=>{ const [id,operator,client,desc,priority,status,response,date]=iss; const priColor=priority==="קריטי"?C.red:priority==="דחוף"?C.orange:C.blue; return (<div key={i} style={{...card({marginBottom:12,border:`2px solid ${priColor}22`})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>👤 {operator} · 📅 {date}</div></div><div style={{display:"flex",gap:5}}><span style={{background:priColor+"18",color:priColor,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{priority}</span><span style={{background:status==="טופל"?"#e8f5e9":"#fff8e1",color:status==="טופל"?C.green:C.orange,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{status}</span></div></div><div style={{fontSize:13,color:"#546e7a",marginBottom:10,lineHeight:1.5}}>{desc}</div>{response&&<div style={{background:"#e8f5e9",borderRadius:8,padding:"8px 12px",fontSize:12,color:C.green,fontWeight:700,marginBottom:8}}>✅ תגובת אדמין: {response}</div>}<div style={{display:"flex",gap:8}}>{["בטיפול","טופל"].map(s=>(<Press key={s} onClick={async()=>{ const updated=[...operatorIssues]; updated[i]=[...iss]; updated[i][5]=s; setOperatorIssues(updated); await sheetCall("updateOperatorIssue",{rowIndex:i+1,status:s}); showToast(`✅ עודכן ל-${s}`);haptic("success"); }} style={{padding:"7px 14px",borderRadius:99,fontSize:12,fontWeight:800,background:status===s?"#e8f5e9":"#f0f4f8",color:status===s?C.green:C.muted}}>{s}</Press>))}</div></div>); })}
+              <div style={{...card({marginBottom:14})}}>
+                <div style={{fontWeight:900,fontSize:13,color:C.text,marginBottom:12}}>חיפוש תקלות פתוחות</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תאריך</label><input type="date" value={adminIssueSearch.date} onChange={e=>setAdminIssueSearch(s=>({...s,date:e.target.value}))} style={inp}/></div>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>שם לקוח</label><input value={adminIssueSearch.client} onChange={e=>setAdminIssueSearch(s=>({...s,client:e.target.value}))} placeholder="חיפוש לפי לקוח..." style={inp}/></div>
+                </div>
+              </div>
+              {(()=>{
+                const filteredIssues = operatorIssues
+                  .map((iss, originalIndex)=>({iss, originalIndex}))
+                  .filter(({iss})=>{
+                    const [, , client, , , status, , date] = iss;
+                    if (isIssueDone(status)) return false;
+                    const issueDate = normalizeDate(date).slice(0,10);
+                    const matchDate = !adminIssueSearch.date || issueDate === adminIssueSearch.date;
+                    const q = normalizeName(adminIssueSearch.client);
+                    const matchClient = !q || normalizeName(client).includes(q);
+                    return matchDate && matchClient;
+                  });
+                if(filteredIssues.length===0) return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תקלות פתוחות להצגה כרגע</div>;
+                return filteredIssues.map(({iss, originalIndex})=>{ const [id,operator,client,desc,priority,status,response,date]=iss; const priColor=priority==="קריטי"?C.red:priority==="דחוף"?C.orange:C.blue; return (<div key={id || originalIndex} style={{...card({marginBottom:12,border:`2px solid ${priColor}22`})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>👤 {operator} · 📅 {fmtDate(date)}</div></div><div style={{display:"flex",gap:5}}><span style={{background:priColor+"18",color:priColor,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{priority}</span><span style={{background:"#fff8e1",color:C.orange,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:800}}>{status || "פתוח"}</span></div></div><div style={{fontSize:13,color:"#546e7a",marginBottom:10,lineHeight:1.5}}>{desc}</div>{response&&<div style={{background:"#e8f5e9",borderRadius:8,padding:"8px 12px",fontSize:12,color:C.green,fontWeight:700,marginBottom:8}}>✅ תגובת אדמין: {response}</div>}<div style={{display:"flex",gap:8}}>{["בטיפול","טופל"].map(s=>(<Press key={s} onClick={async()=>{ const updated=[...operatorIssues]; updated[originalIndex]=[...iss]; updated[originalIndex][5]=s; setOperatorIssues(updated); await sheetCall("updateOperatorIssue",{rowIndex:originalIndex+1,status:s}); showToast(`✅ עודכן ל-${s}`);haptic("success"); }} style={{padding:"7px 14px",borderRadius:99,fontSize:12,fontWeight:800,background:status===s?"#e8f5e9":"#f0f4f8",color:status===s?C.green:C.muted}}>{s}</Press>))}</div></div>); });
+              })()}
             </div>
           )}
           {adminTab==="supply"&&(
@@ -5175,7 +5388,36 @@ const report = {
                   <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>סוג חומר</label><select value={supplySearch.type} onChange={e=>setSupplySearch(s=>({...s,type:e.target.value}))} style={sel}><option value="">הכל</option><option>מעלה pH</option><option>חומצת מלח</option><option>מלח</option></select></div>
                 </div>
               </div>
-              {(()=>{ const allRep=[...sheetReports,...reports]; const seen=new Set(); const filtered=allRep.filter(r=>{ if(seen.has(r.id))return false; seen.add(r.id); const d=String(r.reportDate||"").slice(0,10); if(supplySearch.date&&d<supplySearch.date)return false; if(supplySearch.dateTo&&d>supplySearch.dateTo)return false; const hasSupply=r.chlora>0||r.hth>0||r.phUp>0||r.acidLiters>0||r.supplyLabel||r.suppliedEquipment; if(!hasSupply)return false; if(supplySearch.type){const t=supplySearch.type;if(t==="כלור TAB"&&!(r.chlora>0))return false;if(t==="HTH"&&!(r.hth>0))return false;if(t==="מעלה pH"&&!(r.phUp>0))return false;if(t==="חומצת מלח"&&!(r.acidLiters>0))return false;if(t==="מלח"&&!r.supplyLabel?.includes("מלח"))return false;} return true; }).sort((a,b)=>b.reportDate?.localeCompare(a.reportDate)); if(filtered.length===0)return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תוצאות — לחץ "טען מגיליון" בטאב דוחות</div>; return filtered.map((r,i)=>(<div key={i} style={{...card({marginBottom:10})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{r.chlora>0&&<span style={{background:"#fff3e0",color:C.orange,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>טבליות כלור: {r.chlora}</span>}{r.hth>0&&<span style={{background:"#e8eaf6",color:"#283593",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>HTH כוסות: {r.hth}</span>}{r.phUp>0&&<span style={{background:"#f3e5f5",color:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>מעלה חומציות כוסות: {r.phUp}</span>}{r.acidLiters>0&&<span style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>חומצת מלח L: {r.acidLiters}</span>}{r.supplyLabel&&<span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>{r.supplyLabel}</span>}{r.suppliedEquipment&&<span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>סופק: {r.suppliedEquipment}</span>}</div></div>)); })()}
+              <div style={{...card({marginBottom:14,background:"rgba(245,249,255,0.82)"})}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:12}}>
+                  <div>
+                    <div style={{fontWeight:900,fontSize:14,color:C.text}}>חומרים לסיפוק היום</div>
+                    <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:2}}>מופרד לפי מפעיל ושם לקוח</div>
+                  </div>
+                  <Badge label={`${dailySupplyRows.length} לקוחות`} col={dailySupplyRows.length ? C.orange : C.muted}/>
+                </div>
+                {dailySupplyRows.length===0&&<div style={{padding:"14px 12px",borderRadius:12,background:"rgba(226,237,250,0.72)",color:C.muted,fontSize:12,fontWeight:800,textAlign:"center"}}>אין חומרים לסיפוק היום</div>}
+                {Object.entries(dailySupplyGroups).map(([operator, rows])=>(
+                  <div key={operator} style={{border:`1px solid ${C.border}`,borderRadius:14,background:"rgba(255,255,255,0.70)",overflow:"hidden",marginTop:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"10px 12px",background:"rgba(226,237,250,0.70)",borderBottom:`1px solid ${C.border}`}}>
+                      <div style={{fontSize:13,fontWeight:900,color:C.text}}>👤 {operator}</div>
+                      <Badge label={`${rows.length}`} col={C.blue}/>
+                    </div>
+                    {rows.map((row,i)=>(
+                      <div key={`${operator}-${row.client}-${i}`} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:10,alignItems:"center",padding:"10px 12px",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                        <div style={{minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.client.split(" - ")[0]}</div>
+                          {clientAddress(row.client)&&<div style={{fontSize:11,fontWeight:700,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>📍 {clientAddress(row.client)}</div>}
+                        </div>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                          {row.materials.map(material=><span key={material} style={{background:material.includes("חומצת")?"#ffebee":material.includes("סודה")?"#f3e5f5":"#e8f5e9",color:material.includes("חומצת")?C.red:material.includes("סודה")?"#6a1b9a":C.green,borderRadius:99,padding:"4px 10px",fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>{material}</span>)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              {(()=>{ const allRep=[...sheetReports,...reports]; const seen=new Set(); const filtered=allRep.filter(r=>{ if(seen.has(r.id))return false; seen.add(r.id); const d=String(r.reportDate||"").slice(0,10); if(supplySearch.date&&d<supplySearch.date)return false; if(supplySearch.dateTo&&d>supplySearch.dateTo)return false; return reportHasAllowedSupply(r) && reportMatchesSupplyType(r, supplySearch.type); }).sort((a,b)=>b.reportDate?.localeCompare(a.reportDate)); if(filtered.length===0)return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תוצאות — לחץ "טען מגיליון" בטאב דוחות</div>; return filtered.map((r,i)=>{ const labelText=allowedSupplyLabelParts(r.supplyLabel).join(", "); return (<div key={i} style={{...card({marginBottom:10})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{r.phUp>0&&<span style={{background:"#f3e5f5",color:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>מעלה pH כוסות: {r.phUp}</span>}{r.acidLiters>0&&<span style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>חומצת מלח L: {r.acidLiters}</span>}{labelText&&<span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>{labelText}</span>}</div></div>); }); })()}
             </div>
           )}
           {adminTab==="users"&&(
