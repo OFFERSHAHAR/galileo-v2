@@ -263,16 +263,7 @@
       }
 
       if (action === "getClients") {
-        const sheet = ss.getSheetByName("לקוחות");
-        const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => isClientNameHeader_(r[0]));
-        if (hi === -1) hi = 2;
-        const headers = (rows[hi] || []).map(h => String(h || "").trim());
-        const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
-        const clients = rows.slice(hi + 1).filter(r => r[0]).map(r => ({
-          name: String(r[0]), phone: String(r[1]), address: String(r[2]), qrUrl: String(r[3]||""), gateCode: String(r[4]||""), poolType: String(r[5]||"מלח"), regularDays: String(r[6]||""), regularOperator: String(r[7]||""), monthlyTreatmentBalance: Number(r[8] || 0), monthlyTreatmentCount: Number(r[9] || 0), monthlyTreatmentQuota: Number(quotaIdx >= 0 ? r[quotaIdx] || 0 : 0)
-        }));
-        return json({ clients });
+        return json({ clients: getClients_(ss) });
       }
 
       if (action === "getTreatmentCounts") {
@@ -1138,7 +1129,8 @@
     if (digits.indexOf("972") === 0) return digits;
     if (digits.indexOf("0") === 0) return "972" + digits.slice(1);
     if (digits.length === 9 && digits.indexOf("5") === 0) return "972" + digits;
-    return digits;
+    if (digits.length >= 10) return digits;
+    return "";
   }
 
   function saveClientInternalNote_(ss, data) {
@@ -1728,17 +1720,79 @@ function saveSubOperatorAssignment_(ss, data) {
   return { success:false, error:"user not found" };
 }
 
-function getClients_(ss) {
-  const sheet = ss.getSheetByName("לקוחות");
+function getClientsByHeaders_(ss) {
+  const sheets = ss.getSheets();
+  const sheet = sheets.find(sh => {
+    const lastRow = Math.min(sh.getLastRow(), 8);
+    if (!lastRow) return false;
+    return sh.getRange(1, 1, lastRow, 1).getValues().some(row => isClientNameHeader_(row[0]));
+  });
   if (!sheet) return [];
+
   const rows = sheet.getDataRange().getValues();
   let hi = rows.findIndex(r => isClientNameHeader_(r[0]));
   if (hi === -1) hi = 2;
   const headers = (rows[hi] || []).map(h => String(h || "").trim());
-  const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
-  return rows.slice(hi + 1).filter(r => r[0]).map(r => ({
-    name: String(r[0]), phone: String(r[1]), address: String(r[2]), qrUrl: String(r[3]||""), gateCode: String(r[4]||""), poolType: String(r[5]||"מלח"), regularDays: String(r[6]||""), regularOperator: String(r[7]||""), monthlyTreatmentBalance: Number(r[8] || 0), monthlyTreatmentCount: Number(r[9] || 0), monthlyTreatmentQuota: Number(quotaIdx >= 0 ? r[quotaIdx] || 0 : 0)
+  const normalizeHeader = (value) => String(value || "").replace(/[\s_\-]/g, "").toLowerCase();
+  const columnOf = (names, fallback) => {
+    const wanted = names.map(normalizeHeader);
+    const idx = headers.findIndex(header => wanted.includes(normalizeHeader(header)));
+    return idx >= 0 ? idx : fallback;
+  };
+  const columnsOf = (names, fallback) => {
+    const wanted = names.map(normalizeHeader);
+    const indexes = headers.map((header, idx) => wanted.includes(normalizeHeader(header)) ? idx : -1).filter(idx => idx >= 0);
+    return indexes.length ? indexes : [fallback];
+  };
+  const cleanPhone = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw || raw.charAt(0) === "#") return "";
+    const digits = raw.replace(/\D/g, "");
+    if (!digits) return "";
+    if (digits.indexOf("972") === 0 && digits.length >= 11) return digits;
+    if (digits.indexOf("0") === 0 && digits.length >= 10) return "972" + digits.slice(1);
+    if (digits.length === 9 && digits.indexOf("5") === 0) return "972" + digits;
+    if (digits.length >= 10) return digits;
+    return "";
+  };
+  const firstPhone = (row, indexes) => {
+    for (const idx of indexes) {
+      if (idx < 0) continue;
+      const phone = cleanPhone(row[idx]);
+      if (phone) return phone;
+    }
+    return "";
+  };
+  const nameIdx = columnOf(["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח", "client", "name"], 0);
+  const phoneIdx = columnOf(["טלפון", "נייד", "מספר טלפון", "phone", "mobile"], 1);
+  const addressIdx = columnOf(["כתובת", "address"], 2);
+  const qrIdx = columnOf(["qr_url", "QR", "קישור_QR", "qr"], 3);
+  const gateIdx = columnOf(["קוד_שער", "קוד שער", "gateCode", "gate"], 4);
+  const poolTypeIdx = columnOf(["סוג_בריכה", "סוג בריכה", "poolType"], 5);
+  const regularDaysIdx = columnOf(["ימים_קבועים", "ימים קבועים", "regularDays"], 6);
+  const regularOperatorIdx = columnOf(["מפעיל_קבוע", "מפעיל קבוע", "regularOperator"], 7);
+  const balanceIdx = columnOf(["יתרת_טיפולים_חודשית", "יתרת טיפולים חודשית", "monthlyTreatmentBalance"], 8);
+  const countIdx = columnOf(["מונה_טיפולים_בפועל", "מונה טיפולים בפועל", "monthlyTreatmentCount"], 9);
+  const quotaIdx = columnOf(["מכסת_טיפולים_חודשית", "מכסת טיפולים חודשית", "monthlyTreatmentQuota"], -1);
+  const phoneIndexes = columnsOf(["phone", "mobile", "whatsapp", "wa"], phoneIdx);
+
+  return rows.slice(hi + 1).filter(r => r[nameIdx]).map(r => ({
+    name: String(r[nameIdx] || ""),
+    phone: firstPhone(r, phoneIndexes),
+    address: String(r[addressIdx] || ""),
+    qrUrl: String(r[qrIdx] || ""),
+    gateCode: String(r[gateIdx] || ""),
+    poolType: String(r[poolTypeIdx] || "מלח"),
+    regularDays: String(r[regularDaysIdx] || ""),
+    regularOperator: String(r[regularOperatorIdx] || ""),
+    monthlyTreatmentBalance: Number(r[balanceIdx] || 0),
+    monthlyTreatmentCount: Number(r[countIdx] || 0),
+    monthlyTreatmentQuota: Number(quotaIdx >= 0 ? r[quotaIdx] || 0 : 0)
   }));
+}
+
+function getClients_(ss) {
+  return getClientsByHeaders_(ss);
 }
 
 function saveClients_(sheet, clients) {

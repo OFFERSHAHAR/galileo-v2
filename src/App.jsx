@@ -327,7 +327,8 @@ const normalizeWhatsAppPhone = (phone) => {
   if (digits.startsWith("972")) return digits;
   if (digits.startsWith("0")) return `972${digits.slice(1)}`;
   if (digits.length === 9 && digits.startsWith("5")) return `972${digits}`;
-  return digits;
+  if (digits.length >= 10) return digits;
+  return "";
 };
 
 const haptic = (t="light") => navigator.vibrate?.({light:30,medium:50,success:[30,50,30]}[t]||30);
