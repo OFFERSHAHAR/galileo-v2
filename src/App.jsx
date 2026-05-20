@@ -3771,15 +3771,15 @@ const report = {
                 <Press onClick={()=>setWorkClockEditor(null)} style={{width:34,height:34,borderRadius:12,background:"#f0f4f8",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-                <Press onPointerDown={e=>{e.preventDefault();openWorkClockPicker("work-clock-date");}} style={{gridColumn:"1 / -1",cursor:"pointer"}}>
+                <Press onClick={()=>openWorkClockPicker("work-clock-date")} style={{gridColumn:"1 / -1",cursor:"pointer"}}>
                   <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>תאריך עבודה</label>
                   <input id="work-clock-date" type="date" value={workClockEditor.date} onChange={e=>setWorkClockEditor(x=>({...x,date:e.target.value}))} style={{...inp,cursor:"pointer",pointerEvents:"none"}}/>
                 </Press>
-                <Press onPointerDown={e=>{e.preventDefault();openWorkClockPicker("work-clock-start");}} style={{cursor:"pointer"}}>
+                <Press onClick={()=>openWorkClockPicker("work-clock-start")} style={{cursor:"pointer"}}>
                   <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>שעת כניסה</label>
                   <input id="work-clock-start" type="time" value={workClockEditor.start} onChange={e=>setWorkClockEditor(x=>({...x,start:e.target.value}))} style={{...inp,fontSize:20,fontWeight:900,color:C.blue,textAlign:"center",cursor:"pointer",pointerEvents:"none"}}/>
                 </Press>
-                <Press onPointerDown={e=>{e.preventDefault();openWorkClockPicker("work-clock-end");}} style={{cursor:"pointer"}}>
+                <Press onClick={()=>openWorkClockPicker("work-clock-end")} style={{cursor:"pointer"}}>
                   <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>שעת יציאה</label>
                   <input id="work-clock-end" type="time" value={workClockEditor.end} onChange={e=>setWorkClockEditor(x=>({...x,end:e.target.value}))} style={{...inp,fontSize:20,fontWeight:900,color:C.blue,textAlign:"center",cursor:"pointer",pointerEvents:"none"}}/>
                 </Press>
