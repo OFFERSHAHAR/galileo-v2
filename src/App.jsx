@@ -257,6 +257,61 @@ async function sheetCall(action, payload={}) {
   } catch { return null; }
 }
 
+const USAGE_SESSION_KEY = "galileo_usage_session_id";
+
+function getUsageSessionId() {
+  try {
+    let id = sessionStorage.getItem(USAGE_SESSION_KEY);
+    if (!id) {
+      id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      sessionStorage.setItem(USAGE_SESSION_KEY, id);
+    }
+    return id;
+  } catch {
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+function getUsageUser() {
+  try {
+    return JSON.parse(localStorage.getItem("galileo_user") || "null") || {};
+  } catch {
+    return {};
+  }
+}
+
+function cleanUsageMetadata(metadata = {}) {
+  const blocked = new Set(["password","phone","email","message","notes","note","client","address","contact","photos","photo","image","gatecode","customstatustext"]);
+  return Object.fromEntries(Object.entries(metadata || {}).filter(([key, value]) => {
+    const cleanKey = String(key || "").replace(/[_\s-]/g, "").toLowerCase();
+    return !blocked.has(cleanKey) && typeof value !== "function";
+  }).map(([key, value]) => {
+    const text = typeof value === "object" ? JSON.stringify(value || {}) : String(value ?? "");
+    return [key, text.slice(0, 300)];
+  }));
+}
+
+function trackUsageEvent(eventName, metadata = {}) {
+  try {
+    if (!eventName) return;
+    const usageUser = getUsageUser();
+    sheetCall("trackUsageEvent", {
+      event: {
+        timestamp: new Date().toISOString(),
+        sessionId: getUsageSessionId(),
+        userId: usageUser.username || usageUser.name || "",
+        role: usageUser.role || "",
+        screen: metadata.screen || "",
+        event: eventName,
+        target: metadata.target || "",
+        metadata: cleanUsageMetadata(metadata),
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+        appVersion: APP_VERSION
+      }
+    }).catch(() => null);
+  } catch {}
+}
+
 function getOneSignalInstance() {
   if (typeof window === "undefined") return Promise.resolve(null);
   if (window.galileoOneSignalDisabled) return Promise.resolve(null);
@@ -2527,7 +2582,7 @@ useEffect(() => {
       return next;
     });
   };
-  const handleLogout = () => { localStorage.removeItem("galileo_user"); localStorage.removeItem(LOGIN_DAY_KEY); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
+  const handleLogout = () => { trackUsageEvent("logout", {screen}); localStorage.removeItem("galileo_user"); localStorage.removeItem(LOGIN_DAY_KEY); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
 
   const showToast = (msg) => { clearTimeout(toastTimer.current); setToast({msg,visible:true}); toastTimer.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2500); };
 
@@ -2798,6 +2853,7 @@ useEffect(() => {
     localStorage.setItem("galileo_user", JSON.stringify(found));
     localStorage.setItem(LOGIN_DAY_KEY, localDayKey());
     setScreen(isAdminPanelRole(found.role) ? "admin" : "daily");
+    trackUsageEvent("login_success", {screen:isAdminPanelRole(found.role) ? "admin" : "daily", target:found.role || ""});
     haptic("medium");
     setTimeout(()=>connectSheets(true), 80);
     connectPushUser(found.username, false).catch(e => console.warn("Push identity connect failed:", e));
@@ -2988,6 +3044,7 @@ useEffect(() => {
       showToast("▶ שעת כניסה נשמרה");
       haptic("success");
       if(sheetId) await sheetCall("saveWorkStart",{log:{username:user?.username||"",operator:user?.name,date:workClockEditor.date,start:cleanStart}});
+      trackUsageEvent("save_work_start", {screen:"daily", target:"clock_start", date:workClockEditor.date});
       return;
     }
     const totalMinutes = totalWorkMinutes(cleanStart, cleanEnd);
@@ -3005,6 +3062,7 @@ useEffect(() => {
       await sheetCall("clearWorkStart",{username:user?.username||"",operator:user?.name,date:workClockEditor.date});
       await sheetCall("saveWorkLog",{log});
     }
+    trackUsageEvent("save_work_hours", {screen:"daily", target:"clock_log", date:workClockEditor.date, total:totalStr});
   };
   const handleStartWork = () => openWorkClockEditor("start");
   const handleEndWork = () => openWorkClockEditor("end");
@@ -3178,10 +3236,12 @@ useEffect(() => {
       showToast("✅ הדוח אושר ונשלח");
       void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
       void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+      trackUsageEvent("approve_sub_report", {screen:"daily", target:"pending_sub_report"});
     } else {
       setPending(p => [...p, report]);
       await removePendingSubReport(item.id);
       setAction(`approveSubReport:${item.id}`, "local", 2200);
+      trackUsageEvent("approve_sub_report_local", {screen:"daily", target:"pending_sub_report"});
       showToast("⚠️ הדוח נשמר מקומית לשליחה מאוחרת");
     }
 
@@ -3192,6 +3252,7 @@ useEffect(() => {
     if (!item?.id) return;
     setDeferredSubReportIds(ids => ids.includes(item.id) ? ids : [...ids, item.id]);
     setActiveSubReportApprovalId("");
+    trackUsageEvent("defer_sub_report", {screen:"daily", target:"pending_sub_report"});
     showToast("הדוח הועבר לרשימת המתנה לאישור");
     haptic("medium");
   };
@@ -4744,6 +4805,7 @@ const report = {
     }, {});
     const goAdminBubble = (tab) => {
       haptic("light");
+      trackUsageEvent("admin_bubble_click", {screen:"admin_dashboard", target:tab});
       setTimeout(() => {
         setAdminTab(tab);
         window.scrollTo({top:0,left:0,behavior:"smooth"});

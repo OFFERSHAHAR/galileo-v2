@@ -45,6 +45,10 @@
         return json(saveClientSettings_(ss, data.settings || {}));
       }
 
+      if (action === "trackUsageEvent") {
+        return json(trackUsageEvent_(ss, data.event || {}));
+      }
+
       if (action === "validateLicense") {
         const sheet = ss.getSheetByName("רישיונות");
         if(!sheet) return json({ valid:false, reason:"טבלת רישיונות לא נמצאה" });
@@ -649,6 +653,16 @@
       s.appendRow(["key","value"]);
     } else if (s.getLastRow() === 0) {
       s.appendRow(["key","value"]);
+    }
+
+    s = clientSS.getSheetByName("UsageEvents");
+    if(!s) {
+      s = clientSS.insertSheet("UsageEvents");
+      s.appendRow(["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"]);
+    } else if (s.getLastRow() === 0) {
+      s.appendRow(["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"]);
+    } else {
+      ensureColumns(s, ["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"]);
     }
     
     Logger.log("✅ Client sheet setup complete: " + clientSS.getName());
@@ -1858,6 +1872,48 @@ function saveClientSettings_(ss, settings) {
     }
   });
   return { success:true, settings:getClientSettings_(ss) };
+}
+
+function getUsageEventsSheet_(ss) {
+  const headers = ["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"];
+  let sheet = ss.getSheetByName("UsageEvents");
+  if (!sheet) {
+    sheet = ss.insertSheet("UsageEvents");
+    sheet.appendRow(headers);
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(headers);
+  } else {
+    ensureColumns(sheet, headers);
+  }
+  return sheet;
+}
+
+function cleanUsageValue_(value, maxLen) {
+  return String(value || "").slice(0, maxLen || 180);
+}
+
+function trackUsageEvent_(ss, event) {
+  const safeEvent = event || {};
+  const sheet = getUsageEventsSheet_(ss);
+  let metadata = "{}";
+  try {
+    metadata = JSON.stringify(safeEvent.metadata || {});
+  } catch (e) {
+    metadata = "{}";
+  }
+  sheet.appendRow([
+    safeEvent.timestamp ? new Date(safeEvent.timestamp) : new Date(),
+    cleanUsageValue_(safeEvent.sessionId, 80),
+    cleanUsageValue_(safeEvent.userId, 120),
+    cleanUsageValue_(safeEvent.role, 60),
+    cleanUsageValue_(safeEvent.screen, 80),
+    cleanUsageValue_(safeEvent.event, 80),
+    cleanUsageValue_(safeEvent.target, 120),
+    metadata.slice(0, 1000),
+    cleanUsageValue_(safeEvent.userAgent, 300),
+    cleanUsageValue_(safeEvent.appVersion, 80)
+  ]);
+  return { success:true };
 }
 
 function saveClients_(sheet, clients) {
