@@ -1676,6 +1676,7 @@ useEffect(() => {
   const longPressTimers = useRef({});
   const fileRef = useRef();
   const toastTimer = useRef();
+  const operatorIssueSendingRef = useRef(false);
 
   const setAction = (key, status, resetMs = 0) => {
     setActionStatus(prev => ({...prev, [key]: status}));
@@ -2619,6 +2620,45 @@ useEffect(() => {
   const handleLogout = () => { trackUsageEvent("logout", {screen}); localStorage.removeItem("galileo_user"); localStorage.removeItem(LOGIN_DAY_KEY); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
 
   const showToast = (msg) => { clearTimeout(toastTimer.current); setToast({msg,visible:true}); toastTimer.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2500); };
+
+  const submitOperatorIssueReport = () => {
+    const desc = opIssueDesc.trim();
+    if (!desc) {
+      showToast("⚠️ נא לתאר את התקלה");
+      return;
+    }
+    if (operatorIssueSendingRef.current || isActionLoading("operatorIssueReport")) return;
+
+    operatorIssueSendingRef.current = true;
+    const issue = {
+      operator: user?.name,
+      client: opIssueClient,
+      desc,
+      priority: opIssuePriority,
+      date: todayStr()
+    };
+
+    setAction("operatorIssueReport", "loading");
+    setShowOperatorIssue(false);
+    setOpIssueDesc("");
+    setOpIssuePriority("רגיל");
+    showToast("⏳ שולח דיווח ברקע...");
+
+    void (async () => {
+      try {
+        await sheetCall("saveOperatorIssue", issue);
+        setAction("operatorIssueReport", "success", 1600);
+        showToast("✅ תקלה דווחה לאדמין");
+        haptic("success");
+      } catch {
+        setAction("operatorIssueReport", "error", 2200);
+        showToast("⚠️ שליחת הדיווח נכשלה");
+        haptic("medium");
+      } finally {
+        operatorIssueSendingRef.current = false;
+      }
+    })();
+  };
 
   const currentEquipmentChecklistUser = user?.username || user?.name || "default";
   const saveEquipmentChecklist = () => {
@@ -3839,13 +3879,7 @@ const report = {
       showToast(`סדר שותף ל-${subs.length} עוזר מפעיל`);
       haptic("success");
     };
-    const criticalOperatorNotice = operatorIssues.find(iss => {
-      const [id, operator, , , priority, status] = iss;
-      return isCriticalIssue(priority) &&
-        isIssueInProgress(status) &&
-        normalizeName(operator) === normalizeName(user?.name) &&
-        !dismissedCriticalIssueIds.includes(String(id));
-    });
+    const criticalOperatorNotice = null;
     const done = dayTasks.filter(isDailyTaskDone).length;
     const completedDayTasks = dayTasks.filter(isDailyTaskDone);
     const doneManualTasks = todayManualTasks.filter(t=>t.status==="done").length;
@@ -4512,7 +4546,7 @@ const report = {
                 <label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:8}}>דחיפות</label>
                 <div style={{display:"flex",gap:8}}>{["רגיל","דחוף","קריטי"].map(p=>(<Press key={p} onClick={()=>setOpIssuePriority(p)} style={{flex:1,padding:"10px",borderRadius:10,textAlign:"center",fontSize:13,fontWeight:800,background:opIssuePriority===p?(p==="קריטי"?C.red:p==="דחוף"?C.orange:C.blue):"#f0f4f8",color:opIssuePriority===p?"#fff":C.muted}}>{p}</Press>))}</div>
               </div>
-              <Press onClick={async()=>{ if(!opIssueDesc.trim()){showToast("⚠️ נא לתאר את התקלה");return;} await sheetCall("saveOperatorIssue",{operator:user?.name,client:opIssueClient,desc:opIssueDesc,priority:opIssuePriority,date:todayStr()}); setOpIssueDesc("");setOpIssuePriority("רגיל");setShowOperatorIssue(false); showToast("✅ תקלה דווחה לאדמין");haptic("success"); }} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 4px 14px rgba(21,101,192,0.3)"}}>שלח דיווח →</Press>
+              <Press disabled={isActionLoading("operatorIssueReport")} onClick={submitOperatorIssueReport} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 4px 14px rgba(21,101,192,0.3)",opacity:isActionLoading("operatorIssueReport")?0.72:1}}>{actionLabel("operatorIssueReport",{idle:"שלח דיווח →",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
             </div>
           </BottomSheet>
         )}
