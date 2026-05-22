@@ -1602,6 +1602,36 @@
     return syncAppNotificationUsers();
   }
 
+  function getPushBrandTitle_(ss) {
+    let settings = {};
+    try {
+      settings = getClientSettings_(ss) || {};
+    } catch(e) {}
+
+    const fromSettings = String(
+      settings.pushTitle ||
+      settings.notificationTitle ||
+      settings.shortName ||
+      settings.appName ||
+      settings.company ||
+      settings.companyName ||
+      ""
+    ).trim();
+    if (fromSettings) return fromSettings;
+
+    try {
+      const branding = getClientBrandingBySheetId_(ss.getId()) || {};
+      return String(
+        branding.shortName ||
+        branding.appName ||
+        branding.company ||
+        ""
+      ).trim();
+    } catch(e) {
+      return "";
+    }
+  }
+
   function testPushToGil() {
     const ss = getNotificationSyncSpreadsheet_();
     const res = sendAppNotificationToUser_({
@@ -1625,8 +1655,12 @@
 
     if (!externalUserId) return { success:false, sent:false, error:"missing_external_user_id" };
 
-    const title = String(data.title || data.heading || "Galileo").trim();
-    const message = String(data.message || data.body || data.text || "עדכון חדש").trim();
+    const actionTitle = String(data.title || data.heading || "").trim();
+    const title = String(data.appTitle || data.brandTitle || getPushBrandTitle_(ss) || actionTitle || "Galileo").trim();
+    const rawMessage = String(data.message || data.body || data.text || "עדכון חדש").trim();
+    const message = actionTitle && actionTitle !== title && rawMessage.indexOf(actionTitle) !== 0
+      ? `${actionTitle}\n${rawMessage}`
+      : rawMessage;
 
     const result = sendOneSignalRequest_({
       include_aliases: { external_id: [externalUserId] },
