@@ -4063,7 +4063,7 @@ const report = {
                       <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,fontWeight:800,color:C.muted}}>
                         {lr.chlorine!==undefined&&<span>כלור: {lr.chlorine}</span>}
                         {lr.ph!==undefined&&<span>pH: {lr.ph}</span>}
-                        {lr.salt!==undefined&&<span>מלח: {lr.salt}</span>}
+                        {lr.chlora!==undefined&&<span>TAB: {lr.chlora}</span>}
                         {lr.date&&<span>{fmtDate(String(lr.date).slice(0,10))}</span>}
                       </div>
                     )}
@@ -4574,7 +4574,7 @@ const report = {
                     <span style={{fontSize:12,fontWeight:900,color:C.blue}}>מדידה אחרונה:</span>
                     <span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>כלור: {lr.chlorine ?? "-"}</span>
                     <span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph ?? "-"}</span>
-                    <span style={{fontSize:12,fontWeight:800,color:C.green}}>מלח: {lr.salt ?? "-"}</span>
+                    <span style={{fontSize:12,fontWeight:800,color:C.green}}>TAB: {lr.chlora ?? "-"}</span>
                     {lr.date&&<span style={{fontSize:11,fontWeight:800,color:C.muted,marginRight:"auto"}}>{fmtDate(String(lr.date).slice(0,10))}</span>}
                   </div>
                   {note&&<div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:800,color:C.muted,lineHeight:1.5}}>
