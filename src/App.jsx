@@ -1468,6 +1468,7 @@ export default function App() {
   const [sharedSubOrders,setSharedSubOrders] = useState([]);
   const [subOperatorApprovals,setSubOperatorApprovals] = useState([]);
   const [supplyDB,setSupplyDB] = useState({});
+  const [materialApprovals,setMaterialApprovals] = useState([]);
   const [lastReadings,setLastReadings] = useState({});
 const [reports,setReports] = useState([]);
 const [completedReports,setCompletedReports] = useState(() => {
@@ -2030,6 +2031,47 @@ useEffect(() => {
         return true;
       })
       .slice(0,4);
+  };
+  const supplyPartsFromLabel = (label) => String(label || "").split(",").map(x=>x.trim()).filter(Boolean);
+  const supplyFromReportLike = (source = {}) => {
+    const label = String(source.supplyLabel || source.meta?.supplyLabel || "");
+    const parts = supplyPartsFromLabel(label);
+    const saltPart = parts.find(x => x.includes("מלח"));
+    return {
+      acid: Number(source.acidLiters || source.meta?.acidLiters || 0) > 0 || parts.some(x => x.includes("חומצת")),
+      phUpSupply: Number(source.phUp || source.meta?.phUp || 0) > 0 || parts.some(x => x.includes("מעלה") || x.includes("סודה")),
+      saltPkg: parts.some(x => x.includes("מלח")),
+      saltBags: Number(source.saltBags || source.meta?.saltBags || saltPart?.match(/\d+/)?.[0] || 1),
+      label
+    };
+  };
+  const materialNamesFromSupply = (supply) => [
+    supply?.phUpSupply && "סודה אש",
+    supply?.acid && "חומצת מלח",
+    supply?.saltPkg && `מלח ×${Number(supply?.saltBags || 1)}`
+  ].filter(Boolean);
+  const materialApprovalReport = (approval) => {
+    const allReports = [...reports, ...sheetReports];
+    return allReports.find(r => String(r.id || "") === String(approval?.reportId || "")) ||
+      allReports.filter(r => normalizeName(r.client) === normalizeName(approval?.client))
+        .sort((a,b)=>normalizeDate(b.reportDate).localeCompare(normalizeDate(a.reportDate)))[0] ||
+      {};
+  };
+  const materialApprovalSupply = (approval) => {
+    const metaSupply = supplyFromReportLike(approval || {});
+    if (materialNamesFromSupply(metaSupply).length) return metaSupply;
+    return supplyFromReportLike(materialApprovalReport(approval));
+  };
+  const isMaterialApprovalAwaitingAdmin = (approval) => {
+    const status = String(approval?.status || "").toLowerCase();
+    const answer = String(approval?.answer || "");
+    return (status === "approved" || (answer.includes("מאשר") && !answer.includes("לא"))) &&
+      !["admin_added","added","rejected"].includes(status);
+  };
+  const persistSupplyDB = (db) => {
+    if (!sheetId) return;
+    const rows = Object.entries(db).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||""]);
+    void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply sync failed", e));
   };
 
   const sendNotificationToAdmins = async (title, message) => {
@@ -2819,17 +2861,19 @@ useEffect(() => {
     const loadTimer = setTimeout(()=>{ (async()=>{
       try {
         if(["daily","progress"].includes(adminTab)){
-          const [rep,tR,oR,lrR] = await Promise.all([
+          const [rep,tR,oR,lrR,maR] = await Promise.all([
             sheetCall("getReports").catch(()=>null),
             sheetCall("getTasks").catch(()=>null),
             sheetCall("getAdminOrders").catch(()=>null),
-            sheetCall("getLastReadings").catch(()=>null)
+            sheetCall("getLastReadings").catch(()=>null),
+            sheetCall("getMaterialApprovals").catch(()=>null)
           ]);
           if(cancelled) return;
           if(Array.isArray(rep?.reports)) setSheetReports(rep.reports);
           if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
           if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
           if(lrR?.lastReadings) setLastReadings(lrR.lastReadings);
+          if(Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
           return;
         }
         if(adminTab==="reports" || adminTab==="supply"){
@@ -2883,13 +2927,14 @@ useEffect(() => {
       let sh=Array.isArray(boot?.sharedSubOrders)?boot.sharedSubOrders:null;
       let ap=Array.isArray(boot?.subOperatorApprovals)?boot.subOperatorApprovals:null;
       let pr=Array.isArray(boot?.pendingSubReports)?boot.pendingSubReports:null;
+      let ma=Array.isArray(boot?.materialApprovals)?boot.materialApprovals:null;
       let wt=boot?.settings?.waMessageTemplate || boot?.waMessageTemplate || null;
       if(!u && !c && !t && !ord && !s && !lr){
-        const [uR,cR,tR,oR,sR,rR,ucR,shR,apR,prR,setR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals"),sheetCall("getPendingSubReports"),sheetCall("getClientSettings")]);
-        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt;
+        const [uR,cR,tR,oR,sR,rR,ucR,shR,apR,prR,maR,setR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals"),sheetCall("getPendingSubReports"),sheetCall("getMaterialApprovals"),sheetCall("getClientSettings")]);
+        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt;
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
-      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt));
+      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt));
       localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,waMessageTemplate:wt||waMessageTemplate,cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
@@ -2904,8 +2949,9 @@ useEffect(() => {
       if (screen === "daily" || screen === "admin") await loadOperatorIssues(true);
       if (screen === "admin" && adminTab === "treatments") await loadTreatmentCounts();
       if (screen === "admin" && ["daily","progress","reports"].includes(adminTab)) {
-        const rep = await sheetCall("getReports").catch(()=>null);
+        const [rep, maR] = await Promise.all([sheetCall("getReports").catch(()=>null), sheetCall("getMaterialApprovals").catch(()=>null)]);
         if (Array.isArray(rep?.reports)) setSheetReports(rep.reports);
+        if (Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
       }
       setSubOperatorRefresh(x=>x+1);
       setAction("refreshData", "success", 1400);
@@ -3186,7 +3232,8 @@ useEffect(() => {
     const name=r.client?.split(" - ")[0]||"לקוח יקר"; const company = getCompany().name || "POOLMANG";
     const statusLine=r.poolStatus==="אחר"?`⚠️ *נדרשת תשומת לב:*\n${r.customStatusText}${r.restrictedUntil?`\nהבריכה לא זמינה עד ${fmtDate(r.restrictedUntil)}`:""}` :"✅ הבריכה מאוזנת ומוכנה לשימוש מלא";
     const waterLevelNotice = r.waterLevel==="לא תקין" ? `\n\n⚠️ לתשומת ליבך - יש למלא מים עד לגובה הרצוי` : "";
-    const reportDetails = `${statusLine}${waterLevelNotice}${r.notes?`\n\n📝 ${r.notes}`:""}`.trim();
+    const supplyApprovalNotice = r.supplyLabel ? `\n\nלתשומת לבך יש צורך לספק חומרים לאיזון המים - נדרש אישור לאספקה` : "";
+    const reportDetails = `${statusLine}${waterLevelNotice}${supplyApprovalNotice}${r.notes?`\n\n📝 ${r.notes}`:""}`.trim();
     return renderWaMessageTemplate(waMessageTemplate, {
       clientName: name,
       operatorName: user?.name || "",
@@ -3233,6 +3280,20 @@ useEffect(() => {
     }).catch(()=>null);
 
     if (res?.idMessage || res?.response?.idMessage) {
+      if (report.supplyLabel) {
+        void sheetCall("sendGreenApiPoll", {
+          phone,
+          client: report.client,
+          reportId: report.id,
+          supplyLabel: report.supplyLabel || "",
+          phUp: report.phUp || 0,
+          acidLiters: report.acidLiters || 0,
+          saltBags: String(report.supplyLabel || "").match(/מלח\s*[×xX]\s*(\d+)/)?.[1] || 0,
+          message: "האם מאושר לספק חומרים לאיזון המים?",
+          options: ["מאשר אספקה", "לא מאשר"],
+          multipleAnswers: false
+        }).catch(e => console.warn("Green API poll failed", e));
+      }
       showToast("✅ הודעת WhatsApp נשלחה ללקוח");
       return true;
     }
@@ -3408,7 +3469,7 @@ useEffect(() => {
         newDB[client]={acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate:""};
       }
       setSupplyDB(newDB);
-      if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||""]);void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply background sync failed", e));}
+      if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||""]);void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply background sync failed", e));}
     }
     const reportOperatorName = dailyOwnerName(reportDate) || user?.name;
     if (!isSubOperatorRole(user?.role) || approvalEditId) {
@@ -4864,6 +4925,56 @@ const report = {
       showToast(`נטענו ${defaults.length} בריכות ברירת מחדל`);
       haptic("success");
     };
+    const pendingMaterialApprovalForOrder = adminTab === "daily" && activeAdminOperator ? materialApprovals.find(approval => {
+      if (!isMaterialApprovalAwaitingAdmin(approval)) return false;
+      const inThisOrder = adminOrderList.some(entry => normalizeName(entry.client) === normalizeName(approval.client));
+      if (!inThisOrder) return false;
+      return materialNamesFromSupply(materialApprovalSupply(approval)).length > 0;
+    }) : null;
+    const confirmMaterialApprovalForOrder = async (approval) => {
+      if (!approval) return;
+      const supply = materialApprovalSupply(approval);
+      const materials = materialNamesFromSupply(supply);
+      if (!materials.length) {
+        showToast("לא נמצאו חומרים לשיוך");
+        haptic("medium");
+        return;
+      }
+      const clientName = approval.client;
+      const prev = supplyDB[clientName] || {};
+      const newDB = {
+        ...supplyDB,
+        [clientName]: {
+          ...prev,
+          acid: !!(prev.acid || supply.acid),
+          phUpSupply: !!(prev.phUpSupply || supply.phUpSupply),
+          saltPkg: !!(prev.saltPkg || supply.saltPkg),
+          saltBags: supply.saltPkg ? Number(supply.saltBags || prev.saltBags || 1) : Number(prev.saltBags || 0),
+          supplyNote: prev.supplyNote || "",
+          updatedAt: todayStr(),
+          nextSupplyDate: taskDate,
+          assignedOperator: activeAdminOperator
+        }
+      };
+      setSupplyDB(newDB);
+      persistSupplyDB(newDB);
+      setMaterialApprovals(prevApprovals => prevApprovals.map(item =>
+        Number(item.rowIndex) === Number(approval.rowIndex) || String(item.pollMessageId || "") === String(approval.pollMessageId || "")
+          ? {...item, status:"admin_added", meta:{...(item.meta||{}), admin:{operator:activeAdminOperator, supplyDate:taskDate}}}
+          : item
+      ));
+      if (sheetId) {
+        void sheetCall("updateMaterialApproval", {
+          rowIndex: approval.rowIndex,
+          pollMessageId: approval.pollMessageId,
+          status: "admin_added",
+          operator: activeAdminOperator,
+          supplyDate: taskDate
+        }).catch(e=>console.warn("Material approval update failed", e));
+      }
+      showToast(`החומרים נוספו ל-${activeAdminOperator}`);
+      haptic("success");
+    };
     const taskClientOptions = sortByClientName(clients);
     const dayTasks = tasks.filter(t=>normalizeDate(t.date)===taskDate && !t.createdByAdminOrder && Number(t.orderIndex || 0) <= 0);
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
@@ -4912,7 +5023,7 @@ const report = {
       ].filter(Boolean);
       if (!materials.length) return rows;
       const clientObj = clients.find(c=>normalizeName(c.name)===normalizeName(clientName));
-      const operator = dailySupplyOperatorByClient.get(normalizeName(clientName)) || clientObj?.regularOperator || "ללא שיוך";
+      const operator = supply?.assignedOperator || dailySupplyOperatorByClient.get(normalizeName(clientName)) || clientObj?.regularOperator || "ללא שיוך";
       rows.push({operator, client:clientName, materials});
       return rows;
     }, []).sort((a,b)=>normalizeName(a.operator).localeCompare(normalizeName(b.operator)) || normalizeName(a.client).localeCompare(normalizeName(b.client)));
@@ -4966,6 +5077,29 @@ const report = {
                 </div>
                 <div style={{background:"#ffebee",borderRadius:12,padding:"10px 12px",fontSize:13,color:C.red,fontWeight:800,lineHeight:1.5,marginBottom:12}}>{desc}</div>
                 <Press onClick={()=>acknowledgeCriticalIssue(criticalAdminIssue, criticalAdminIssueIndex)} style={{padding:"14px",borderRadius:14,background:C.red,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 18px rgba(198,40,40,0.32)"}}>אשר טיפול מיידי</Press>
+              </div>
+            </div>
+          );
+        })()}
+        {pendingMaterialApprovalForOrder&&(()=>{
+          const supply = materialApprovalSupply(pendingMaterialApprovalForOrder);
+          const materials = materialNamesFromSupply(supply);
+          return (
+            <div style={{position:"fixed",inset:0,zIndex:1550,background:"rgba(15,23,42,0.72)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+              <div style={{width:"100%",maxWidth:420,background:"#fff",borderRadius:22,padding:18,boxShadow:"0 28px 90px rgba(0,0,0,0.42)",border:"3px solid #f59e0b"}}>
+                <div style={{fontSize:22,fontWeight:900,color:"#b45309",marginBottom:6}}>אישור חומרים מהלקוח</div>
+                <div style={{fontSize:13,fontWeight:900,color:C.text,marginBottom:12}}>יש לאשר לפני המשך יצירת סדר היום למפעיל זה</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                  <div style={{background:"#f8fafc",borderRadius:12,padding:10}}><div style={{fontSize:10,fontWeight:800,color:C.muted}}>לקוח</div><div style={{fontSize:13,fontWeight:900,color:C.text}}>{pendingMaterialApprovalForOrder.client?.split(" - ")[0]}</div></div>
+                  <div style={{background:"#f8fafc",borderRadius:12,padding:10}}><div style={{fontSize:10,fontWeight:800,color:C.muted}}>מפעיל יעד</div><div style={{fontSize:13,fontWeight:900,color:C.blue}}>{activeAdminOperator}</div></div>
+                </div>
+                <div style={{background:"#fff7ed",borderRadius:12,padding:"10px 12px",fontSize:13,color:"#9a3412",fontWeight:800,lineHeight:1.5,marginBottom:12}}>
+                  הלקוח אישר אספקה. החומרים יתווספו לרשימת האספקה של {fmtDate(taskDate)} רק למפעיל שמוצג כאן.
+                </div>
+                <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14}}>
+                  {materials.map(m=><span key={m} style={{background:"#fef3c7",color:"#92400e",borderRadius:99,padding:"5px 11px",fontSize:12,fontWeight:900}}>{m}</span>)}
+                </div>
+                <Press onClick={()=>confirmMaterialApprovalForOrder(pendingMaterialApprovalForOrder)} style={{padding:"14px",borderRadius:14,background:"linear-gradient(135deg,#f59e0b,#22c55e)",color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 18px rgba(245,158,11,0.28)"}}>אשר והוסף לחומרים להיום</Press>
               </div>
             </div>
           );

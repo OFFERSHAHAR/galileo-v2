@@ -33,6 +33,14 @@
         return json(sendGreenApiWhatsApp_(data));
       }
 
+      if (action === "sendGreenApiPoll") {
+        return json(sendGreenApiPoll_(data, ss));
+      }
+
+      if (!action && data.typeWebhook === "incomingMessageReceived") {
+        return json(handleGreenApiIncomingWebhook_(data, ss));
+      }
+
       if (action === "getGreenApiStatus") {
         return json(getGreenApiStatus_());
       }
@@ -208,6 +216,7 @@
         sharedSubOrders: getSubOperatorShares_(ss),
         subOperatorApprovals: getSubOperatorApprovals_(ss),
         pendingSubReports: getPendingSubReports_(ss),
+        materialApprovals: getMaterialApprovals_(ss),
         settings: getClientSettings_(ss),
         supplyDB: getSupplyDB_(ss),
         lastReadings: getLastReadings_(ss),
@@ -423,7 +432,7 @@
 
       if (action === "saveSupplyDB") {
         const sheet = ss.getSheetByName("ציוד_לקוחות");
-        ensureColumns(sheet, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate"]);
+        ensureColumns(sheet, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"]);
         const last = sheet.getLastRow();
         if (last > 3) sheet.deleteRows(4, last - 3);
         dedupeRowsByFirstCell_(data.rows || []).forEach(r => sheet.appendRow(r));
@@ -440,7 +449,8 @@
             saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 1,
             updatedAt: String(r[5]),
             supplyNote: String(r[6]||""),
-            nextSupplyDate: String(r[7]||"")
+            nextSupplyDate: String(r[7]||""),
+            assignedOperator: String(r[8]||"")
           };
         });
         return json({ supplyDB: db });
@@ -496,6 +506,14 @@
           suppliedEquipment: String(r[23]||""),
         }));
         return json({ reports });
+      }
+
+      if (action === "getMaterialApprovals") {
+        return json({ approvals: getMaterialApprovals_(ss) });
+      }
+
+      if (action === "updateMaterialApproval") {
+        return json(updateMaterialApproval_(ss, data));
       }
 
       if (action === "saveClients") {
@@ -631,9 +649,9 @@
     s = clientSS.getSheetByName("ציוד_לקוחות");
     if(!s) {
       s = clientSS.insertSheet("ציוד_לקוחות");
-      s.appendRow(["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים"]);
+      s.appendRow(["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"]);
     } else {
-      ensureColumns(s, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים"]);
+      ensureColumns(s, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"]);
     }
     
     // ── שעות_עבודה ──
@@ -676,6 +694,16 @@
       s.appendRow(["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"]);
     } else {
       ensureColumns(s, ["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"]);
+    }
+
+    s = clientSS.getSheetByName("MaterialApprovals");
+    if(!s) {
+      s = clientSS.insertSheet("MaterialApprovals");
+      s.appendRow(materialApprovalHeaders_());
+    } else if (s.getLastRow() === 0) {
+      s.appendRow(materialApprovalHeaders_());
+    } else {
+      ensureColumns(s, materialApprovalHeaders_());
     }
     
     Logger.log("✅ Client sheet setup complete: " + clientSS.getName());
@@ -1165,6 +1193,220 @@
       idMessage: idMessage,
       response: parsed
     };
+  }
+
+  function sendGreenApiPoll_(data, ss) {
+    const config = getGreenApiConfig_();
+
+    if (!config.idInstance || !config.apiTokenInstance) {
+      return {
+        success: false,
+        error: "missing_green_api_config",
+        message: "Set GREEN_API_ID_INSTANCE and GREEN_API_TOKEN_INSTANCE in Apps Script properties"
+      };
+    }
+
+    const phone = normalizeGreenApiPhone_(data.phone || data.to || data.clientPhone || "");
+    const message = String(data.message || "האם מאושר לספק חומרים לאיזון המים?").trim();
+    const options = Array.isArray(data.options) && data.options.length ? data.options : ["מאשר אספקה", "לא מאשר"];
+
+    if (!phone) return { success:false, error:"missing_phone" };
+    if (!message) return { success:false, error:"missing_message" };
+
+    const state = getGreenApiStatus_();
+    if (!state.success) {
+      return {
+        success: false,
+        ok: false,
+        error: "green_api_not_authorized",
+        status: state.status,
+        stateInstance: state.stateInstance || "",
+        response: state.response
+      };
+    }
+
+    const chatId = phone + "@c.us";
+    const url = config.apiUrl + "/waInstance" + config.idInstance + "/sendPoll/" + config.apiTokenInstance;
+    const payload = {
+      chatId: chatId,
+      message: message,
+      options: options.map(optionName => ({ optionName: String(optionName) })),
+      multipleAnswers: data.multipleAnswers === true
+    };
+
+    const res = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    const code = res.getResponseCode();
+    const text = res.getContentText();
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+
+    const idMessage = parsed.idMessage || "";
+    const success = code >= 200 && code < 300 && !parsed.error && !!idMessage;
+    if (success && ss) {
+      const sheet = getMaterialApprovalsSheet_(ss);
+      sheet.appendRow([
+        Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss"),
+        data.client || "",
+        phone,
+        data.reportId || "",
+        idMessage,
+        "pending",
+        "",
+        "",
+        "",
+        JSON.stringify({
+          chatId: chatId,
+          message: message,
+          options: options,
+          supplyLabel: data.supplyLabel || "",
+          phUp: data.phUp || 0,
+          acidLiters: data.acidLiters || 0,
+          saltBags: data.saltBags || 0
+        })
+      ]);
+    }
+
+    return {
+      success: success,
+      ok: success,
+      status: code,
+      chatId: chatId,
+      idMessage: idMessage,
+      response: parsed
+    };
+  }
+
+  function materialApprovalHeaders_() {
+    return ["timestamp","client","phone","reportId","pollMessageId","status","answer","answeredAt","sender","raw"];
+  }
+
+  function getMaterialApprovalsSheet_(ss) {
+    let sheet = ss.getSheetByName("MaterialApprovals");
+    if (!sheet) {
+      sheet = ss.insertSheet("MaterialApprovals");
+      sheet.appendRow(materialApprovalHeaders_());
+    } else if (sheet.getLastRow() === 0) {
+      sheet.appendRow(materialApprovalHeaders_());
+    } else {
+      ensureColumns(sheet, materialApprovalHeaders_());
+    }
+    return sheet;
+  }
+
+  function getMaterialApprovals_(ss) {
+    const sheet = getMaterialApprovalsSheet_(ss);
+    const values = sheet.getDataRange().getValues();
+    if (values.length < 2) return [];
+    const headers = values[0].map(String);
+    return values.slice(1).map((row, idx) => {
+      const item = { rowIndex: idx + 2 };
+      headers.forEach((h, i) => item[h] = row[i]);
+      try {
+        item.meta = item.raw ? JSON.parse(String(item.raw)) : {};
+      } catch(e) {
+        item.meta = {};
+      }
+      return item;
+    }).filter(item => item.pollMessageId || item.reportId || item.client);
+  }
+
+  function updateMaterialApproval_(ss, data) {
+    const sheet = getMaterialApprovalsSheet_(ss);
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0].map(String);
+    const statusCol = headers.indexOf("status");
+    const rawCol = headers.indexOf("raw");
+    let row = Number(data.rowIndex || 0);
+    if (!row && data.pollMessageId) {
+      const pollCol = headers.indexOf("pollMessageId");
+      const found = values.findIndex((r, idx) => idx > 0 && String(r[pollCol] || "") === String(data.pollMessageId));
+      if (found > 0) row = found + 1;
+    }
+    if (row < 2 || row > sheet.getLastRow()) return { success:false, error:"approval_not_found" };
+    if (statusCol >= 0) sheet.getRange(row, statusCol + 1).setValue(data.status || "admin_added");
+    if (rawCol >= 0) {
+      let raw = {};
+      try { raw = JSON.parse(String(sheet.getRange(row, rawCol + 1).getValue() || "{}")); } catch(e) {}
+      raw.admin = {
+        status: data.status || "admin_added",
+        operator: data.operator || "",
+        supplyDate: data.supplyDate || "",
+        updatedAt: Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss")
+      };
+      sheet.getRange(row, rawCol + 1).setValue(JSON.stringify(raw));
+    }
+    return { success:true };
+  }
+
+  function handleGreenApiIncomingWebhook_(data, ss) {
+    const messageData = data.messageData || {};
+    if (messageData.typeMessage !== "pollUpdateMessage") {
+      return { success:true, ignored:true, typeMessage:messageData.typeMessage || "" };
+    }
+
+    const poll = messageData.pollMessageData || {};
+    const pollMessageId = String(poll.stanzaId || "");
+    const votes = Array.isArray(poll.votes) ? poll.votes : [];
+    const selected = votes.filter(v => Array.isArray(v.optionVoters) && v.optionVoters.length > 0);
+    const answer = selected.map(v => String(v.optionName || "")).filter(Boolean).join(", ");
+    if (!pollMessageId || !answer) {
+      return { success:true, ignored:true, reason:"missing_poll_or_answer" };
+    }
+
+    const sheet = getMaterialApprovalsSheet_(ss);
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0].map(String);
+    const pollCol = headers.indexOf("pollMessageId");
+    const statusCol = headers.indexOf("status");
+    const answerCol = headers.indexOf("answer");
+    const answeredAtCol = headers.indexOf("answeredAt");
+    const senderCol = headers.indexOf("sender");
+    const rawCol = headers.indexOf("raw");
+    const rowIndex = values.findIndex((row, idx) => idx > 0 && String(row[pollCol] || "") === pollMessageId);
+    if (rowIndex < 1) {
+      sheet.appendRow([
+        Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss"),
+        "",
+        String((data.senderData || {}).chatId || ""),
+        "",
+        pollMessageId,
+        answer.indexOf("לא") >= 0 ? "rejected" : "approved",
+        answer,
+        Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss"),
+        String((data.senderData || {}).sender || ""),
+        JSON.stringify(data)
+      ]);
+      return { success:true, saved:true, matched:false, answer:answer };
+    }
+
+    const row = rowIndex + 1;
+    const status = answer.indexOf("לא") >= 0 ? "rejected" : "approved";
+    if (statusCol >= 0) sheet.getRange(row, statusCol + 1).setValue(status);
+    if (answerCol >= 0) sheet.getRange(row, answerCol + 1).setValue(answer);
+    if (answeredAtCol >= 0) sheet.getRange(row, answeredAtCol + 1).setValue(Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss"));
+    if (senderCol >= 0) sheet.getRange(row, senderCol + 1).setValue(String((data.senderData || {}).sender || ""));
+    if (rawCol >= 0) sheet.getRange(row, rawCol + 1).setValue(JSON.stringify(data));
+
+    try {
+      sendAppNotificationToAdmins_(ss, {
+        title: status === "approved" ? "לקוח אישר אספקת חומרים" : "לקוח לא אישר אספקת חומרים",
+        message: `${values[rowIndex][1] || "לקוח"} · ${answer}`
+      });
+    } catch(e) {
+      Logger.log("Material approval admin notification failed: " + e);
+    }
+
+    return { success:true, saved:true, matched:true, answer:answer, status:status };
   }
 
   function normalizeGreenApiPhone_(phone) {
@@ -2496,7 +2738,8 @@ function getSupplyDB_(ss) {
       saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 1,
       updatedAt: String(r[5]),
       supplyNote: String(r[6]||""),
-      nextSupplyDate: String(r[7]||"")
+      nextSupplyDate: String(r[7]||""),
+      assignedOperator: String(r[8]||"")
     };
   });
   return db;
@@ -2714,7 +2957,7 @@ function json(obj) {
       "דוחות": ["תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק"],
       "משימות": ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"],
       "חלוקת_עבודה": ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"],
-      "ציוד_לקוחות": ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים"],
+      "ציוד_לקוחות": ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"],
       "שעות_עבודה": ["id","מפעיל","תאריך","התחלה","סיום","סה\"כ"],
       "שעון_פעיל": ["username","operator","date","start","noonNotified"],
       "תקלות_מפעילים": ["id","מפעיל","לקוח","תיאור","דחיפות","סטטוס","תגובת_אדמין","תאריך"],
@@ -2724,7 +2967,8 @@ function json(obj) {
       "SubOperatorApprovals": ["date","operator","subUsername","subOperator","approved","approvedAt","approvedBy"],
       "PendingSubReports": ["id","status","createdAt","operator","subUsername","subName","payload"],
       "ClientSettings": ["key","value"],
-      "UsageEvents": ["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"]
+      "UsageEvents": ["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"],
+      "MaterialApprovals": ["timestamp","client","phone","reportId","pollMessageId","status","answer","answeredAt","sender","raw"]
     };
     const expectedNames = Object.keys(expected);
     const report = {
