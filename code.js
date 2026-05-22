@@ -37,6 +37,10 @@
         return json(sendGreenApiPoll_(data, ss));
       }
 
+      if (action === "ensureGreenApiPollWebhooks") {
+        return json(ensureGreenApiPollWebhooks_(data));
+      }
+
       if (!action && data.typeWebhook === "incomingMessageReceived") {
         return json(handleGreenApiIncomingWebhook_(data, ss));
       }
@@ -1225,6 +1229,8 @@
       };
     }
 
+    const webhookSetup = ensureGreenApiPollWebhooks_(data);
+
     const chatId = phone + "@c.us";
     const url = config.apiUrl + "/waInstance" + config.idInstance + "/sendPoll/" + config.apiTokenInstance;
     const payload = {
@@ -1282,6 +1288,82 @@
       status: code,
       chatId: chatId,
       idMessage: idMessage,
+      webhookSetup: webhookSetup,
+      response: parsed
+    };
+  }
+
+  function getGreenApiWebhookUrl_(data) {
+    const props = PropertiesService.getScriptProperties();
+    const explicit = String(
+      (data && data.webhookUrl) ||
+      props.getProperty("GREEN_API_WEBHOOK_URL") ||
+      props.getProperty("WEBHOOK_URL") ||
+      ""
+    ).trim();
+    if (explicit) return explicit;
+
+    try {
+      return ScriptApp.getService().getUrl();
+    } catch(e) {
+      return "";
+    }
+  }
+
+  function ensureGreenApiPollWebhooks_(data) {
+    const config = getGreenApiConfig_();
+    if (!config.idInstance || !config.apiTokenInstance) {
+      return { success:false, skipped:true, error:"missing_green_api_config" };
+    }
+
+    const webhookUrl = getGreenApiWebhookUrl_(data || {});
+    if (!webhookUrl) return { success:false, skipped:true, error:"missing_webhook_url" };
+
+    const props = PropertiesService.getScriptProperties();
+    const cacheKey = "GREEN_API_POLL_WEBHOOKS_CONFIGURED";
+    const cache = String(props.getProperty(cacheKey) || "");
+    const now = Date.now();
+    const parts = cache.split("|");
+    const cachedUrl = parts[0] || "";
+    const cachedAt = Number(parts[1] || 0);
+    if (cachedUrl === webhookUrl && now - cachedAt < 24 * 60 * 60 * 1000) {
+      return { success:true, skipped:true, cached:true, webhookUrl:webhookUrl };
+    }
+
+    const url = config.apiUrl + "/waInstance" + config.idInstance + "/setSettings/" + config.apiTokenInstance;
+    const payload = {
+      webhookUrl: webhookUrl,
+      incomingWebhook: "yes",
+      pollMessageWebhook: "yes"
+    };
+
+    const res = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    const code = res.getResponseCode();
+    const text = res.getContentText();
+    let parsed = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      parsed = { raw:text };
+    }
+
+    const success = code >= 200 && code < 300 && parsed.saveSettings !== false && !parsed.error;
+    if (success) props.setProperty(cacheKey, webhookUrl + "|" + now);
+
+    Logger.log("Green API webhook setup URL: " + webhookUrl);
+    Logger.log("Green API webhook setup status: " + code);
+    Logger.log("Green API webhook setup response: " + text);
+
+    return {
+      success: success,
+      status: code,
+      webhookUrl: webhookUrl,
       response: parsed
     };
   }
