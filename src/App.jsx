@@ -1719,9 +1719,12 @@ useEffect(() => {
       setChemicalRestrictionPrompt({key});
     }
   };
-  const clientPhone = (n) => (clients.find(c=>c.name===n)||{}).phone||"";
-  const clientAddress = (n) => (clients.find(c=>c.name===n)||{}).address||"";
-  const clientGateCode = (n) => (clients.find(c=>c.name===n)||{}).gateCode||"";
+  const clientLookupKey = (value) => String(value || "").split(" - ")[0].trim().toLowerCase();
+  const findClientByName = (name) => clients.find(c=>String(c.name||"")===String(name||"")) ||
+    clients.find(c=>clientLookupKey(c.name)===clientLookupKey(name));
+  const clientPhone = (n) => (findClientByName(n)||{}).phone||"";
+  const clientAddress = (n) => (findClientByName(n)||{}).address||"";
+  const clientGateCode = (n) => (findClientByName(n)||{}).gateCode||"";
   const normalizeDate = (d) => String(d||"").trim().slice(0,10);
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
   const findPushUser = (value) => {
@@ -3281,18 +3284,20 @@ useEffect(() => {
 
     if (res?.idMessage || res?.response?.idMessage) {
       if (report.supplyLabel) {
-        void sheetCall("sendGreenApiPoll", {
-          phone,
-          client: report.client,
-          reportId: report.id,
-          supplyLabel: report.supplyLabel || "",
-          phUp: report.phUp || 0,
-          acidLiters: report.acidLiters || 0,
-          saltBags: String(report.supplyLabel || "").match(/מלח\s*[×xX]\s*(\d+)/)?.[1] || 0,
-          message: "האם מאושר לספק חומרים לאיזון המים?",
-          options: ["מאשר אספקה", "לא מאשר"],
-          multipleAnswers: false
-        }).catch(e => console.warn("Green API poll failed", e));
+        setTimeout(() => {
+          void sheetCall("sendGreenApiPoll", {
+            phone,
+            client: report.client,
+            reportId: report.id,
+            supplyLabel: report.supplyLabel || "",
+            phUp: report.phUp || 0,
+            acidLiters: report.acidLiters || 0,
+            saltBags: String(report.supplyLabel || "").match(/מלח\s*[×xX]\s*(\d+)/)?.[1] || 0,
+            message: "האם מאושר לספק חומרים לאיזון המים?",
+            options: ["מאשר אספקה", "לא מאשר"],
+            multipleAnswers: false
+          }).catch(e => console.warn("Green API poll failed", e));
+        }, 2500);
       }
       showToast("✅ הודעת WhatsApp נשלחה ללקוח");
       return true;
