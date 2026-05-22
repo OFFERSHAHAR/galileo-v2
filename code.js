@@ -520,6 +520,10 @@
         return json(updateMaterialApproval_(ss, data));
       }
 
+      if (action === "syncDailyMaterialApprovals") {
+        return json(syncDailyMaterialApprovals_(ss, data.date));
+      }
+
       if (action === "saveClients") {
         const sheet = ss.getSheetByName("לקוחות");
         return json(saveClients_(sheet, data.clients || []));
@@ -757,7 +761,7 @@
   function setupTriggers() {
     // מחק triggers ישנים
     ScriptApp.getProjectTriggers().forEach(t => {
-      if(t.getHandlerFunction() === "checkNotifications") {
+      if(["checkNotifications","syncDailyMaterialApprovals"].includes(t.getHandlerFunction())) {
         ScriptApp.deleteTrigger(t);
       }
     });
@@ -768,7 +772,14 @@
       .everyMinutes(5)
       .create();
 
-    Logger.log("✅ Trigger נוצר — checkNotifications כל 5 דקות");
+    ScriptApp.newTrigger("syncDailyMaterialApprovals")
+      .timeBased()
+      .everyDays(1)
+      .atHour(5)
+      .nearMinute(0)
+      .create();
+
+    Logger.log("✅ Triggers נוצרו — checkNotifications כל 5 דקות, syncDailyMaterialApprovals כל יום ב-05:00");
   }
 
   function checkNotifications() {
@@ -1428,6 +1439,144 @@
       sheet.getRange(row, rawCol + 1).setValue(JSON.stringify(raw));
     }
     return { success:true };
+  }
+
+  function normalizeApprovalText_(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function isApprovedMaterialApproval_(approval) {
+    const status = normalizeApprovalText_(approval.status);
+    const answer = normalizeApprovalText_(approval.answer);
+    return (status === "approved" || (answer.indexOf("מאשר") >= 0 && answer.indexOf("לא") < 0)) &&
+      ["admin_added","auto_added","added","rejected"].indexOf(status) < 0;
+  }
+
+  function materialSupplyFromApproval_(approval) {
+    const meta = approval.meta || {};
+    const label = String(meta.supplyLabel || "").trim();
+    const parts = label.split(",").map(x => x.trim()).filter(Boolean);
+    const saltPart = parts.find(x => x.indexOf("מלח") >= 0) || "";
+    return {
+      acid: Number(meta.acidLiters || 0) > 0 || parts.some(x => x.indexOf("חומצת") >= 0),
+      phUpSupply: Number(meta.phUp || 0) > 0 || parts.some(x => x.indexOf("מעלה") >= 0 || x.indexOf("סודה") >= 0),
+      saltPkg: parts.some(x => x.indexOf("מלח") >= 0),
+      saltBags: Number(meta.saltBags || (saltPart.match(/\d+/) || [0])[0] || 1)
+    };
+  }
+
+  function hasMaterialSupply_(supply) {
+    return !!(supply && (supply.acid || supply.phUpSupply || supply.saltPkg));
+  }
+
+  function writeSupplyDB_(ss, db) {
+    let sheet = ss.getSheetByName("ציוד_לקוחות");
+    if (!sheet) sheet = ss.insertSheet("ציוד_לקוחות");
+    const headers = ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"];
+    if (sheet.getLastRow() === 0) sheet.appendRow(headers);
+    ensureColumns(sheet, headers);
+    while (sheet.getLastRow() < 3) sheet.appendRow([""]);
+    const last = sheet.getLastRow();
+    if (last > 3) sheet.deleteRows(4, last - 3);
+    Object.keys(db || {}).forEach(client => {
+      const v = db[client] || {};
+      sheet.appendRow([
+        client,
+        v.acid ? "כן" : "לא",
+        v.phUpSupply ? "כן" : "לא",
+        v.saltPkg ? "כן" : "לא",
+        v.saltBags || 0,
+        v.updatedAt || "",
+        v.supplyNote || "",
+        v.nextSupplyDate || "",
+        v.assignedOperator || ""
+      ]);
+    });
+  }
+
+  function markMaterialApprovalSynced_(ss, approval, status, operator, date) {
+    const sheet = getMaterialApprovalsSheet_(ss);
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0].map(String);
+    const statusCol = headers.indexOf("status");
+    const rawCol = headers.indexOf("raw");
+    let row = Number(approval.rowIndex || 0);
+    if (!row && approval.pollMessageId) {
+      const pollCol = headers.indexOf("pollMessageId");
+      const found = values.findIndex((r, idx) => idx > 0 && String(r[pollCol] || "") === String(approval.pollMessageId));
+      if (found > 0) row = found + 1;
+    }
+    if (row < 2 || row > sheet.getLastRow()) return false;
+    if (statusCol >= 0) sheet.getRange(row, statusCol + 1).setValue(status);
+    if (rawCol >= 0) {
+      let raw = {};
+      try { raw = JSON.parse(String(sheet.getRange(row, rawCol + 1).getValue() || "{}")); } catch(e) {}
+      raw.autoSync = {
+        status: status,
+        operator: operator || "",
+        supplyDate: date || "",
+        updatedAt: Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss")
+      };
+      sheet.getRange(row, rawCol + 1).setValue(JSON.stringify(raw));
+    }
+    return true;
+  }
+
+  function syncDailyMaterialApprovals_(ss, date) {
+    const targetDate = String(date || Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd")).slice(0, 10);
+    const orders = getAdminOrders_(ss).filter(o => String(o.date || "").slice(0, 10) === targetDate && o.client && o.operator);
+    const orderByClient = {};
+    orders.sort((a,b) => Number(a.orderIndex || 9999) - Number(b.orderIndex || 9999)).forEach(o => {
+      const key = normalizeReportValue_(o.client);
+      if (!orderByClient[key]) orderByClient[key] = o;
+    });
+
+    const approvals = getMaterialApprovals_(ss).filter(isApprovedMaterialApproval_);
+    const db = getSupplyDB_(ss);
+    const synced = [];
+    const waitingForOrder = [];
+
+    approvals.forEach(approval => {
+      const order = orderByClient[normalizeReportValue_(approval.client)];
+      const supply = materialSupplyFromApproval_(approval);
+      if (!hasMaterialSupply_(supply)) return;
+      if (!order) {
+        waitingForOrder.push(approval.client);
+        return;
+      }
+
+      const client = order.client || approval.client;
+      const prev = db[client] || {};
+      db[client] = {
+        ...prev,
+        acid: !!(prev.acid || supply.acid),
+        phUpSupply: !!(prev.phUpSupply || supply.phUpSupply),
+        saltPkg: !!(prev.saltPkg || supply.saltPkg),
+        saltBags: supply.saltPkg ? Number(supply.saltBags || prev.saltBags || 1) : Number(prev.saltBags || 0),
+        supplyNote: prev.supplyNote || "",
+        updatedAt: targetDate,
+        nextSupplyDate: targetDate,
+        assignedOperator: order.operator
+      };
+      markMaterialApprovalSynced_(ss, approval, "auto_added", order.operator, targetDate);
+      synced.push({ client:client, operator:order.operator });
+    });
+
+    if (synced.length) writeSupplyDB_(ss, db);
+    Logger.log("Daily material approvals sync: " + JSON.stringify({date:targetDate, synced:synced.length, waitingForOrder:waitingForOrder.length}));
+    return {
+      success: true,
+      date: targetDate,
+      synced: synced,
+      waitingForOrder: waitingForOrder
+    };
+  }
+
+  function syncDailyMaterialApprovals() {
+    const ss = getNotificationSyncSpreadsheet_();
+    const res = syncDailyMaterialApprovals_(ss);
+    Logger.log(JSON.stringify(res));
+    return res;
   }
 
   function handleGreenApiIncomingWebhook_(data, ss) {
