@@ -535,10 +535,41 @@ const DAILY_EQUIPMENT_CHECKLIST = [
   }
 ];
 
-function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[],onStartWork,onConfirm,onClose}) {
+function normalizeEquipmentChecklist(value) {
+  const list = Array.isArray(value) ? value : DAILY_EQUIPMENT_CHECKLIST;
+  const groups = list.map(group => ({
+    group: String(group?.group || "ציוד").trim() || "ציוד",
+    items: Array.isArray(group?.items) ? group.items.map(item => String(item || "").trim()).filter(Boolean) : []
+  })).filter(group => group.items.length);
+  return groups.length ? groups : DAILY_EQUIPMENT_CHECKLIST;
+}
+
+function equipmentChecklistStorageKey(userRef) {
+  return `galileo_equipment_checklist:${String(userRef || "default").trim() || "default"}`;
+}
+
+function loadEquipmentChecklist(userRef) {
+  try {
+    return normalizeEquipmentChecklist(JSON.parse(localStorage.getItem(equipmentChecklistStorageKey(userRef)) || "null"));
+  } catch {
+    return DAILY_EQUIPMENT_CHECKLIST;
+  }
+}
+
+function checklistToText(list) {
+  return normalizeEquipmentChecklist(list).flatMap(group => group.items).join("\n");
+}
+
+function checklistFromText(text) {
+  const items = String(text || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  return items.length ? [{group:"ציוד אישי", items}] : DAILY_EQUIPMENT_CHECKLIST;
+}
+
+function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[],equipmentChecklist=DAILY_EQUIPMENT_CHECKLIST,onStartWork,onConfirm,onClose}) {
   const list = Array.isArray(tasks) ? tasks : [];
   const materialList = Array.isArray(supplyTasks) ? supplyTasks : [];
   const linkedSubs = Array.isArray(subOperators) ? subOperators.filter(Boolean) : [];
+  const checklist = normalizeEquipmentChecklist(equipmentChecklist);
   const [openMaterial,setOpenMaterial] = useState(null);
   const [equipmentChecked,setEquipmentChecked] = useState({});
   const toggleEquipment = (group, item) => {
@@ -604,9 +635,9 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
               <div style={{fontSize:12,fontWeight:900,color:C.text}}>צ׳ק ליסט ציוד יומי</div>
               <div style={{fontSize:10,fontWeight:800,color:C.muted,marginTop:2}}>מתאפס בכל פתיחה של פותחים יום</div>
             </div>
-            <Badge label={`${Object.values(equipmentChecked).filter(Boolean).length}/${DAILY_EQUIPMENT_CHECKLIST.reduce((n,g)=>n+g.items.length,0)}`} col={C.blue}/>
+            <Badge label={`${Object.values(equipmentChecked).filter(Boolean).length}/${checklist.reduce((n,g)=>n+g.items.length,0)}`} col={C.blue}/>
           </div>
-          {DAILY_EQUIPMENT_CHECKLIST.map(group=>(
+          {checklist.map(group=>(
             <div key={group.group} style={{marginTop:10}}>
               <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>{group.group}</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
@@ -1407,6 +1438,9 @@ export default function App() {
   const [user,setUser] = useState(()=>getStoredUserForToday());
   const [welcomeMedia,setWelcomeMedia] = useState(null);
   const [showDailyBriefing,setShowDailyBriefing] = useState(false);
+  const [showEquipmentChecklistEditor,setShowEquipmentChecklistEditor] = useState(false);
+  const [equipmentChecklist,setEquipmentChecklist] = useState(()=>loadEquipmentChecklist(getStoredUserForToday()?.username || getStoredUserForToday()?.name || "default"));
+  const [equipmentChecklistDraft,setEquipmentChecklistDraft] = useState(()=>checklistToText(loadEquipmentChecklist(getStoredUserForToday()?.username || getStoredUserForToday()?.name || "default")));
   const [greeting, setGreeting] = useState(()=>{
     try {
       const savedUser = JSON.parse(localStorage.getItem("galileo_user")||"null");
@@ -2510,19 +2544,19 @@ useEffect(() => {
   const getSharedSubOrderEntries = (date, opName, subUsername) => {
     const fromSheet = sharedSubOrders
       .filter(x=>sharedSubMatch(x, date, opName, subUsername) && x?.client)
-      .map((x, i)=>({id:x.id, client:x.client, note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || []}))
+      .map((x, i)=>({id:x.id, client:x.client, note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || [], completedAt:x.completedAt || "", completedBy:x.completedBy || "", reportId:x.reportId || ""}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
     if (fromSheet.length) return fromSheet;
     return readLocalArray(sharedSubOrderKey(date, opName, subUsername))
       .filter(x=>x?.client)
-      .map((x, i)=>({id:x.id, client:x.client, note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || []}))
+      .map((x, i)=>({id:x.id, client:x.client, note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || [], completedAt:x.completedAt || "", completedBy:x.completedBy || "", reportId:x.reportId || ""}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
   };
   const entriesToDailyTasks = (date, opName, entries, idPrefix="order") => (entries || [])
     .filter(entry=>entry?.client)
     .map((entry, i) => {
       const orderIndex = Number(entry.orderIndex || i + 1);
-      return {id:entry.id || `${idPrefix}-${date}-${entry.client}`, client:entry.client, operators:[opName], date, status:entry.status || "pending", changeLog:entry.changeLog || [], orderIndex, adminNote:entry.note || entry.adminNote || "", createdByAdminOrder:true, _adminOrder:true};
+      return {id:entry.id || `${idPrefix}-${date}-${entry.client}`, client:entry.client, operators:[opName], date, status:entry.status || "pending", changeLog:entry.changeLog || [], orderIndex, adminNote:entry.note || entry.adminNote || "", completedAt:entry.completedAt || "", completedBy:entry.completedBy || "", reportId:entry.reportId || "", createdByAdminOrder:true, _adminOrder:true};
     })
     .sort((a,b)=>Number(a.orderIndex||999)-Number(b.orderIndex||999));
   const moveAdminOrderItem = (from, to) => {
@@ -2585,6 +2619,30 @@ useEffect(() => {
   const handleLogout = () => { trackUsageEvent("logout", {screen}); localStorage.removeItem("galileo_user"); localStorage.removeItem(LOGIN_DAY_KEY); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
 
   const showToast = (msg) => { clearTimeout(toastTimer.current); setToast({msg,visible:true}); toastTimer.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2500); };
+
+  const currentEquipmentChecklistUser = user?.username || user?.name || "default";
+  const saveEquipmentChecklist = () => {
+    const next = checklistFromText(equipmentChecklistDraft);
+    setEquipmentChecklist(next);
+    localStorage.setItem(equipmentChecklistStorageKey(currentEquipmentChecklistUser), JSON.stringify(next));
+    setShowEquipmentChecklistEditor(false);
+    showToast("רשימת הצ׳ק ליסט נשמרה");
+    haptic("success");
+  };
+  const resetEquipmentChecklist = () => {
+    setEquipmentChecklist(DAILY_EQUIPMENT_CHECKLIST);
+    setEquipmentChecklistDraft(checklistToText(DAILY_EQUIPMENT_CHECKLIST));
+    localStorage.removeItem(equipmentChecklistStorageKey(currentEquipmentChecklistUser));
+    showToast("רשימת ברירת המחדל שוחזרה");
+    haptic("medium");
+  };
+
+  useEffect(() => {
+    const loaded = loadEquipmentChecklist(currentEquipmentChecklistUser);
+    setEquipmentChecklist(loaded);
+    setEquipmentChecklistDraft(checklistToText(loaded));
+    setShowEquipmentChecklistEditor(false);
+  }, [currentEquipmentChecklistUser]);
 
   useEffect(() => {
     const standaloneQuery = window.matchMedia?.("(display-mode: standalone)");
@@ -3727,8 +3785,11 @@ const report = {
         client:t.client,
         note:t.adminNote || t.note || "",
         orderIndex:Number(t.orderIndex || i + 1),
-        status:t.status || (isClientReportedDone(dailyDate, t.client) ? "done" : "pending"),
-        changeLog:t.changeLog || []
+        status:t.status === "done" || isClientReportedDone(dailyDate, t.client) ? "done" : "pending",
+        changeLog:t.changeLog || [],
+        completedAt:t.completedAt || "",
+        completedBy:t.completedBy || "",
+        reportId:t.reportId || ""
       }));
       const subKeys = new Set(subs.map(su => normalizeName(su.username || su.name)).filter(Boolean));
       const shareRows = subs.flatMap(su => sharedEntries.map((entry, i)=>({
@@ -3741,6 +3802,10 @@ const report = {
         id: entry.id || "",
         status: entry.status || "pending",
         changeLog: entry.changeLog || [],
+        completedAt: entry.completedAt || "",
+        completedBy: entry.completedBy || "",
+        reportId: entry.reportId || "",
+        revoked: false,
         orderIndex: Number(entry.orderIndex || i + 1),
         sharedAt: nowStr(),
         sharedBy: user?.name || ""
@@ -3754,7 +3819,7 @@ const report = {
         ...shareRows
       ];
       try {
-        const res = await sheetCall("saveSubOperatorShares", {sharedSubOrders: nextShared});
+        const res = await sheetCall("saveSubOperatorShares", {sharedSubOrders: shareRows});
         if (!res?.success) throw new Error(res?.error || "saveSubOperatorShares failed");
         setSharedSubOrders(nextShared);
       } catch (e) {
@@ -3819,7 +3884,7 @@ const report = {
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
-        {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
+        {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
         {workClockEditor&&(
           <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.48)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
@@ -4085,6 +4150,26 @@ const report = {
               <Press onClick={()=>setDismissed(true)} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
             </div>
           )}
+          <div style={{...card({marginBottom:12})}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:900,color:C.text}}>צ׳ק ליסט ציוד אישי</div>
+                <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:2}}>{normalizeEquipmentChecklist(equipmentChecklist).reduce((n,g)=>n+g.items.length,0)} פריטים שיופיעו בפתיחת יום</div>
+              </div>
+              <Press onClick={()=>setShowEquipmentChecklistEditor(v=>!v)} style={{padding:"7px 11px",borderRadius:10,background:showEquipmentChecklistEditor?"#fff8e1":"#e3f2fd",color:showEquipmentChecklistEditor?C.orange:C.blue,fontSize:12,fontWeight:900,border:`1px solid ${showEquipmentChecklistEditor?"#ffe082":C.lightBlue}`}}>
+                {showEquipmentChecklistEditor?"סגור":"ערוך"}
+              </Press>
+            </div>
+            {showEquipmentChecklistEditor&&(
+              <div style={{marginTop:10}}>
+                <textarea value={equipmentChecklistDraft} onChange={e=>setEquipmentChecklistDraft(e.target.value)} rows={7} placeholder={"פריט אחד בכל שורה\nערכת בדיקה\nרשת עלים\nכפפות"} style={{...inp,minHeight:130,resize:"vertical",lineHeight:1.5,fontSize:13}}/>
+                <div style={{display:"flex",gap:8,marginTop:8}}>
+                  <Press onClick={saveEquipmentChecklist} style={{flex:1,padding:"10px 12px",borderRadius:12,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:13,fontWeight:900,textAlign:"center"}}>שמור רשימה</Press>
+                  <Press onClick={resetEquipmentChecklist} style={{padding:"10px 12px",borderRadius:12,background:"#f0f4f8",color:C.muted,fontSize:13,fontWeight:900,border:`1px solid ${C.border}`}}>ברירת מחדל</Press>
+                </div>
+              </div>
+            )}
+          </div>
           {!isSubOperator&&<Press onClick={openManualReport} disabled={isActionLoading("openManualReport")} style={{...card({marginBottom:16,display:"flex",alignItems:"center",gap:12,border:`2px dashed ${C.lightBlue}`,background:isActionLoading("openManualReport")?"#e3f2fd":"#f5f9ff",opacity:isActionLoading("openManualReport")?0.75:1}),padding:"14px 18px"}}>
             <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📝</div>
             <div><div style={{fontWeight:800,fontSize:15,color:C.blue}}>{isActionLoading("openManualReport")?"⏳ פותח דוח...":"+ פתח דוח חדש"}</div><div style={{fontSize:12,color:C.muted}}>דוח ידני — לקוח מכל הרשימה</div></div>
@@ -4901,8 +4986,8 @@ const report = {
             <div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(148px,1fr))",gap:12,marginBottom:14}}>
                 {adminDashboardBubbles.map((b,i)=>(
-                  <Press key={b.tab} onClick={()=>goAdminBubble(b.tab)} style={{position:"relative",minHeight:148,borderRadius:"50%",padding:18,background:`linear-gradient(145deg,rgba(255,255,255,0.94),${b.tone}18)`,border:`1px solid ${b.tone}30`,boxShadow:`0 22px 48px ${b.tone}18, 0 1px 0 rgba(255,255,255,0.90) inset`,display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",textAlign:"center",overflow:"hidden",transform:i%2?"translateY(10px)":"none"}}>
-                    <div style={{position:"absolute",inset:10,borderRadius:"50%",border:`1px solid ${b.tone}18`,pointerEvents:"none"}}/>
+                  <Press key={b.tab} onClick={()=>goAdminBubble(b.tab)} style={{position:"relative",minHeight:148,aspectRatio:"1 / 1",borderRadius:18,padding:16,background:`linear-gradient(145deg,rgba(255,255,255,0.94),${b.tone}18)`,border:`1px solid ${b.tone}30`,boxShadow:`0 18px 38px ${b.tone}16, 0 1px 0 rgba(255,255,255,0.90) inset`,display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",textAlign:"center",overflow:"hidden"}}>
+                    <div style={{position:"absolute",inset:9,borderRadius:14,border:`1px solid ${b.tone}18`,pointerEvents:"none"}}/>
                     <div style={{width:42,height:42,borderRadius:"50%",background:`${b.tone}16`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,marginBottom:8}}>{b.icon}</div>
                     <div style={{fontSize:24,fontWeight:900,color:b.tone,lineHeight:1}}>{b.value}</div>
                     <div style={{fontSize:13,fontWeight:900,color:C.text,marginTop:7}}>{b.title}</div>

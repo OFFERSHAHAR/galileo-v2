@@ -344,6 +344,7 @@
         const duplicateRow = findDuplicateReportRow_(sheet, r);
         if (duplicateRow) {
           Logger.log("Duplicate report skipped: row " + duplicateRow);
+          markSubOperatorShareDone_(ss, r);
           return json({ success: true, duplicate: true, row: duplicateRow });
         }
 
@@ -352,6 +353,7 @@
           r.elDate, r.elNext, r.supplyLabel, r.poolStatus, r.customStatusText,
           r.restrictedUntil, r.notes, r.chlora||0, r.hth||0, r.phUp||0, r.acidLiters||0, r.suppliedEquipment||""]);
         refreshMonthlyTreatmentCounters_(ss);
+        markSubOperatorShareDone_(ss, r);
 
         // Send email with photos if adminEmail provided
         if (data.adminEmail && data.adminEmail.includes("@")) {
@@ -415,6 +417,7 @@
         if (!row) return json({ success:false, error:"report row not found" });
         sheet.getRange(row, 1, 1, 24).setValues([reportRowValues_(r)]);
         refreshMonthlyTreatmentCounters_(ss);
+        markSubOperatorShareDone_(ss, r);
         return json({ success:true, row });
       }
 
@@ -645,6 +648,16 @@
     if(!s) {
       s = clientSS.insertSheet("תקלות_מפעילים");
       s.appendRow(["id","מפעיל","לקוח","תיאור","דחיפות","סטטוס","תגובת_אדמין","תאריך"]);
+    }
+
+    s = clientSS.getSheetByName("SubOperatorShares");
+    if(!s) {
+      s = clientSS.insertSheet("SubOperatorShares");
+      s.appendRow(subOperatorShareHeaders_());
+    } else if (s.getLastRow() === 0) {
+      s.appendRow(subOperatorShareHeaders_());
+    } else {
+      ensureColumns(s, subOperatorShareHeaders_());
     }
 
     s = clientSS.getSheetByName("ClientSettings");
@@ -2226,25 +2239,31 @@ function getSubOperatorShares_(ss) {
   const sheet = ss.getSheetByName("SubOperatorShares");
   if (!sheet) return [];
   const rows = sheet.getDataRange().getValues();
-  return rows.slice(1).filter(r => r[0] && r[1] && r[4]).map(r => {
-    let date = r[0];
+  const headers = rows[0] || [];
+  const idx = subOperatorShareHeaderMap_(headers);
+  return rows.slice(1).filter(r => r[idx.date] && r[idx.operator] && r[idx.client]).map(r => {
+    let date = r[idx.date];
     if (date instanceof Date) date = Utilities.formatDate(date, "Asia/Jerusalem", "yyyy-MM-dd");
     else date = String(date || "").slice(0, 10);
     return {
       date,
-      operator: String(r[1] || ""),
-      subUsername: String(r[2] || ""),
-      subOperator: String(r[3] || ""),
-      client: String(r[4] || ""),
-      orderIndex: Number(r[5] || 0),
-      note: String(r[6] || ""),
-      sharedAt: String(r[7] || ""),
-      sharedBy: String(r[8] || ""),
-      id: String(r[9] || ""),
-      status: String(r[10] || ""),
-      changeLog: parseJsonArray_(r[11])
+      operator: String(r[idx.operator] || ""),
+      subUsername: String(r[idx.subUsername] || ""),
+      subOperator: String(r[idx.subOperator] || ""),
+      client: String(r[idx.client] || ""),
+      orderIndex: Number(r[idx.orderIndex] || 0),
+      note: String(r[idx.note] || ""),
+      sharedAt: String(r[idx.sharedAt] || ""),
+      sharedBy: String(r[idx.sharedBy] || ""),
+      id: String(r[idx.id] || ""),
+      status: String(r[idx.status] || ""),
+      changeLog: parseJsonArray_(r[idx.changeLog]),
+      completedAt: String(r[idx.completedAt] || ""),
+      completedBy: String(r[idx.completedBy] || ""),
+      reportId: String(r[idx.reportId] || ""),
+      revoked: String(r[idx.revoked] || "").toLowerCase() === "true"
     };
-  });
+  }).filter(r => !r.revoked);
 }
 
 function parseJsonArray_(value) {
@@ -2259,9 +2278,36 @@ function parseJsonArray_(value) {
 function saveSubOperatorShares_(ss, sharedSubOrders) {
   let sheet = ss.getSheetByName("SubOperatorShares");
   if (!sheet) sheet = ss.insertSheet("SubOperatorShares");
-  const headers = ["date","operator","subUsername","subOperator","client","orderIndex","note","sharedAt","sharedBy","id","status","changeLog"];
+  const headers = subOperatorShareHeaders_();
+  ensureColumns(sheet, headers);
+  const existingValues = sheet.getDataRange().getValues();
+  const existingHeaders = existingValues[0] || headers;
+  const existingIdx = subOperatorShareHeaderMap_(existingHeaders);
+  const incoming = (sharedSubOrders || []).filter(r => r && r.date && r.operator && r.client);
+  const scopeKeys = {};
+  incoming.forEach(r => {
+    scopeKeys[subOperatorScopeKey_(r.date, r.operator, r.subUsername || r.subOperator)] = true;
+  });
   const seen = {};
-  const rows = (sharedSubOrders || []).filter(r => r && r.date && r.operator && r.client).map(r => {
+  const existingRows = existingValues.slice(1).filter(r => r[existingIdx.date] && r[existingIdx.operator] && r[existingIdx.client]).map(r => ({
+    date: r[existingIdx.date],
+    operator: r[existingIdx.operator],
+    subUsername: r[existingIdx.subUsername],
+    subOperator: r[existingIdx.subOperator],
+    client: r[existingIdx.client],
+    orderIndex: r[existingIdx.orderIndex],
+    note: r[existingIdx.note],
+    sharedAt: r[existingIdx.sharedAt],
+    sharedBy: r[existingIdx.sharedBy],
+    id: r[existingIdx.id],
+    status: r[existingIdx.status],
+    changeLog: parseJsonArray_(r[existingIdx.changeLog]),
+    completedAt: r[existingIdx.completedAt],
+    completedBy: r[existingIdx.completedBy],
+    reportId: r[existingIdx.reportId],
+    revoked: r[existingIdx.revoked]
+  })).filter(r => !scopeKeys[subOperatorScopeKey_(r.date, r.operator, r.subUsername || r.subOperator)]);
+  const rows = [...existingRows, ...incoming].filter(r => r && r.date && r.operator && r.client).map(r => {
     const key = [
       String(r.date || "").slice(0, 10),
       normalizeReportValue_(r.operator),
@@ -2282,12 +2328,62 @@ function saveSubOperatorShares_(ss, sharedSubOrders) {
       r.sharedBy || "",
       r.id || "",
       r.status || "",
-      JSON.stringify(r.changeLog || [])
+      JSON.stringify(r.changeLog || []),
+      r.completedAt || "",
+      r.completedBy || "",
+      r.reportId || "",
+      r.revoked === true ? true : false
     ];
   }).filter(Boolean);
   sheet.clearContents();
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+}
+
+function subOperatorShareHeaders_() {
+  return ["date","operator","subUsername","subOperator","client","orderIndex","note","sharedAt","sharedBy","id","status","changeLog","completedAt","completedBy","reportId","revoked"];
+}
+
+function subOperatorShareHeaderMap_(headers) {
+  const names = subOperatorShareHeaders_();
+  const map = {};
+  names.forEach((name, fallback) => {
+    const idx = headers.indexOf(name);
+    map[name] = idx >= 0 ? idx : fallback;
+  });
+  return map;
+}
+
+function subOperatorScopeKey_(date, operator, subUsername) {
+  return [
+    String(date || "").slice(0, 10),
+    normalizeReportValue_(operator),
+    normalizeReportValue_(subUsername)
+  ].join("|");
+}
+
+function markSubOperatorShareDone_(ss, report) {
+  const sheet = ss.getSheetByName("SubOperatorShares");
+  if (!sheet || !report) return;
+  const headers = subOperatorShareHeaders_();
+  ensureColumns(sheet, headers);
+  const rows = sheet.getDataRange().getValues();
+  const idx = subOperatorShareHeaderMap_(rows[0] || headers);
+  const reportDate = String(report.reportDate || "").slice(0, 10);
+  const reportOperator = normalizeReportValue_(report.operator);
+  const reportClient = normalizeReportValue_(report.client);
+  if (!reportDate || !reportOperator || !reportClient) return;
+  const completedAt = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss");
+  for (let i = 1; i < rows.length; i++) {
+    const sameDate = String(rows[i][idx.date] || "").slice(0, 10) === reportDate;
+    const sameOperator = normalizeReportValue_(rows[i][idx.operator]) === reportOperator;
+    const sameClient = normalizeReportValue_(rows[i][idx.client]) === reportClient;
+    if (!sameDate || !sameOperator || !sameClient) continue;
+    sheet.getRange(i + 1, idx.status + 1).setValue("done");
+    sheet.getRange(i + 1, idx.completedAt + 1).setValue(rows[i][idx.completedAt] || completedAt);
+    sheet.getRange(i + 1, idx.completedBy + 1).setValue(report.completedBy || report.subName || report.operator || "");
+    sheet.getRange(i + 1, idx.reportId + 1).setValue(report.id || "");
+  }
 }
 
 function getSubOperatorApprovals_(ss) {
@@ -2608,6 +2704,75 @@ function json(obj) {
       message: "Test notification for internal admin only"
     });
     Logger.log(JSON.stringify(res));
+  }
+
+  function auditClientSheetStructureFull(sheetId) {
+    const ss = SpreadsheetApp.openById(sheetId || "1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no");
+    const expected = {
+      "Users": ["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"],
+      "לקוחות": ["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"],
+      "דוחות": ["תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק"],
+      "משימות": ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"],
+      "חלוקת_עבודה": ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"],
+      "ציוד_לקוחות": ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים"],
+      "שעות_עבודה": ["id","מפעיל","תאריך","התחלה","סיום","סה\"כ"],
+      "שעון_פעיל": ["username","operator","date","start","noonNotified"],
+      "תקלות_מפעילים": ["id","מפעיל","לקוח","תיאור","דחיפות","סטטוס","תגובת_אדמין","תאריך"],
+      "לקוחות_חופשיים": ["שם_לקוח","טלפון","כתובת","סוג_בריכה","קוד_שער"],
+      "לקוחות_ללא_שיוך": ["שם_לקוח","טלפון","כתובת","קוד_שער","סוג_בריכה"],
+      "SubOperatorShares": ["date","operator","subUsername","subOperator","client","orderIndex","note","sharedAt","sharedBy","id","status","changeLog","completedAt","completedBy","reportId","revoked"],
+      "SubOperatorApprovals": ["date","operator","subUsername","subOperator","approved","approvedAt","approvedBy"],
+      "PendingSubReports": ["id","status","createdAt","operator","subUsername","subName","payload"],
+      "ClientSettings": ["key","value"],
+      "UsageEvents": ["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"]
+    };
+    const expectedNames = Object.keys(expected);
+    const report = {
+      spreadsheet: ss.getName(),
+      checkedAt: Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss"),
+      ok: true,
+      sheets: {},
+      extraTabs: ss.getSheets().map(s => s.getName()).filter(name => !expected[name])
+    };
+
+    expectedNames.forEach(name => {
+      const sheet = ss.getSheetByName(name);
+      const needed = expected[name];
+      if (!sheet) {
+        report.ok = false;
+        report.sheets[name] = { exists:false, missing:needed, extra:[], orderMismatch:false, columns:[] };
+        return;
+      }
+      let headerRowIndex = 0;
+      try {
+        const found = findHeaderRowIndex_(sheet, needed);
+        headerRowIndex = found >= 0 ? found : 0;
+      } catch(e) {
+        headerRowIndex = 0;
+      }
+      const lastCol = Math.max(sheet.getLastColumn(), 1);
+      const columns = sheet.getRange(headerRowIndex + 1, 1, 1, lastCol).getValues()[0].map(h => String(h || "").trim()).filter(Boolean);
+      const missing = needed.filter(h => !columns.includes(h));
+      const extra = columns.filter(h => !needed.includes(h));
+      const orderMismatch = missing.length === 0 && needed.some((h, i) => columns[i] !== h);
+      const exact = missing.length === 0 && extra.length === 0 && !orderMismatch;
+      if (!exact) report.ok = false;
+      report.sheets[name] = {
+        exists:true,
+        headerRow: headerRowIndex + 1,
+        expectedCount: needed.length,
+        actualCount: columns.length,
+        missing,
+        extra,
+        orderMismatch,
+        exact,
+        columns
+      };
+    });
+
+    if (report.extraTabs.length) report.ok = false;
+    Logger.log(JSON.stringify(report, null, 2));
+    return report;
   }
 
   const DESIGN_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
