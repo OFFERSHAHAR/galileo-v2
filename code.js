@@ -1240,7 +1240,7 @@
       };
     }
 
-    const webhookSetup = ensureGreenApiPollWebhooks_(data);
+    const webhookSetup = data.ensureWebhook === true ? ensureGreenApiPollWebhooks_(data) : { success:true, skipped:true };
 
     const chatId = phone + "@c.us";
     const url = config.apiUrl + "/waInstance" + config.idInstance + "/sendPoll/" + config.apiTokenInstance;
@@ -1269,7 +1269,7 @@
 
     const idMessage = parsed.idMessage || "";
     const success = code >= 200 && code < 300 && !parsed.error && !!idMessage;
-    if (success && ss) {
+    if (ss) {
       const sheet = getMaterialApprovalsSheet_(ss);
       sheet.appendRow([
         Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss"),
@@ -1277,7 +1277,7 @@
         phone,
         data.reportId || "",
         idMessage,
-        "pending",
+        success ? "pending" : "send_failed",
         "",
         "",
         "",
@@ -1288,7 +1288,10 @@
           supplyLabel: data.supplyLabel || "",
           phUp: data.phUp || 0,
           acidLiters: data.acidLiters || 0,
-          saltBags: data.saltBags || 0
+          saltBags: data.saltBags || 0,
+          status: code,
+          response: parsed,
+          webhookSetup: webhookSetup
         })
       ]);
     }
