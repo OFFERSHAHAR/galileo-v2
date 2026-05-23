@@ -436,15 +436,20 @@
 
       if (action === "saveSupplyDB") {
         const sheet = ss.getSheetByName("ציוד_לקוחות");
-        ensureColumns(sheet, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"]);
+        ensureColumns(sheet, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"]);
         const last = sheet.getLastRow();
         if (last > 3) sheet.deleteRows(4, last - 3);
-        dedupeRowsByFirstCell_(data.rows || []).forEach(r => sheet.appendRow(r));
+        dedupeRowsByFirstCell_(data.rows || []).forEach(r => {
+          const row = Array.isArray(r) ? r.slice() : [];
+          row[9] = row[9] || defaultNextSupplyPricesText_();
+          sheet.appendRow(row);
+        });
         return json({ success: true });
       }
 
       if (action === "getSupplyDB") {
         const sheet = ss.getSheetByName("ציוד_לקוחות");
+        ensureNextSupplyPriceColumn_(sheet);
         const rows = sheet.getDataRange().getValues();
         const db = {};
         rows.slice(3).filter(r => r[0]).forEach(r => {
@@ -454,7 +459,8 @@
             updatedAt: String(r[5]),
             supplyNote: String(r[6]||""),
             nextSupplyDate: String(r[7]||""),
-            assignedOperator: String(r[8]||"")
+            assignedOperator: String(r[8]||""),
+            materialPrices: parseNextSupplyPrices_(r[9])
           };
         });
         return json({ supplyDB: db });
@@ -657,9 +663,9 @@
     s = clientSS.getSheetByName("ציוד_לקוחות");
     if(!s) {
       s = clientSS.insertSheet("ציוד_לקוחות");
-      s.appendRow(["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"]);
+      s.appendRow(["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"]);
     } else {
-      ensureColumns(s, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"]);
+      ensureColumns(s, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"]);
     }
     
     // ── שעות_עבודה ──
@@ -1224,6 +1230,8 @@
     const phone = normalizeGreenApiPhone_(data.phone || data.to || data.clientPhone || "");
     const message = String(data.message || "האם מאושר לספק חומרים לאיזון המים?").trim();
     const options = Array.isArray(data.options) && data.options.length ? data.options : ["מאשר אספקה", "לא מאשר"];
+    const materialPrices = parseNextSupplyPrices_(data.materialPrices);
+    const priceSummary = nextSupplyPriceSummary_(data.supplyLabel || "", materialPrices);
 
     if (!phone) return { success:false, error:"missing_phone" };
     if (!message) return { success:false, error:"missing_message" };
@@ -1289,6 +1297,8 @@
           phUp: data.phUp || 0,
           acidLiters: data.acidLiters || 0,
           saltBags: data.saltBags || 0,
+          materialPrices: materialPrices,
+          priceSummary: priceSummary,
           status: code,
           response: parsed,
           webhookSetup: webhookSetup
@@ -1472,10 +1482,64 @@
     return !!(supply && (supply.acid || supply.phUpSupply || supply.saltPkg));
   }
 
+  function parseNextSupplyPrices_(value) {
+    const defaults = {"חומצת מלח":100,"סודה אש":120};
+    if (value && typeof value === "object") {
+      Object.keys(value).forEach(function(key) {
+        const n = Number(value[key]);
+        if (!isNaN(n) && n >= 0) defaults[key] = n;
+      });
+      return defaults;
+    }
+    const text = String(value || "").trim();
+    if (!text) return defaults;
+    try {
+      return parseNextSupplyPrices_(JSON.parse(text));
+    } catch(e) {}
+    text.split(/[;\n,]+/).map(function(x){ return x.trim(); }).filter(Boolean).forEach(function(part) {
+      const m = part.match(/^(.+?)\s*[:=\-]\s*(\d+(?:\.\d+)?)/);
+      if (m) defaults[m[1].trim()] = Number(m[2]) || 0;
+    });
+    return defaults;
+  }
+
+  function nextSupplyPriceSummary_(supplyLabel, prices) {
+    const label = String(supplyLabel || "");
+    const map = parseNextSupplyPrices_(prices);
+    const rows = [];
+    if (label.indexOf("חומצת") >= 0) rows.push("חומצת מלח - " + (map["חומצת מלח"] || 0) + " שח");
+    if (label.indexOf("מעלה") >= 0 || label.indexOf("סודה") >= 0) rows.push("סודה אש - " + (map["סודה אש"] || 0) + " שח");
+    return rows.join("\n");
+  }
+
+  function defaultNextSupplyPricesText_() {
+    return JSON.stringify(parseNextSupplyPrices_({}));
+  }
+
+  function ensureNextSupplyPriceColumn_(sheet) {
+    if (!sheet) return;
+    ensureColumns(sheet, ["מחיר_פר_חומר_לטיפול_הבא"]);
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+    const idx = headers.indexOf("מחיר_פר_חומר_לטיפול_הבא") + 1;
+    if (!idx) return;
+    const last = sheet.getLastRow();
+    if (last < 4) return;
+    const range = sheet.getRange(4, idx, last - 3, 1);
+    const values = range.getValues();
+    let changed = false;
+    const fallback = defaultNextSupplyPricesText_();
+    const next = values.map(function(row) {
+      if (String(row[0] || "").trim()) return row;
+      changed = true;
+      return [fallback];
+    });
+    if (changed) range.setValues(next);
+  }
+
   function writeSupplyDB_(ss, db) {
     let sheet = ss.getSheetByName("ציוד_לקוחות");
     if (!sheet) sheet = ss.insertSheet("ציוד_לקוחות");
-    const headers = ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"];
+    const headers = ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"];
     if (sheet.getLastRow() === 0) sheet.appendRow(headers);
     ensureColumns(sheet, headers);
     while (sheet.getLastRow() < 3) sheet.appendRow([""]);
@@ -1492,7 +1556,8 @@
         v.updatedAt || "",
         v.supplyNote || "",
         v.nextSupplyDate || "",
-        v.assignedOperator || ""
+        v.assignedOperator || "",
+        JSON.stringify(parseNextSupplyPrices_(v.materialPrices))
       ]);
     });
   }
@@ -3069,7 +3134,8 @@ function getSupplyDB_(ss) {
       updatedAt: String(r[5]),
       supplyNote: String(r[6]||""),
       nextSupplyDate: String(r[7]||""),
-      assignedOperator: String(r[8]||"")
+      assignedOperator: String(r[8]||""),
+      materialPrices: parseNextSupplyPrices_(r[9])
     };
   });
   return db;
@@ -3287,7 +3353,7 @@ function json(obj) {
       "דוחות": ["תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק"],
       "משימות": ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"],
       "חלוקת_עבודה": ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"],
-      "ציוד_לקוחות": ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator"],
+      "ציוד_לקוחות": ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"],
       "שעות_עבודה": ["id","מפעיל","תאריך","התחלה","סיום","סה\"כ"],
       "שעון_פעיל": ["username","operator","date","start","noonNotified"],
       "תקלות_מפעילים": ["id","מפעיל","לקוח","תיאור","דחיפות","סטטוס","תגובת_אדמין","תאריך"],
@@ -3347,6 +3413,24 @@ function json(obj) {
     if (report.extraTabs.length) report.ok = false;
     Logger.log(JSON.stringify(report, null, 2));
     return report;
+  }
+
+  function ensureNextSupplyPricesColumn(sheetId) {
+    const ss = SpreadsheetApp.openById(sheetId || "1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no");
+    let sheet = ss.getSheetByName("ציוד_לקוחות");
+    if (!sheet) {
+      sheet = ss.insertSheet("ציוד_לקוחות");
+      sheet.appendRow(["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"]);
+    }
+    ensureNextSupplyPriceColumn_(sheet);
+    const res = {
+      success: true,
+      sheet: sheet.getName(),
+      column: "מחיר_פר_חומר_לטיפול_הבא",
+      defaultPrices: parseNextSupplyPrices_({})
+    };
+    Logger.log(JSON.stringify(res));
+    return res;
   }
 
   const DESIGN_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";

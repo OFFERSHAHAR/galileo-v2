@@ -28,6 +28,31 @@ const normalizeWaPollOptions = (value) => {
   const options = Array.isArray(source) ? source.map(v => String(v || "").trim()).filter(Boolean) : [];
   return [options[0] || DEFAULT_WA_POLL_OPTIONS[0], options[1] || DEFAULT_WA_POLL_OPTIONS[1]];
 };
+const DEFAULT_NEXT_SUPPLY_PRICES = {"חומצת מלח":100,"סודה אש":120};
+const NEXT_SUPPLY_PRICE_COLUMN = "מחיר_פר_חומר_לטיפול_הבא";
+const normalizeNextSupplyPrices = (value) => {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return {...DEFAULT_NEXT_SUPPLY_PRICES, ...Object.fromEntries(Object.entries(value).map(([k,v])=>[k, Number(v) || 0]))};
+  }
+  const text = String(value || "").trim();
+  if (!text) return {...DEFAULT_NEXT_SUPPLY_PRICES};
+  try { return normalizeNextSupplyPrices(JSON.parse(text)); } catch {}
+  const prices = {...DEFAULT_NEXT_SUPPLY_PRICES};
+  text.split(/[;\n,]+/).map(x=>x.trim()).filter(Boolean).forEach(part => {
+    const m = part.match(/^(.+?)\s*[:=\-]\s*(\d+(?:\.\d+)?)/);
+    if (m) prices[m[1].trim()] = Number(m[2]) || 0;
+  });
+  return prices;
+};
+const serializeNextSupplyPrices = (value) => JSON.stringify(normalizeNextSupplyPrices(value));
+const nextSupplyPriceSummary = (supplyLabel, prices) => {
+  const label = String(supplyLabel || "");
+  const map = normalizeNextSupplyPrices(prices);
+  const rows = [];
+  if (label.includes("חומצת")) rows.push(`חומצת מלח - ${map["חומצת מלח"] || 0} שח`);
+  if (label.includes("מעלה") || label.includes("סודה")) rows.push(`סודה אש - ${map["סודה אש"] || 0} שח`);
+  return rows.join("\n");
+};
 const renderWaMessageTemplate = (template, values) => {
   const source = normalizeWaMessageTemplate(template);
   let text = Object.entries(values).reduce(
@@ -2108,7 +2133,7 @@ useEffect(() => {
   };
   const persistSupplyDB = (db) => {
     if (!sheetId) return;
-    const rows = Object.entries(db).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||""]);
+    const rows = Object.entries(db).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices)]);
     void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply sync failed", e));
   };
 
@@ -3340,7 +3365,8 @@ useEffect(() => {
             phUp: report.phUp || 0,
             acidLiters: report.acidLiters || 0,
             saltBags: String(report.supplyLabel || "").match(/מלח\s*[×xX]\s*(\d+)/)?.[1] || 0,
-            message: normalizeWaPollMessage(waPollMessage),
+            materialPrices: normalizeNextSupplyPrices(supplyDB[report.client]?.materialPrices),
+            message: [normalizeWaPollMessage(waPollMessage), nextSupplyPriceSummary(report.supplyLabel, supplyDB[report.client]?.materialPrices)].filter(Boolean).join("\n\n"),
             options: normalizeWaPollOptions(waPollOptions),
             multipleAnswers: false,
             ensureWebhook: true
@@ -3516,13 +3542,15 @@ useEffect(() => {
       const nextPhUpSupply = phUpSupply && !suppliedPhUp;
       const nextSaltPkg = saltPkg;
       const nextSupplyDate = nextTreatmentDateForClient(client, reportDate);
+      const prevSupply = newDB[client] || {};
+      const materialPrices = normalizeNextSupplyPrices(prevSupply.materialPrices);
       if (nextAcid || nextPhUpSupply || nextSaltPkg) {
-        newDB[client]={acid:nextAcid,phUpSupply:nextPhUpSupply,saltPkg:nextSaltPkg,saltBags:nextSaltPkg?saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate};
+        newDB[client]={acid:nextAcid,phUpSupply:nextPhUpSupply,saltPkg:nextSaltPkg,saltBags:nextSaltPkg?saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate,assignedOperator:prevSupply.assignedOperator||"",materialPrices};
       } else if (suppliedEquipment.length) {
-        newDB[client]={acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate:""};
+        newDB[client]={acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate:"",assignedOperator:prevSupply.assignedOperator||"",materialPrices};
       }
       setSupplyDB(newDB);
-      if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||""]);void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply background sync failed", e));}
+      if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices)]);void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply background sync failed", e));}
     }
     const reportOperatorName = dailyOwnerName(reportDate) || user?.name;
     if (!isSubOperatorRole(user?.role) || approvalEditId) {
