@@ -3295,7 +3295,8 @@ useEffect(() => {
             saltBags: String(report.supplyLabel || "").match(/מלח\s*[×xX]\s*(\d+)/)?.[1] || 0,
             message: "האם מאושר לספק חומרים לאיזון המים?",
             options: ["מאשר אספקה", "לא מאשר"],
-            multipleAnswers: false
+            multipleAnswers: false,
+            ensureWebhook: true
           }).catch(e => console.warn("Green API poll failed", e));
         }, 2500);
       }

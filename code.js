@@ -1582,6 +1582,51 @@
     return res;
   }
 
+  function testMaterialApprovalWebhookDryRun() {
+    const ss = getNotificationSyncSpreadsheet_();
+    const sheet = getMaterialApprovalsSheet_(ss);
+    const values = sheet.getDataRange().getValues();
+    const headers = values[0].map(String);
+    const pollCol = headers.indexOf("pollMessageId");
+    const statusCol = headers.indexOf("status");
+    const rowIndex = values.findIndex((row, idx) =>
+      idx > 0 &&
+      String(row[pollCol] || "").trim() &&
+      String(row[statusCol] || "").trim() === "pending"
+    );
+
+    if (rowIndex < 1) {
+      Logger.log("No pending material approval poll found for dry run");
+      return { success:false, error:"no_pending_poll" };
+    }
+
+    const pollMessageId = String(values[rowIndex][pollCol] || "").trim();
+    const fakeWebhook = {
+      typeWebhook: "incomingMessageReceived",
+      senderData: {
+        chatId: "972500000000@c.us",
+        sender: "972500000000@c.us",
+        senderName: "System dry run"
+      },
+      messageData: {
+        typeMessage: "pollUpdateMessage",
+        pollMessageData: {
+          stanzaId: pollMessageId,
+          name: "האם מאושר לספק חומרים לאיזון המים?",
+          votes: [
+            { optionName: "מאשר אספקה", optionVoters: ["972500000000@c.us"] },
+            { optionName: "לא מאשר", optionVoters: [] }
+          ],
+          multipleAnswers: false
+        }
+      }
+    };
+
+    const result = handleGreenApiIncomingWebhook_(fakeWebhook, ss);
+    Logger.log(JSON.stringify(result));
+    return result;
+  }
+
   function handleGreenApiIncomingWebhook_(data, ss) {
     const messageData = data.messageData || {};
     if (messageData.typeMessage !== "pollUpdateMessage") {
@@ -1608,6 +1653,10 @@
     const rawCol = headers.indexOf("raw");
     const rowIndex = values.findIndex((row, idx) => idx > 0 && String(row[pollCol] || "") === pollMessageId);
     if (rowIndex < 1) {
+      Logger.log("Ignored unknown Green API poll update: " + pollMessageId + " / " + answer);
+      return { success:true, ignored:true, matched:false, reason:"unknown_poll", pollMessageId:pollMessageId };
+    }
+    if (rowIndex < 1) {
       sheet.appendRow([
         Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss"),
         "",
@@ -1624,8 +1673,21 @@
     }
 
     const row = rowIndex + 1;
+    let storedRaw = {};
+    try {
+      storedRaw = rawCol >= 0 ? JSON.parse(String(values[rowIndex][rawCol] || "{}")) : {};
+    } catch(e) {
+      storedRaw = {};
+    }
+    const allowedOptions = Array.isArray(storedRaw.options) ? storedRaw.options.map(String) : [];
+    if (allowedOptions.length && allowedOptions.indexOf(answer) < 0) {
+      Logger.log("Ignored unexpected Green API poll answer: " + pollMessageId + " / " + answer);
+      return { success:true, ignored:true, matched:true, reason:"unexpected_answer", pollMessageId:pollMessageId, answer:answer };
+    }
+    const answerIndex = allowedOptions.indexOf(answer);
+    const pollStatus = answerIndex > 0 ? "rejected" : "";
     const status = answer.indexOf("לא") >= 0 ? "rejected" : "approved";
-    if (statusCol >= 0) sheet.getRange(row, statusCol + 1).setValue(status);
+    if (statusCol >= 0) sheet.getRange(row, statusCol + 1).setValue(pollStatus || status);
     if (answerCol >= 0) sheet.getRange(row, answerCol + 1).setValue(answer);
     if (answeredAtCol >= 0) sheet.getRange(row, answeredAtCol + 1).setValue(Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss"));
     if (senderCol >= 0) sheet.getRange(row, senderCol + 1).setValue(String((data.senderData || {}).sender || ""));
