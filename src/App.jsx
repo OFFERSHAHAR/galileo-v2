@@ -3,6 +3,7 @@ import { Fragment, useState, useRef, useEffect } from "react";
 const DEMO_USERS = [];
 const DEMO_CLIENTS = [];
 const WA_TEMPLATE_STORAGE_KEY = "galileo_whatsapp_template";
+const WA_SUPPLY_NOTICE_STORAGE_KEY = "galileo_whatsapp_supply_notice";
 const DEFAULT_WA_MESSAGE_TEMPLATE = `*טיפול בריכה הושלם!*
 
 שלום {clientName},
@@ -15,6 +16,8 @@ const DEFAULT_WA_MESSAGE_TEMPLATE = `*טיפול בריכה הושלם!*
 _צוות {company}_`;
 
 const normalizeWaMessageTemplate = (value) => String(value || "").trim() || DEFAULT_WA_MESSAGE_TEMPLATE;
+const DEFAULT_WA_SUPPLY_NOTICE = "לתשומת לבך יש צורך לספק חומרים לאיזון המים - נדרש אישור לאספקה";
+const normalizeWaSupplyNotice = (value) => String(value || "").trim() || DEFAULT_WA_SUPPLY_NOTICE;
 const renderWaMessageTemplate = (template, values) => {
   const source = normalizeWaMessageTemplate(template);
   let text = Object.entries(values).reduce(
@@ -1460,6 +1463,12 @@ export default function App() {
   const [waTemplateDraft,setWaTemplateDraft] = useState(() => {
     try { return normalizeWaMessageTemplate(localStorage.getItem(WA_TEMPLATE_STORAGE_KEY)); } catch { return DEFAULT_WA_MESSAGE_TEMPLATE; }
   });
+  const [waSupplyNotice,setWaSupplyNotice] = useState(() => {
+    try { return normalizeWaSupplyNotice(localStorage.getItem(WA_SUPPLY_NOTICE_STORAGE_KEY)); } catch { return DEFAULT_WA_SUPPLY_NOTICE; }
+  });
+  const [waSupplyNoticeDraft,setWaSupplyNoticeDraft] = useState(() => {
+    try { return normalizeWaSupplyNotice(localStorage.getItem(WA_SUPPLY_NOTICE_STORAGE_KEY)); } catch { return DEFAULT_WA_SUPPLY_NOTICE; }
+  });
   const [clientPlan,setClientPlan] = useState({plan:"",status:""});
   const [allUsers,setAllUsers] = useState(DEMO_USERS);
   const [clients,setClients] = useState(DEMO_CLIENTS);
@@ -1528,6 +1537,11 @@ useEffect(() => {
   setWaTemplateDraft(waMessageTemplate);
   try { localStorage.setItem(WA_TEMPLATE_STORAGE_KEY, waMessageTemplate); } catch {}
 }, [waMessageTemplate]);
+
+useEffect(() => {
+  setWaSupplyNoticeDraft(waSupplyNotice);
+  try { localStorage.setItem(WA_SUPPLY_NOTICE_STORAGE_KEY, waSupplyNotice); } catch {}
+}, [waSupplyNotice]);
 
 
 
@@ -2201,6 +2215,7 @@ useEffect(() => {
       if(Array.isArray(prR?.pendingSubReports)) setPendingSubReports(prR.pendingSubReports);
       if(lrR?.lastReadings) setLastReadings(lrR.lastReadings);
       if(setR?.settings?.waMessageTemplate) setWaMessageTemplate(normalizeWaMessageTemplate(setR.settings.waMessageTemplate));
+      if(setR?.settings?.waSupplyNotice) setWaSupplyNotice(normalizeWaSupplyNotice(setR.settings.waSupplyNotice));
       if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
       try {
         const cached = localStorage.getItem("galileo_cache");
@@ -2932,12 +2947,13 @@ useEffect(() => {
       let pr=Array.isArray(boot?.pendingSubReports)?boot.pendingSubReports:null;
       let ma=Array.isArray(boot?.materialApprovals)?boot.materialApprovals:null;
       let wt=boot?.settings?.waMessageTemplate || boot?.waMessageTemplate || null;
+      let ws=boot?.settings?.waSupplyNotice || boot?.waSupplyNotice || null;
       if(!u && !c && !t && !ord && !s && !lr){
         const [uR,cR,tR,oR,sR,rR,ucR,shR,apR,prR,maR,setR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals"),sheetCall("getPendingSubReports"),sheetCall("getMaterialApprovals"),sheetCall("getClientSettings")]);
-        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt;
+        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt; ws=setR?.settings?.waSupplyNotice || setR?.waSupplyNotice || ws;
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
-      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt));
+      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(ws)setWaSupplyNotice(normalizeWaSupplyNotice(ws));
       localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,waMessageTemplate:wt||waMessageTemplate,cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
@@ -3235,7 +3251,7 @@ useEffect(() => {
     const name=r.client?.split(" - ")[0]||"לקוח יקר"; const company = getCompany().name || "POOLMANG";
     const statusLine=r.poolStatus==="אחר"?`⚠️ *נדרשת תשומת לב:*\n${r.customStatusText}${r.restrictedUntil?`\nהבריכה לא זמינה עד ${fmtDate(r.restrictedUntil)}`:""}` :"✅ הבריכה מאוזנת ומוכנה לשימוש מלא";
     const waterLevelNotice = r.waterLevel==="לא תקין" ? `\n\n⚠️ לתשומת ליבך - יש למלא מים עד לגובה הרצוי` : "";
-    const supplyApprovalNotice = r.supplyLabel ? `\n\nלתשומת לבך יש צורך לספק חומרים לאיזון המים - נדרש אישור לאספקה` : "";
+    const supplyApprovalNotice = r.supplyLabel ? `\n\n${normalizeWaSupplyNotice(waSupplyNotice)}` : "";
     const reportDetails = `${statusLine}${waterLevelNotice}${supplyApprovalNotice}${r.notes?`\n\n📝 ${r.notes}`:""}`.trim();
     return renderWaMessageTemplate(waMessageTemplate, {
       clientName: name,
@@ -3248,10 +3264,13 @@ useEffect(() => {
   const saveWaMessageTemplate = async () => {
     if (isActionLoading("saveWaTemplate")) return;
     const clean = normalizeWaMessageTemplate(waTemplateDraft);
+    const cleanSupplyNotice = normalizeWaSupplyNotice(waSupplyNoticeDraft);
     setAction("saveWaTemplate", "loading");
     setWaMessageTemplate(clean);
+    setWaSupplyNotice(cleanSupplyNotice);
     try { localStorage.setItem(WA_TEMPLATE_STORAGE_KEY, clean); } catch {}
-    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean}}).catch(()=>null) : null;
+    try { localStorage.setItem(WA_SUPPLY_NOTICE_STORAGE_KEY, cleanSupplyNotice); } catch {}
+    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean,waSupplyNotice:cleanSupplyNotice}}).catch(()=>null) : null;
     if (sheetId && !res?.success) {
       setAction("saveWaTemplate", "error", 1800);
       showToast("שמירת ההודעה לגיליון נכשלה");
@@ -3263,6 +3282,7 @@ useEffect(() => {
 
   const resetWaMessageTemplate = () => {
     setWaTemplateDraft(DEFAULT_WA_MESSAGE_TEMPLATE);
+    setWaSupplyNoticeDraft(DEFAULT_WA_SUPPLY_NOTICE);
     haptic("medium");
   };
 
@@ -5187,10 +5207,17 @@ const report = {
                   style={{...inp,resize:"vertical",minHeight:210,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:10}}
                 />
                 <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
-                  {["{clientName}","{operatorName}","{company}","{reportDetails}"].map(token=>(
-                    <button key={token} type="button" onClick={()=>setWaTemplateDraft(v=>`${v}${v.endsWith("\n")||!v?"":" "}${token}`)} style={{border:"1px solid rgba(37,99,235,0.20)",background:"rgba(219,234,254,0.86)",color:C.blue,borderRadius:99,padding:"6px 10px",fontSize:11,fontWeight:900}}>{token}</button>
+                  {[["{clientName}","שם לקוח"],["{operatorName}","שם מפעיל"],["{company}","שם חברה"],["{reportDetails}","פרטי הדוח"]].map(([token,label])=>(
+                    <button key={token} type="button" onClick={()=>setWaTemplateDraft(v=>`${v}${v.endsWith("\n")||!v?"":" "}${token}`)} style={{border:"1px solid rgba(37,99,235,0.20)",background:"rgba(219,234,254,0.86)",color:C.blue,borderRadius:99,padding:"6px 10px",fontSize:11,fontWeight:900}}>{label} ({token})</button>
                   ))}
                 </div>
+                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>טקסט מצורף כאשר סומנו חומרים לטיפול הבא</div>
+                <textarea
+                  value={waSupplyNoticeDraft}
+                  onChange={e=>setWaSupplyNoticeDraft(e.target.value)}
+                  rows={3}
+                  style={{...inp,resize:"vertical",minHeight:78,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:12}}
+                />
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                   <Press onClick={saveWaMessageTemplate} style={{padding:"13px",borderRadius:14,background:actionStatus.saveWaTemplate==="success"?C.green:adminPrimaryGradient,color:"#fff",fontSize:13,fontWeight:900,textAlign:"center",boxShadow:"0 12px 28px rgba(79,70,229,0.22)"}}>
                     {actionLabel("saveWaTemplate",{idle:"שמור מלל",loading:"שומר...",success:"נשמר",error:"שגיאה"})}
