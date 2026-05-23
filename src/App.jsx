@@ -3,7 +3,8 @@ import { Fragment, useState, useRef, useEffect } from "react";
 const DEMO_USERS = [];
 const DEMO_CLIENTS = [];
 const WA_TEMPLATE_STORAGE_KEY = "galileo_whatsapp_template";
-const WA_SUPPLY_NOTICE_STORAGE_KEY = "galileo_whatsapp_supply_notice";
+const WA_POLL_MESSAGE_STORAGE_KEY = "galileo_whatsapp_poll_message";
+const WA_POLL_OPTIONS_STORAGE_KEY = "galileo_whatsapp_poll_options";
 const DEFAULT_WA_MESSAGE_TEMPLATE = `*טיפול בריכה הושלם!*
 
 שלום {clientName},
@@ -16,8 +17,17 @@ const DEFAULT_WA_MESSAGE_TEMPLATE = `*טיפול בריכה הושלם!*
 _צוות {company}_`;
 
 const normalizeWaMessageTemplate = (value) => String(value || "").trim() || DEFAULT_WA_MESSAGE_TEMPLATE;
-const DEFAULT_WA_SUPPLY_NOTICE = "לתשומת לבך יש צורך לספק חומרים לאיזון המים - נדרש אישור לאספקה";
-const normalizeWaSupplyNotice = (value) => String(value || "").trim() || DEFAULT_WA_SUPPLY_NOTICE;
+const DEFAULT_WA_POLL_MESSAGE = "האם מאושר לספק חומרים לאיזון המים?";
+const normalizeWaPollMessage = (value) => String(value || "").trim() || DEFAULT_WA_POLL_MESSAGE;
+const DEFAULT_WA_POLL_OPTIONS = ["מאשר אספקה", "לא מאשר"];
+const normalizeWaPollOptions = (value) => {
+  let source = value;
+  if (typeof source === "string") {
+    try { source = JSON.parse(source); } catch { source = source.split(/\r?\n/); }
+  }
+  const options = Array.isArray(source) ? source.map(v => String(v || "").trim()).filter(Boolean) : [];
+  return [options[0] || DEFAULT_WA_POLL_OPTIONS[0], options[1] || DEFAULT_WA_POLL_OPTIONS[1]];
+};
 const renderWaMessageTemplate = (template, values) => {
   const source = normalizeWaMessageTemplate(template);
   let text = Object.entries(values).reduce(
@@ -1463,11 +1473,17 @@ export default function App() {
   const [waTemplateDraft,setWaTemplateDraft] = useState(() => {
     try { return normalizeWaMessageTemplate(localStorage.getItem(WA_TEMPLATE_STORAGE_KEY)); } catch { return DEFAULT_WA_MESSAGE_TEMPLATE; }
   });
-  const [waSupplyNotice,setWaSupplyNotice] = useState(() => {
-    try { return normalizeWaSupplyNotice(localStorage.getItem(WA_SUPPLY_NOTICE_STORAGE_KEY)); } catch { return DEFAULT_WA_SUPPLY_NOTICE; }
+  const [waPollMessage,setWaPollMessage] = useState(() => {
+    try { return normalizeWaPollMessage(localStorage.getItem(WA_POLL_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_MESSAGE; }
   });
-  const [waSupplyNoticeDraft,setWaSupplyNoticeDraft] = useState(() => {
-    try { return normalizeWaSupplyNotice(localStorage.getItem(WA_SUPPLY_NOTICE_STORAGE_KEY)); } catch { return DEFAULT_WA_SUPPLY_NOTICE; }
+  const [waPollMessageDraft,setWaPollMessageDraft] = useState(() => {
+    try { return normalizeWaPollMessage(localStorage.getItem(WA_POLL_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_MESSAGE; }
+  });
+  const [waPollOptions,setWaPollOptions] = useState(() => {
+    try { return normalizeWaPollOptions(localStorage.getItem(WA_POLL_OPTIONS_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_OPTIONS; }
+  });
+  const [waPollOptionsDraft,setWaPollOptionsDraft] = useState(() => {
+    try { return normalizeWaPollOptions(localStorage.getItem(WA_POLL_OPTIONS_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_OPTIONS; }
   });
   const [clientPlan,setClientPlan] = useState({plan:"",status:""});
   const [allUsers,setAllUsers] = useState(DEMO_USERS);
@@ -1539,9 +1555,14 @@ useEffect(() => {
 }, [waMessageTemplate]);
 
 useEffect(() => {
-  setWaSupplyNoticeDraft(waSupplyNotice);
-  try { localStorage.setItem(WA_SUPPLY_NOTICE_STORAGE_KEY, waSupplyNotice); } catch {}
-}, [waSupplyNotice]);
+  setWaPollMessageDraft(waPollMessage);
+  try { localStorage.setItem(WA_POLL_MESSAGE_STORAGE_KEY, waPollMessage); } catch {}
+}, [waPollMessage]);
+
+useEffect(() => {
+  setWaPollOptionsDraft(waPollOptions);
+  try { localStorage.setItem(WA_POLL_OPTIONS_STORAGE_KEY, JSON.stringify(normalizeWaPollOptions(waPollOptions))); } catch {}
+}, [waPollOptions]);
 
 
 
@@ -2215,7 +2236,8 @@ useEffect(() => {
       if(Array.isArray(prR?.pendingSubReports)) setPendingSubReports(prR.pendingSubReports);
       if(lrR?.lastReadings) setLastReadings(lrR.lastReadings);
       if(setR?.settings?.waMessageTemplate) setWaMessageTemplate(normalizeWaMessageTemplate(setR.settings.waMessageTemplate));
-      if(setR?.settings?.waSupplyNotice) setWaSupplyNotice(normalizeWaSupplyNotice(setR.settings.waSupplyNotice));
+      if(setR?.settings?.waPollMessage) setWaPollMessage(normalizeWaPollMessage(setR.settings.waPollMessage));
+      if(setR?.settings?.waPollOptions) setWaPollOptions(normalizeWaPollOptions(setR.settings.waPollOptions));
       if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
       try {
         const cached = localStorage.getItem("galileo_cache");
@@ -2947,13 +2969,14 @@ useEffect(() => {
       let pr=Array.isArray(boot?.pendingSubReports)?boot.pendingSubReports:null;
       let ma=Array.isArray(boot?.materialApprovals)?boot.materialApprovals:null;
       let wt=boot?.settings?.waMessageTemplate || boot?.waMessageTemplate || null;
-      let ws=boot?.settings?.waSupplyNotice || boot?.waSupplyNotice || null;
+      let wp=boot?.settings?.waPollMessage || boot?.waPollMessage || null;
+      let wo=boot?.settings?.waPollOptions || boot?.waPollOptions || null;
       if(!u && !c && !t && !ord && !s && !lr){
         const [uR,cR,tR,oR,sR,rR,ucR,shR,apR,prR,maR,setR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals"),sheetCall("getPendingSubReports"),sheetCall("getMaterialApprovals"),sheetCall("getClientSettings")]);
-        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt; ws=setR?.settings?.waSupplyNotice || setR?.waSupplyNotice || ws;
+        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt; wp=setR?.settings?.waPollMessage || setR?.waPollMessage || wp; wo=setR?.settings?.waPollOptions || setR?.waPollOptions || wo;
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
-      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(ws)setWaSupplyNotice(normalizeWaSupplyNotice(ws));
+      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(wp)setWaPollMessage(normalizeWaPollMessage(wp)); if(wo)setWaPollOptions(normalizeWaPollOptions(wo));
       localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,waMessageTemplate:wt||waMessageTemplate,cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
@@ -3251,7 +3274,7 @@ useEffect(() => {
     const name=r.client?.split(" - ")[0]||"לקוח יקר"; const company = getCompany().name || "POOLMANG";
     const statusLine=r.poolStatus==="אחר"?`⚠️ *נדרשת תשומת לב:*\n${r.customStatusText}${r.restrictedUntil?`\nהבריכה לא זמינה עד ${fmtDate(r.restrictedUntil)}`:""}` :"✅ הבריכה מאוזנת ומוכנה לשימוש מלא";
     const waterLevelNotice = r.waterLevel==="לא תקין" ? `\n\n⚠️ לתשומת ליבך - יש למלא מים עד לגובה הרצוי` : "";
-    const supplyApprovalNotice = r.supplyLabel ? `\n\n${normalizeWaSupplyNotice(waSupplyNotice)}` : "";
+    const supplyApprovalNotice = r.supplyLabel ? `\n\nלתשומת לבך יש צורך לספק חומרים לאיזון המים - נדרש אישור לאספקה` : "";
     const reportDetails = `${statusLine}${waterLevelNotice}${supplyApprovalNotice}${r.notes?`\n\n📝 ${r.notes}`:""}`.trim();
     return renderWaMessageTemplate(waMessageTemplate, {
       clientName: name,
@@ -3264,13 +3287,16 @@ useEffect(() => {
   const saveWaMessageTemplate = async () => {
     if (isActionLoading("saveWaTemplate")) return;
     const clean = normalizeWaMessageTemplate(waTemplateDraft);
-    const cleanSupplyNotice = normalizeWaSupplyNotice(waSupplyNoticeDraft);
+    const cleanPollMessage = normalizeWaPollMessage(waPollMessageDraft);
+    const cleanPollOptions = normalizeWaPollOptions(waPollOptionsDraft);
     setAction("saveWaTemplate", "loading");
     setWaMessageTemplate(clean);
-    setWaSupplyNotice(cleanSupplyNotice);
+    setWaPollMessage(cleanPollMessage);
+    setWaPollOptions(cleanPollOptions);
     try { localStorage.setItem(WA_TEMPLATE_STORAGE_KEY, clean); } catch {}
-    try { localStorage.setItem(WA_SUPPLY_NOTICE_STORAGE_KEY, cleanSupplyNotice); } catch {}
-    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean,waSupplyNotice:cleanSupplyNotice}}).catch(()=>null) : null;
+    try { localStorage.setItem(WA_POLL_MESSAGE_STORAGE_KEY, cleanPollMessage); } catch {}
+    try { localStorage.setItem(WA_POLL_OPTIONS_STORAGE_KEY, JSON.stringify(cleanPollOptions)); } catch {}
+    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean,waPollMessage:cleanPollMessage,waPollOptions:cleanPollOptions}}).catch(()=>null) : null;
     if (sheetId && !res?.success) {
       setAction("saveWaTemplate", "error", 1800);
       showToast("שמירת ההודעה לגיליון נכשלה");
@@ -3282,7 +3308,8 @@ useEffect(() => {
 
   const resetWaMessageTemplate = () => {
     setWaTemplateDraft(DEFAULT_WA_MESSAGE_TEMPLATE);
-    setWaSupplyNoticeDraft(DEFAULT_WA_SUPPLY_NOTICE);
+    setWaPollMessageDraft(DEFAULT_WA_POLL_MESSAGE);
+    setWaPollOptionsDraft(DEFAULT_WA_POLL_OPTIONS);
     haptic("medium");
   };
 
@@ -3313,8 +3340,8 @@ useEffect(() => {
             phUp: report.phUp || 0,
             acidLiters: report.acidLiters || 0,
             saltBags: String(report.supplyLabel || "").match(/מלח\s*[×xX]\s*(\d+)/)?.[1] || 0,
-            message: "האם מאושר לספק חומרים לאיזון המים?",
-            options: ["מאשר אספקה", "לא מאשר"],
+            message: normalizeWaPollMessage(waPollMessage),
+            options: normalizeWaPollOptions(waPollOptions),
             multipleAnswers: false,
             ensureWebhook: true
           }).catch(e => console.warn("Green API poll failed", e));
@@ -5211,13 +5238,29 @@ const report = {
                     <button key={token} type="button" onClick={()=>setWaTemplateDraft(v=>`${v}${v.endsWith("\n")||!v?"":" "}${token}`)} style={{border:"1px solid rgba(37,99,235,0.20)",background:"rgba(219,234,254,0.86)",color:C.blue,borderRadius:99,padding:"6px 10px",fontSize:11,fontWeight:900}}>{label} ({token})</button>
                   ))}
                 </div>
-                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>טקסט מצורף כאשר סומנו חומרים לטיפול הבא</div>
+                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>מלל סקר אישור חומרים</div>
                 <textarea
-                  value={waSupplyNoticeDraft}
-                  onChange={e=>setWaSupplyNoticeDraft(e.target.value)}
+                  value={waPollMessageDraft}
+                  onChange={e=>setWaPollMessageDraft(e.target.value)}
                   rows={3}
                   style={{...inp,resize:"vertical",minHeight:78,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:12}}
                 />
+                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>תשובות סקר</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                  {waPollOptionsDraft.map((option, idx)=>(
+                    <input
+                      key={idx}
+                      value={option}
+                      onChange={e=>setWaPollOptionsDraft(prev=>{
+                        const next = normalizeWaPollOptions(prev);
+                        next[idx] = e.target.value;
+                        return next;
+                      })}
+                      placeholder={idx===0 ? "תשובה מאשרת" : "תשובה דוחה"}
+                      style={{...inp,minHeight:46}}
+                    />
+                  ))}
+                </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                   <Press onClick={saveWaMessageTemplate} style={{padding:"13px",borderRadius:14,background:actionStatus.saveWaTemplate==="success"?C.green:adminPrimaryGradient,color:"#fff",fontSize:13,fontWeight:900,textAlign:"center",boxShadow:"0 12px 28px rgba(79,70,229,0.22)"}}>
                     {actionLabel("saveWaTemplate",{idle:"שמור מלל",loading:"שומר...",success:"נשמר",error:"שגיאה"})}
