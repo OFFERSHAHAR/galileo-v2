@@ -3275,7 +3275,15 @@ useEffect(() => {
     }
     trackUsageEvent("save_work_hours", {screen:"daily", target:"clock_log", date:workClockEditor.date, total:totalStr});
   };
-  const handleStartWork = () => openWorkClockEditor("start");
+  const handleStartWork = async () => {
+    const now = new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
+    localStorage.setItem("galileo_workstart", now);
+    setWorkStart(now);
+    showToast("▶ שעון עבודה התחיל");
+    haptic("success");
+    if(sheetId) await sheetCall("saveWorkStart",{log:{username:user?.username||"",operator:user?.name,date:todayStr(),start:now}});
+    trackUsageEvent("save_work_start", {screen:"daily", target:"clock_start_quick", date:todayStr()});
+  };
   const handleEndWork = () => openWorkClockEditor("end");
 
   useEffect(() => {
