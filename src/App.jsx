@@ -272,6 +272,7 @@ const DEFAULT_SUPER_PASS = "039076914";
 function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
 const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
+const SUPER_MESSAGE_TARGET = { username: "or", name: "אור מוסה" };
 
 async function mgmtCall(action, payload={}) {
   try {
@@ -1224,6 +1225,139 @@ function LicensesTab({C2, inp2, showMsg}) {
   );
 }
 
+function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const loadMessages = async () => {
+    setLoading(true);
+    const res = await mgmtCall("getSuperMessages", { to: SUPER_MESSAGE_TARGET.username });
+    if (res?.messages) setMessages(res.messages);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadMessages(); }, []);
+
+  const sendMessage = async () => {
+    const message = draft.trim();
+    if (!message) {
+      showMsg("כתוב הודעה לפני שליחה");
+      return;
+    }
+    setLoading(true);
+    const res = await mgmtCall("sendSuperMessage", {
+      from: "סופר אדמין",
+      to: SUPER_MESSAGE_TARGET.username,
+      toName: SUPER_MESSAGE_TARGET.name,
+      message
+    });
+    if (res?.success) {
+      setDraft("");
+      showMsg("ההודעה נשמרה ונשלחה לאור");
+      await loadMessages();
+    } else {
+      showMsg("שמירת ההודעה נכשלה");
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{background:C2.white,borderRadius:16,padding:16,marginBottom:14,border:`1px solid ${C2.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.06)"}}>
+        <div style={{fontSize:16,fontWeight:900,color:C2.text,marginBottom:4}}>הודעה לאור מוסה</div>
+        <div style={{fontSize:12,fontWeight:800,color:C2.muted,marginBottom:12}}>השורה נשמרת בגליון הסופר־אדמין ונמחקת אוטומטית אחרי שעה</div>
+        <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={4} placeholder="כתוב הודעה..." style={{...inp2,resize:"vertical",marginBottom:12}}/>
+        <div style={{display:"flex",gap:8}}>
+          <Press onClick={sendMessage} style={{flex:1,padding:"13px",borderRadius:14,background:`linear-gradient(135deg,${C2.blue},#42a5f5)`,color:"#fff",fontWeight:900,fontSize:14,textAlign:"center"}}>
+            {loading ? "שומר..." : "שלח הודעה"}
+          </Press>
+          <Press onClick={loadMessages} style={{padding:"13px 16px",borderRadius:14,background:"#f0f4f8",color:C2.blue,fontWeight:900,fontSize:14}}>רענן</Press>
+        </div>
+      </div>
+      {messages.length===0 ? (
+        <div style={{background:C2.white,borderRadius:16,padding:26,textAlign:"center",color:C2.muted,fontWeight:800,border:`1px solid ${C2.border}`}}>אין הודעות פעילות</div>
+      ) : messages.map(msg=>(
+        <div key={msg.id} style={{background:C2.white,borderRadius:16,padding:14,marginBottom:10,border:`1px solid ${msg.reply ? "#c8e6c9" : C2.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.05)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:8}}>
+            <div style={{fontSize:12,fontWeight:900,color:C2.blue}}>{msg.toName || SUPER_MESSAGE_TARGET.name}</div>
+            <div style={{fontSize:11,fontWeight:800,color:C2.muted}}>{msg.createdAt}</div>
+          </div>
+          <div style={{fontSize:14,fontWeight:800,color:C2.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{msg.message}</div>
+          {msg.reply ? (
+            <div style={{marginTop:10,background:"#e8f5e9",borderRadius:12,padding:10,color:C2.green,fontSize:13,fontWeight:800,lineHeight:1.5}}>
+              תשובת אור: {msg.reply}
+              {msg.replyAt&&<div style={{fontSize:10,color:C2.muted,marginTop:4}}>{msg.replyAt}</div>}
+            </div>
+          ) : (
+            <div style={{marginTop:10,background:"#fff8e1",borderRadius:99,padding:"6px 12px",display:"inline-block",color:C2.orange,fontSize:11,fontWeight:900}}>ממתין לתשובה</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SuperMessageInbox({ user, C, showToast }) {
+  const [messages, setMessages] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [open, setOpen] = useState(true);
+
+  const isTarget = String(user?.username || "").trim().toLowerCase() === SUPER_MESSAGE_TARGET.username ||
+    String(user?.name || "").trim() === SUPER_MESSAGE_TARGET.name;
+
+  const loadMessages = async () => {
+    if (!isTarget) return;
+    const res = await mgmtCall("getSuperMessages", { to: SUPER_MESSAGE_TARGET.username });
+    if (res?.messages) setMessages(res.messages);
+  };
+
+  useEffect(() => {
+    if (!isTarget) return;
+    loadMessages();
+    const timer = setInterval(loadMessages, 60000);
+    return () => clearInterval(timer);
+  }, [isTarget]);
+
+  const reply = async (msg) => {
+    const text = String(drafts[msg.id] || "").trim();
+    if (!text) {
+      showToast?.("כתוב תשובה לפני שליחה");
+      return;
+    }
+    const res = await mgmtCall("replySuperMessage", { id: msg.id, to: SUPER_MESSAGE_TARGET.username, reply: text });
+    if (res?.success) {
+      setDrafts(x=>({...x,[msg.id]:""}));
+      showToast?.("התשובה נשמרה");
+      await loadMessages();
+    } else {
+      showToast?.("שמירת התשובה נכשלה");
+    }
+  };
+
+  if (!isTarget || messages.length===0) return null;
+  const active = messages.filter(m=>!m.reply);
+  if (!active.length) return null;
+
+  return (
+    <div style={{position:"fixed",left:12,right:12,bottom:118,zIndex:1200,background:"rgba(255,255,255,0.94)",border:`2px solid ${C.blue}`,borderRadius:18,boxShadow:"0 18px 50px rgba(15,23,42,0.18)",overflow:"hidden",backdropFilter:"blur(14px)"}}>
+      <Press onClick={()=>setOpen(x=>!x)} style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#e3f2fd"}}>
+        <div style={{fontWeight:900,fontSize:14,color:C.text}}>הודעות מסופר־אדמין</div>
+        <div style={{background:C.red,color:"#fff",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:900}}>{active.length}</div>
+      </Press>
+      {open&&<div style={{padding:12,maxHeight:"36vh",overflowY:"auto"}}>
+        {active.map(msg=>(
+          <div key={msg.id} style={{padding:12,borderRadius:14,background:"#f5f9ff",border:"1px solid #d7e6f7",marginBottom:10}}>
+            <div style={{fontSize:13,fontWeight:900,color:C.text,lineHeight:1.55,whiteSpace:"pre-wrap",marginBottom:10}}>{msg.message}</div>
+            <textarea value={drafts[msg.id]||""} onChange={e=>setDrafts(x=>({...x,[msg.id]:e.target.value}))} placeholder="כתוב תשובה..." rows={2} style={{width:"100%",border:"1px solid #d7e6f7",borderRadius:12,padding:10,fontSize:13,fontFamily:"inherit",resize:"none",marginBottom:8}}/>
+            <Press onClick={()=>reply(msg)} style={{padding:"10px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center"}}>שלח תשובה</Press>
+          </div>
+        ))}
+      </div>}
+    </div>
+  );
+}
+
 function SuperAdminScreen({ onClose }) {
   const [pass, setPass] = useState("");
   const [auth, setAuth] = useState(false);
@@ -1344,7 +1478,7 @@ function SuperAdminScreen({ onClose }) {
         ):(
           <>
             <div style={{background:C2.white,padding:"8px 12px",borderBottom:`1px solid ${C2.border}`,display:"flex",gap:6,flexShrink:0,overflowX:"auto",boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
-              {[["issues",`🔧 תקלות${pendingCount>0?` (${pendingCount})`:""}`],["clients","👥 לקוחות"],["licenses","🔑 רישיונות"],["stats","📊 סטטיסטיקות"],["settings","⚙️ הגדרות"]].map(([t,lbl])=>(
+              {[["issues",`🔧 תקלות${pendingCount>0?` (${pendingCount})`:""}`],["clients","👥 לקוחות"],["messages","הודעות"],["licenses","🔑 רישיונות"],["stats","📊 סטטיסטיקות"],["settings","⚙️ הגדרות"]].map(([t,lbl])=>(
                 <Press key={t} onClick={()=>{setTab(t);haptic();}} style={{padding:"9px 14px",borderRadius:99,fontSize:12,fontWeight:800,flexShrink:0,whiteSpace:"nowrap",background:tab===t?`linear-gradient(135deg,${C2.blue},#42a5f5)`:"#f0f4f8",color:tab===t?"#fff":C2.muted,boxShadow:tab===t?"0 4px 12px rgba(21,101,192,0.3)":"none"}}>{lbl}</Press>
               ))}
             </div>
@@ -1433,6 +1567,7 @@ function SuperAdminScreen({ onClose }) {
                   ))}
                 </div>
               )}
+              {tab==="messages"&&!loading&&<SuperAdminMessagesTab C2={C2} inp2={inp2} showMsg={showMsg}/>}
               {tab==="licenses"&&!loading&&<LicensesTab C2={C2} inp2={inp2} showMsg={showMsg}/>}
               {tab==="stats"&&!loading&&(
                 <div>
@@ -2135,6 +2270,40 @@ useEffect(() => {
     if (!sheetId) return;
     const rows = Object.entries(db).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices)]);
     void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply sync failed", e));
+  };
+  useEffect(() => {
+    if (!sheetId || !Object.keys(supplyDB || {}).length) return;
+    const timer = setInterval(() => persistSupplyDB(supplyDB), 180000);
+    return () => clearInterval(timer);
+  }, [sheetId, supplyDB]);
+  const buildSupplyUpdateForReport = (source = {}) => {
+    const clientName = source.client || "";
+    if (!clientName) return null;
+    const supply = supplyFromReportLike(source);
+    const supplied = String(source.suppliedEquipment || "");
+    const suppliedAcid = supplied.includes("חומצת");
+    const suppliedPhUp = supplied.includes("סודה") || supplied.includes("מעלה");
+    const nextAcid = supply.acid && !suppliedAcid;
+    const nextPhUpSupply = supply.phUpSupply && !suppliedPhUp;
+    const nextSaltPkg = supply.saltPkg;
+    if (!nextAcid && !nextPhUpSupply && !nextSaltPkg && !supplied) return null;
+    const prevSupply = supplyDB[clientName] || {};
+    const materialPrices = normalizeNextSupplyPrices(prevSupply.materialPrices);
+    const nextSupplyDate = nextAcid || nextPhUpSupply || nextSaltPkg ? nextTreatmentDateForClient(clientName, source.reportDate) : "";
+    const nextSupply = {
+      acid: nextAcid,
+      phUpSupply: nextPhUpSupply,
+      saltPkg: nextSaltPkg,
+      saltBags: nextSaltPkg ? Number(supply.saltBags || prevSupply.saltBags || 1) : 0,
+      supplyNote: "",
+      updatedAt: source.reportDate || todayStr(),
+      nextSupplyDate,
+      assignedOperator: prevSupply.assignedOperator || "",
+      materialPrices
+    };
+    const db = {...supplyDB, [clientName]: nextSupply};
+    const row = [clientName,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices)];
+    return {db, row};
   };
 
   const sendNotificationToAdmins = async (title, message) => {
@@ -3429,6 +3598,7 @@ useEffect(() => {
   const approvePendingSubReport = async (item) => {
     if (!item || syncing || isActionLoading(`approveSubReport:${item.id}`)) return;
     const report = item.report;
+    const supplyUpdateForApproval = buildSupplyUpdateForReport(report);
     setAction(`approveSubReport:${item.id}`, "loading");
     setSyncing(true);
 
@@ -3440,8 +3610,10 @@ useEffect(() => {
         adminEmail: item.adminEmail || getCompany().adminEmail || "",
         clientAddress: item.clientAddress || clientAddress(report.client),
         clientPhone: item.clientPhone || clientPhone(report.client),
+        supplyUpdate: supplyUpdateForApproval?.row || undefined,
       }).catch(() => null);
       saved = res?.success === true;
+      if (saved && supplyUpdateForApproval?.db) setSupplyDB(supplyUpdateForApproval.db);
       if (saved && !res?.duplicate) {
         void sendNotificationToAdmins(
           `✅ דוח בוצע: ${report.client}`,
@@ -3533,6 +3705,8 @@ useEffect(() => {
     setAction("submitReport", "loading");
     setSyncing(true);
     const elNext=calcNext(elDate);
+    let nextSupplyDB = null;
+    let supplyUpdate = null;
     const supplyLabel=[acid&&"חומצת מלח",phUpSupply&&"מעלה pH",saltPkg&&`מלח ×${saltBags}`].filter(Boolean).join(", ");
     if(client&&(acid||phUpSupply||saltPkg||suppliedEquipment.length)&&(!isSubOperatorRole(user?.role)||approvalEditId)){
       const newDB={...supplyDB};
@@ -3549,8 +3723,11 @@ useEffect(() => {
       } else if (suppliedEquipment.length) {
         newDB[client]={acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate:"",assignedOperator:prevSupply.assignedOperator||"",materialPrices};
       }
-      setSupplyDB(newDB);
-      if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices)]);void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply background sync failed", e));}
+      nextSupplyDB = newDB;
+      const nextSupply = newDB[client];
+      if (nextSupply) {
+        supplyUpdate = [client,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices)];
+      }
     }
     const reportOperatorName = dailyOwnerName(reportDate) || user?.name;
     if (!isSubOperatorRole(user?.role) || approvalEditId) {
@@ -3644,7 +3821,7 @@ const report = {
       };
     });
 
-    if (!isEditingExistingReport) {
+    if (!isEditingExistingReport && !supplyUpdate) {
       setAction("submitReport", "success", 1200);
       showToast("✅ הדוח נשמר ונשלח ברקע");
       setSyncing(false);
@@ -3711,16 +3888,18 @@ const report = {
     const adminEmail = getCompany().adminEmail||"";
        if (sheetId) {
       const res = isEditingExistingReport
-        ? await sheetCall("updateReport", {report, original:editingReport}).catch(() => null)
+        ? await sheetCall("updateReport", {report, original:editingReport, supplyUpdate: supplyUpdate || undefined}).catch(() => null)
         : await sheetCall("saveReport", {
           report,
           photos: photosBase64,
           adminEmail,
           clientAddress: clientAddress(client),
           clientPhone: clientPhone(client),
+          supplyUpdate: supplyUpdate || undefined,
         }).catch(() => null);
 
       saved = res?.success === true;
+      if (saved && nextSupplyDB) setSupplyDB(nextSupplyDB);
 
       if (!isEditingExistingReport && saved && !res?.duplicate && user?.role !== "admin") {
         void sendNotificationToAdmins(
@@ -3731,6 +3910,15 @@ const report = {
     }
 
     if (!saved && !isEditingExistingReport) {
+      if (supplyUpdate) {
+        setReports(prev => prev.filter(x => x.id !== report.id));
+        forgetCompletedReport(report.reportDate, report.client, report.operator);
+        setAction("submitReport", "error", 2200);
+        showToast("שמירת החומרים לטיפול הבא נכשלה - הדוח לא נשלח");
+        setSyncing(false);
+        haptic("medium");
+        return;
+      }
       setPending(p => [...p, report]);
       setDismissed(false);
       setAction("submitReport", "local", 2200);
@@ -4059,6 +4247,7 @@ const report = {
     const operatorPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
+        <SuperMessageInbox user={user} C={C} showToast={showToast}/>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
