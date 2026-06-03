@@ -176,6 +176,18 @@
         return json({ success: true });
       }
 
+      if (action === "getSuperMessages") {
+        return json(getSuperMessages_(ss, data));
+      }
+
+      if (action === "sendSuperMessage") {
+        return json(sendSuperMessage_(ss, data));
+      }
+
+      if (action === "replySuperMessage") {
+        return json(replySuperMessage_(ss, data));
+      }
+
       if (action === "getUnassignedClients") {
         let sheet = ss.getSheetByName("לקוחות_ללא_שיוך");
         if(!sheet) {
@@ -354,6 +366,10 @@
         const sheet = ss.getSheetByName("דוחות");
         ensureColumns(sheet, ["ציוד_שסופק"]);
         const r = data.report;
+        if (data.supplyUpdate) {
+          const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
+          if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
+        }
         const duplicateRow = findDuplicateReportRow_(sheet, r);
         if (duplicateRow) {
           Logger.log("Duplicate report skipped: row " + duplicateRow);
@@ -426,6 +442,10 @@
         const sheet = ss.getSheetByName("דוחות");
         ensureColumns(sheet, ["ציוד_שסופק"]);
         const r = data.report;
+        if (data.supplyUpdate) {
+          const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
+          if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
+        }
         const row = findLatestReportRow_(sheet, data.original || {}, r);
         if (!row) return json({ success:false, error:"report row not found" });
         sheet.getRange(row, 1, 1, 24).setValues([reportRowValues_(r)]);
@@ -435,16 +455,12 @@
       }
 
       if (action === "saveSupplyDB") {
-        const sheet = ss.getSheetByName("ציוד_לקוחות");
-        ensureColumns(sheet, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"]);
-        const last = sheet.getLastRow();
-        if (last > 3) sheet.deleteRows(4, last - 3);
+        const results = [];
         dedupeRowsByFirstCell_(data.rows || []).forEach(r => {
-          const row = Array.isArray(r) ? r.slice() : [];
-          row[9] = row[9] || defaultNextSupplyPricesText_();
-          sheet.appendRow(row);
+          results.push(upsertSupplyDBRow_(ss, r));
         });
-        return json({ success: true });
+        const failed = results.find(r => !r.success);
+        return json({ success: !failed, results: results, error: failed && failed.error });
       }
 
       if (action === "getSupplyDB") {
@@ -1536,7 +1552,98 @@
     if (changed) range.setValues(next);
   }
 
+  function supplyIdForClient_(client) {
+    const normalized = normalizeReportValue_(client).toLowerCase();
+    const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, normalized, Utilities.Charset.UTF_8);
+    return "SUP-" + Utilities.base64EncodeWebSafe(digest).replace(/=+$/,"").slice(0, 12);
+  }
+
+  function supplyHeaderMap_(sheet) {
+    const headers = ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא","supplyId"];
+    if (sheet.getLastRow() === 0) sheet.appendRow(headers);
+    ensureColumns(sheet, headers);
+    while (sheet.getLastRow() < 3) sheet.appendRow([""]);
+    const row = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+    const map = {};
+    row.forEach(function(h, i) { map[h] = i + 1; });
+    return map;
+  }
+
+  function upsertSupplyDBRow_(ss, inputRow) {
+    try {
+      let sheet = ss.getSheetByName("ציוד_לקוחות");
+      if (!sheet) sheet = ss.insertSheet("ציוד_לקוחות");
+      const row = Array.isArray(inputRow) ? inputRow.slice() : [];
+      const client = String(row[0] || "").trim();
+      if (!client) return { success:false, error:"missing supply client" };
+      const map = supplyHeaderMap_(sheet);
+      const normalizedClient = normalizeReportValue_(client).toLowerCase();
+      let targetRow = 0;
+      const last = sheet.getLastRow();
+      if (last >= 4) {
+        const clients = sheet.getRange(4, map["לקוח"], last - 3, 1).getValues();
+        for (let i = 0; i < clients.length; i++) {
+          if (normalizeReportValue_(clients[i][0]).toLowerCase() === normalizedClient) {
+            targetRow = i + 4;
+            break;
+          }
+        }
+      }
+      if (!targetRow) {
+        targetRow = Math.max(sheet.getLastRow() + 1, 4);
+        sheet.getRange(targetRow, map["לקוח"]).setValue(client);
+      }
+      const values = {
+        "לקוח": client,
+        "חומצת_מלח": row[1] || "לא",
+        "מעלה_pH": row[2] || "לא",
+        "שקי_מלח": row[3] || "לא",
+        "כמות_שקים": row[4] || 0,
+        "עודכן": row[5] || "",
+        "הערת_חומרים": row[6] || "",
+        "nextSupplyDate": row[7] || "",
+        "assignedOperator": row[8] || "",
+        "מחיר_פר_חומר_לטיפול_הבא": row[9] || defaultNextSupplyPricesText_(),
+        "supplyId": row[10] || supplyIdForClient_(client)
+      };
+      Object.keys(values).forEach(function(header) {
+        if (map[header]) sheet.getRange(targetRow, map[header]).setValue(values[header]);
+      });
+      const saved = sheet.getRange(targetRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+      const get = function(header) { return String(saved[(map[header] || 1) - 1] || "").trim(); };
+      const materialOk = get("חומצת_מלח") === String(values["חומצת_מלח"]) &&
+        get("מעלה_pH") === String(values["מעלה_pH"]) &&
+        get("שקי_מלח") === String(values["שקי_מלח"]);
+      const dateOk = get("nextSupplyDate") === String(values["nextSupplyDate"]);
+      const operatorOk = get("assignedOperator") === String(values["assignedOperator"]);
+      const idOk = !!get("supplyId");
+      if (!materialOk || !dateOk || !operatorOk || !idOk) {
+        return { success:false, row:targetRow, error:"supply verification failed", materialOk:materialOk, dateOk:dateOk, operatorOk:operatorOk, idOk:idOk };
+      }
+      return { success:true, row:targetRow, supplyId:get("supplyId") };
+    } catch(e) {
+      return { success:false, error:String(e) };
+    }
+  }
+
   function writeSupplyDB_(ss, db) {
+    Object.keys(db || {}).forEach(client => {
+      const v = db[client] || {};
+      upsertSupplyDBRow_(ss, [
+        client,
+        v.acid ? "כן" : "לא",
+        v.phUpSupply ? "כן" : "לא",
+        v.saltPkg ? "כן" : "לא",
+        v.saltBags || 0,
+        v.updatedAt || "",
+        v.supplyNote || "",
+        v.nextSupplyDate || "",
+        v.assignedOperator || "",
+        JSON.stringify(parseNextSupplyPrices_(v.materialPrices)),
+        v.supplyId || supplyIdForClient_(client)
+      ]);
+    });
+    return;
     let sheet = ss.getSheetByName("ציוד_לקוחות");
     if (!sheet) sheet = ss.insertSheet("ציוד_לקוחות");
     const headers = ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"];
@@ -3184,6 +3291,97 @@ function getUnassignedClients_(ss) {
   return rows.slice(1).filter(r=>r[0]).map(r=>({
     name:String(r[0]), phone:String(r[1]||""), address:String(r[2]||"")
   }));
+}
+
+function getSuperMessagesSheet_(ss) {
+  let sheet = ss.getSheetByName("הודעות");
+  if (!sheet) {
+    sheet = ss.insertSheet("הודעות");
+    sheet.appendRow(["id","createdAt","from","to","toName","message","reply","replyAt","status"]);
+  }
+  if (sheet.getLastRow() < 1) {
+    sheet.appendRow(["id","createdAt","from","to","toName","message","reply","replyAt","status"]);
+  }
+  return sheet;
+}
+
+function cleanupSuperMessages_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  const rows = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  const expireAt = Date.now() - 60 * 60 * 1000;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const createdAt = rows[i][1];
+    const createdTime = createdAt instanceof Date ? createdAt.getTime() : new Date(String(createdAt || "")).getTime();
+    if (createdTime && createdTime < expireAt) sheet.deleteRow(i + 2);
+  }
+}
+
+function getSuperMessages_(ss, data) {
+  const sheet = getSuperMessagesSheet_(ss);
+  cleanupSuperMessages_(sheet);
+  const target = String(data.to || "").trim().toLowerCase();
+  const rows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues() : [];
+  const messages = rows
+    .filter(r => r[0] && (!target || String(r[3] || "").trim().toLowerCase() === target))
+    .map(r => ({
+      id: String(r[0] || ""),
+      createdAt: r[1] instanceof Date ? Utilities.formatDate(r[1], "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss") : String(r[1] || ""),
+      from: String(r[2] || ""),
+      to: String(r[3] || ""),
+      toName: String(r[4] || ""),
+      message: String(r[5] || ""),
+      reply: String(r[6] || ""),
+      replyAt: r[7] instanceof Date ? Utilities.formatDate(r[7], "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss") : String(r[7] || ""),
+      status: String(r[8] || "open")
+    }))
+    .reverse();
+  return { success:true, messages };
+}
+
+function sendSuperMessage_(ss, data) {
+  const message = String(data.message || "").trim();
+  if (!message) return { success:false, error:"empty message" };
+  const sheet = getSuperMessagesSheet_(ss);
+  cleanupSuperMessages_(sheet);
+  const now = new Date();
+  const id = Utilities.getUuid();
+  sheet.appendRow([
+    id,
+    now,
+    String(data.from || "סופר אדמין"),
+    String(data.to || "or"),
+    String(data.toName || "אור מוסה"),
+    message,
+    "",
+    "",
+    "open"
+  ]);
+  return { success:true, id };
+}
+
+function replySuperMessage_(ss, data) {
+  const id = String(data.id || "").trim();
+  const reply = String(data.reply || "").trim();
+  if (!id || !reply) return { success:false, error:"missing data" };
+  const sheet = getSuperMessagesSheet_(ss);
+  cleanupSuperMessages_(sheet);
+  const rows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues() : [];
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i][0] || "") === id) {
+      sheet.getRange(i + 2, 7).setValue(reply);
+      sheet.getRange(i + 2, 8).setValue(new Date());
+      sheet.getRange(i + 2, 9).setValue("replied");
+      return { success:true };
+    }
+  }
+  return { success:false, error:"message not found" };
+}
+
+function cleanupSuperMessagesHourly() {
+  const ss = SpreadsheetApp.openById("17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk");
+  const sheet = getSuperMessagesSheet_(ss);
+  cleanupSuperMessages_(sheet);
 }
 
 function getClientBrandingBySheetId_(sheetId) {

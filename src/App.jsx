@@ -272,6 +272,7 @@ const DEFAULT_SUPER_PASS = "039076914";
 function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
 const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
+const SUPER_MESSAGE_TARGET = { username: "or", name: "אור מוסה" };
 
 async function mgmtCall(action, payload={}) {
   try {
@@ -1224,6 +1225,139 @@ function LicensesTab({C2, inp2, showMsg}) {
   );
 }
 
+function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const loadMessages = async () => {
+    setLoading(true);
+    const res = await mgmtCall("getSuperMessages", { to: SUPER_MESSAGE_TARGET.username });
+    if (res?.messages) setMessages(res.messages);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadMessages(); }, []);
+
+  const sendMessage = async () => {
+    const message = draft.trim();
+    if (!message) {
+      showMsg("כתוב הודעה לפני שליחה");
+      return;
+    }
+    setLoading(true);
+    const res = await mgmtCall("sendSuperMessage", {
+      from: "סופר אדמין",
+      to: SUPER_MESSAGE_TARGET.username,
+      toName: SUPER_MESSAGE_TARGET.name,
+      message
+    });
+    if (res?.success) {
+      setDraft("");
+      showMsg("ההודעה נשמרה ונשלחה לאור");
+      await loadMessages();
+    } else {
+      showMsg("שמירת ההודעה נכשלה");
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{background:C2.white,borderRadius:16,padding:16,marginBottom:14,border:`1px solid ${C2.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.06)"}}>
+        <div style={{fontSize:16,fontWeight:900,color:C2.text,marginBottom:4}}>הודעה לאור מוסה</div>
+        <div style={{fontSize:12,fontWeight:800,color:C2.muted,marginBottom:12}}>השורה נשמרת בגליון הסופר־אדמין ונמחקת אוטומטית אחרי שעה</div>
+        <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={4} placeholder="כתוב הודעה..." style={{...inp2,resize:"vertical",marginBottom:12}}/>
+        <div style={{display:"flex",gap:8}}>
+          <Press onClick={sendMessage} style={{flex:1,padding:"13px",borderRadius:14,background:`linear-gradient(135deg,${C2.blue},#42a5f5)`,color:"#fff",fontWeight:900,fontSize:14,textAlign:"center"}}>
+            {loading ? "שומר..." : "שלח הודעה"}
+          </Press>
+          <Press onClick={loadMessages} style={{padding:"13px 16px",borderRadius:14,background:"#f0f4f8",color:C2.blue,fontWeight:900,fontSize:14}}>רענן</Press>
+        </div>
+      </div>
+      {messages.length===0 ? (
+        <div style={{background:C2.white,borderRadius:16,padding:26,textAlign:"center",color:C2.muted,fontWeight:800,border:`1px solid ${C2.border}`}}>אין הודעות פעילות</div>
+      ) : messages.map(msg=>(
+        <div key={msg.id} style={{background:C2.white,borderRadius:16,padding:14,marginBottom:10,border:`1px solid ${msg.reply ? "#c8e6c9" : C2.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.05)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:8}}>
+            <div style={{fontSize:12,fontWeight:900,color:C2.blue}}>{msg.toName || SUPER_MESSAGE_TARGET.name}</div>
+            <div style={{fontSize:11,fontWeight:800,color:C2.muted}}>{msg.createdAt}</div>
+          </div>
+          <div style={{fontSize:14,fontWeight:800,color:C2.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{msg.message}</div>
+          {msg.reply ? (
+            <div style={{marginTop:10,background:"#e8f5e9",borderRadius:12,padding:10,color:C2.green,fontSize:13,fontWeight:800,lineHeight:1.5}}>
+              תשובת אור: {msg.reply}
+              {msg.replyAt&&<div style={{fontSize:10,color:C2.muted,marginTop:4}}>{msg.replyAt}</div>}
+            </div>
+          ) : (
+            <div style={{marginTop:10,background:"#fff8e1",borderRadius:99,padding:"6px 12px",display:"inline-block",color:C2.orange,fontSize:11,fontWeight:900}}>ממתין לתשובה</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SuperMessageInbox({ user, C, showToast }) {
+  const [messages, setMessages] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [open, setOpen] = useState(true);
+
+  const isTarget = String(user?.username || "").trim().toLowerCase() === SUPER_MESSAGE_TARGET.username ||
+    String(user?.name || "").trim() === SUPER_MESSAGE_TARGET.name;
+
+  const loadMessages = async () => {
+    if (!isTarget) return;
+    const res = await mgmtCall("getSuperMessages", { to: SUPER_MESSAGE_TARGET.username });
+    if (res?.messages) setMessages(res.messages);
+  };
+
+  useEffect(() => {
+    if (!isTarget) return;
+    loadMessages();
+    const timer = setInterval(loadMessages, 60000);
+    return () => clearInterval(timer);
+  }, [isTarget]);
+
+  const reply = async (msg) => {
+    const text = String(drafts[msg.id] || "").trim();
+    if (!text) {
+      showToast?.("כתוב תשובה לפני שליחה");
+      return;
+    }
+    const res = await mgmtCall("replySuperMessage", { id: msg.id, to: SUPER_MESSAGE_TARGET.username, reply: text });
+    if (res?.success) {
+      setDrafts(x=>({...x,[msg.id]:""}));
+      showToast?.("התשובה נשמרה");
+      await loadMessages();
+    } else {
+      showToast?.("שמירת התשובה נכשלה");
+    }
+  };
+
+  if (!isTarget || messages.length===0) return null;
+  const active = messages.filter(m=>!m.reply);
+  if (!active.length) return null;
+
+  return (
+    <div style={{position:"fixed",left:12,right:12,bottom:118,zIndex:1200,background:"rgba(255,255,255,0.94)",border:`2px solid ${C.blue}`,borderRadius:18,boxShadow:"0 18px 50px rgba(15,23,42,0.18)",overflow:"hidden",backdropFilter:"blur(14px)"}}>
+      <Press onClick={()=>setOpen(x=>!x)} style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#e3f2fd"}}>
+        <div style={{fontWeight:900,fontSize:14,color:C.text}}>הודעות מסופר־אדמין</div>
+        <div style={{background:C.red,color:"#fff",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:900}}>{active.length}</div>
+      </Press>
+      {open&&<div style={{padding:12,maxHeight:"36vh",overflowY:"auto"}}>
+        {active.map(msg=>(
+          <div key={msg.id} style={{padding:12,borderRadius:14,background:"#f5f9ff",border:"1px solid #d7e6f7",marginBottom:10}}>
+            <div style={{fontSize:13,fontWeight:900,color:C.text,lineHeight:1.55,whiteSpace:"pre-wrap",marginBottom:10}}>{msg.message}</div>
+            <textarea value={drafts[msg.id]||""} onChange={e=>setDrafts(x=>({...x,[msg.id]:e.target.value}))} placeholder="כתוב תשובה..." rows={2} style={{width:"100%",border:"1px solid #d7e6f7",borderRadius:12,padding:10,fontSize:13,fontFamily:"inherit",resize:"none",marginBottom:8}}/>
+            <Press onClick={()=>reply(msg)} style={{padding:"10px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center"}}>שלח תשובה</Press>
+          </div>
+        ))}
+      </div>}
+    </div>
+  );
+}
+
 function SuperAdminScreen({ onClose }) {
   const [pass, setPass] = useState("");
   const [auth, setAuth] = useState(false);
@@ -1325,6 +1459,7 @@ function SuperAdminScreen({ onClose }) {
               {auth&&<div style={{color:"rgba(255,255,255,0.6)",fontSize:12,marginTop:2}}>{clients.length} לקוחות · {pendingCount} תקלות ממתינות</div>}
             </div>
             <div style={{display:"flex",gap:8}}>
+              {auth&&<Press onClick={()=>{setTab("messages");haptic();}} style={{background:tab==="messages"?"rgba(255,255,255,0.32)":"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.25)",borderRadius:12,padding:"8px 12px",color:"#fff",fontSize:13,fontWeight:800}}>הודעות</Press>}
               {auth&&<Press onClick={()=>{loadData();haptic();}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"#fff",fontSize:13,fontWeight:700}}>🔄</Press>}
               <Press onClick={close} style={{width:36,height:36,borderRadius:"50%",background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:16}}>✕</Press>
             </div>
@@ -1344,7 +1479,7 @@ function SuperAdminScreen({ onClose }) {
         ):(
           <>
             <div style={{background:C2.white,padding:"8px 12px",borderBottom:`1px solid ${C2.border}`,display:"flex",gap:6,flexShrink:0,overflowX:"auto",boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
-              {[["issues",`🔧 תקלות${pendingCount>0?` (${pendingCount})`:""}`],["clients","👥 לקוחות"],["licenses","🔑 רישיונות"],["stats","📊 סטטיסטיקות"],["settings","⚙️ הגדרות"]].map(([t,lbl])=>(
+              {[["issues",`🔧 תקלות${pendingCount>0?` (${pendingCount})`:""}`],["clients","👥 לקוחות"],["messages","הודעות"],["licenses","🔑 רישיונות"],["stats","📊 סטטיסטיקות"],["settings","⚙️ הגדרות"]].map(([t,lbl])=>(
                 <Press key={t} onClick={()=>{setTab(t);haptic();}} style={{padding:"9px 14px",borderRadius:99,fontSize:12,fontWeight:800,flexShrink:0,whiteSpace:"nowrap",background:tab===t?`linear-gradient(135deg,${C2.blue},#42a5f5)`:"#f0f4f8",color:tab===t?"#fff":C2.muted,boxShadow:tab===t?"0 4px 12px rgba(21,101,192,0.3)":"none"}}>{lbl}</Press>
               ))}
             </div>
@@ -1433,6 +1568,7 @@ function SuperAdminScreen({ onClose }) {
                   ))}
                 </div>
               )}
+              {tab==="messages"&&!loading&&<SuperAdminMessagesTab C2={C2} inp2={inp2} showMsg={showMsg}/>}
               {tab==="licenses"&&!loading&&<LicensesTab C2={C2} inp2={inp2} showMsg={showMsg}/>}
               {tab==="stats"&&!loading&&(
                 <div>
@@ -1738,6 +1874,7 @@ useEffect(() => {
   const fileRef = useRef();
   const toastTimer = useRef();
   const operatorIssueSendingRef = useRef(false);
+  const internalNoteClientRef = useRef("");
 
   const setAction = (key, status, resetMs = 0) => {
     setActionStatus(prev => ({...prev, [key]: status}));
@@ -1765,6 +1902,22 @@ useEffect(() => {
   const {reportDate,client,chlorine,ph,salt,elModel,elSerial,elDate,waterLevel,clarity,fat,flow,acid,phUpSupply,saltPkg,saltBags,supplyStatus,supplyNote,suppliedEquipment=[],poolStatus,customStatusText,restrictedUntil,notes,photos} = form;
   const fmtTime = (d) => d.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
   const formatDateInput = (d) => d.toISOString().slice(0,10);
+  const normalizeDate = (d) => String(d||"").trim().slice(0,10);
+  useEffect(() => {
+    if (!client) {
+      internalNoteClientRef.current = "";
+      return;
+    }
+    if (poolStatus !== "\u05de\u05d0\u05d5\u05d6\u05e0\u05ea") return;
+    if (internalNoteClientRef.current === client) return;
+    internalNoteClientRef.current = client;
+    const savedNote = String(lastReadings[client]?.customStatusText || "").trim();
+    setForm(f => (
+      f.client === client && f.poolStatus === "\u05de\u05d0\u05d5\u05d6\u05e0\u05ea"
+        ? {...f, customStatusText: savedNote}
+        : f
+    ));
+  }, [client, poolStatus, lastReadings]);
   const applyChemicalRestriction = (minutes) => {
     const start = new Date();
     const end = new Date(start.getTime() + minutes * 60000);
@@ -1785,7 +1938,6 @@ useEffect(() => {
   const clientPhone = (n) => (findClientByName(n)||{}).phone||"";
   const clientAddress = (n) => (findClientByName(n)||{}).address||"";
   const clientGateCode = (n) => (findClientByName(n)||{}).gateCode||"";
-  const normalizeDate = (d) => String(d||"").trim().slice(0,10);
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
   const findPushUser = (value) => {
     if (!value) return null;
@@ -2135,6 +2287,40 @@ useEffect(() => {
     if (!sheetId) return;
     const rows = Object.entries(db).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices)]);
     void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply sync failed", e));
+  };
+  useEffect(() => {
+    if (!sheetId || !Object.keys(supplyDB || {}).length) return;
+    const timer = setInterval(() => persistSupplyDB(supplyDB), 180000);
+    return () => clearInterval(timer);
+  }, [sheetId, supplyDB]);
+  const buildSupplyUpdateForReport = (source = {}) => {
+    const clientName = source.client || "";
+    if (!clientName) return null;
+    const supply = supplyFromReportLike(source);
+    const supplied = String(source.suppliedEquipment || "");
+    const suppliedAcid = supplied.includes("חומצת");
+    const suppliedPhUp = supplied.includes("סודה") || supplied.includes("מעלה");
+    const nextAcid = supply.acid && !suppliedAcid;
+    const nextPhUpSupply = supply.phUpSupply && !suppliedPhUp;
+    const nextSaltPkg = supply.saltPkg;
+    if (!nextAcid && !nextPhUpSupply && !nextSaltPkg && !supplied) return null;
+    const prevSupply = supplyDB[clientName] || {};
+    const materialPrices = normalizeNextSupplyPrices(prevSupply.materialPrices);
+    const nextSupplyDate = nextAcid || nextPhUpSupply || nextSaltPkg ? nextTreatmentDateForClient(clientName, source.reportDate) : "";
+    const nextSupply = {
+      acid: nextAcid,
+      phUpSupply: nextPhUpSupply,
+      saltPkg: nextSaltPkg,
+      saltBags: nextSaltPkg ? Number(supply.saltBags || prevSupply.saltBags || 1) : 0,
+      supplyNote: "",
+      updatedAt: source.reportDate || todayStr(),
+      nextSupplyDate,
+      assignedOperator: prevSupply.assignedOperator || "",
+      materialPrices
+    };
+    const db = {...supplyDB, [clientName]: nextSupply};
+    const row = [clientName,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices)];
+    return {db, row};
   };
 
   const sendNotificationToAdmins = async (title, message) => {
@@ -2715,6 +2901,73 @@ useEffect(() => {
     }
     return list;
   };
+  const subOperatorsForOperator = (date, opName) => {
+    const assigned = getAssignedSubOperator(date, opName);
+    return subOperatorUsers.filter(su =>
+      normalizeName(linkedOperatorName(su, date)) === normalizeName(opName) ||
+      isSameSubOperator(assigned, su)
+    );
+  };
+  const autoShareOrderAfterReport = async (report) => {
+    if (!report?.reportDate || !report?.client || isSubOperatorRole(user?.role)) return;
+    const opName = report.operator || dailyOwnerName(report.reportDate) || user?.name || "";
+    const subs = subOperatorsForOperator(report.reportDate, opName);
+    if (!opName || !subs.length) return;
+    const currentList = getOperatorDailyView(report.reportDate);
+    if (!currentList.length) return;
+    const completedClient = normalizeName(report.client);
+    const sharedEntries = currentList.map((t, i) => {
+      const completedNow = normalizeName(t.client) === completedClient;
+      const done = completedNow || t.status === "done" || isClientReportedDone(report.reportDate, t.client);
+      return {
+        id: t.id,
+        client: t.client,
+        note: t.adminNote || t.note || "",
+        orderIndex: Number(t.orderIndex || i + 1),
+        status: done ? "done" : "pending",
+        changeLog: t.changeLog || [],
+        completedAt: t.completedAt || (completedNow ? nowStr() : ""),
+        completedBy: t.completedBy || (completedNow ? user?.name || "" : ""),
+        reportId: t.reportId || (completedNow ? report.id || "" : "")
+      };
+    });
+    const subKeys = new Set(subs.map(su => normalizeName(su.username || su.name)).filter(Boolean));
+    const shareRows = subs.flatMap(su => sharedEntries.map((entry, i)=>({
+      date: report.reportDate,
+      operator: opName,
+      subUsername: su.username || su.name || "",
+      subOperator: su.name || su.username || "",
+      client: entry.client,
+      note: entry.note || "",
+      id: entry.id || "",
+      status: entry.status || "pending",
+      changeLog: entry.changeLog || [],
+      completedAt: entry.completedAt || "",
+      completedBy: entry.completedBy || "",
+      reportId: entry.reportId || "",
+      revoked: false,
+      orderIndex: Number(entry.orderIndex || i + 1),
+      sharedAt: nowStr(),
+      sharedBy: user?.name || ""
+    })));
+    const nextShared = [
+      ...sharedSubOrders.filter(row => !(
+        normalizeDate(row?.date) === report.reportDate &&
+        normalizeName(row?.operator) === normalizeName(opName) &&
+        subKeys.has(normalizeName(row?.subUsername || row?.subOperator))
+      )),
+      ...shareRows
+    ];
+    try {
+      const res = await sheetCall("saveSubOperatorShares", {sharedSubOrders: shareRows});
+      if (!res?.success) throw new Error(res?.error || "saveSubOperatorShares failed");
+      setSharedSubOrders(nextShared);
+      subs.forEach(su => writeLocalArray(sharedSubOrderKey(report.reportDate, opName, su.username || su.name), sharedEntries));
+      setSubOperatorRefresh(x=>x+1);
+    } catch (e) {
+      console.warn("Auto shared order sync failed", e);
+    }
+  };
   const moveDraftItem = (from, to) => {
     if (from === to || from < 0 || to < 0) return;
     setOperatorOrderDraft(current => {
@@ -3275,14 +3528,18 @@ useEffect(() => {
     }
     trackUsageEvent("save_work_hours", {screen:"daily", target:"clock_log", date:workClockEditor.date, total:totalStr});
   };
-  const handleStartWork = async () => {
+  const handleStartWork = () => {
+    if (workStart) return;
     const now = new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
+    const date = todayStr();
     localStorage.setItem("galileo_workstart", now);
     setWorkStart(now);
     showToast("▶ שעון עבודה התחיל");
     haptic("success");
-    if(sheetId) await sheetCall("saveWorkStart",{log:{username:user?.username||"",operator:user?.name,date:todayStr(),start:now}});
-    trackUsageEvent("save_work_start", {screen:"daily", target:"clock_start_quick", date:todayStr()});
+    trackUsageEvent("save_work_start", {screen:"daily", target:"clock_start_quick", date});
+    void (async () => {
+      if (sheetId) await sheetCall("saveWorkStart",{log:{username:user?.username||"",operator:user?.name,date,start:now}});
+    })().catch(e => console.warn("Work start sync failed", e));
   };
   const handleEndWork = () => openWorkClockEditor("end");
 
@@ -3437,6 +3694,7 @@ useEffect(() => {
   const approvePendingSubReport = async (item) => {
     if (!item || syncing || isActionLoading(`approveSubReport:${item.id}`)) return;
     const report = item.report;
+    const supplyUpdateForApproval = buildSupplyUpdateForReport(report);
     setAction(`approveSubReport:${item.id}`, "loading");
     setSyncing(true);
 
@@ -3448,8 +3706,10 @@ useEffect(() => {
         adminEmail: item.adminEmail || getCompany().adminEmail || "",
         clientAddress: item.clientAddress || clientAddress(report.client),
         clientPhone: item.clientPhone || clientPhone(report.client),
+        supplyUpdate: supplyUpdateForApproval?.row || undefined,
       }).catch(() => null);
       saved = res?.success === true;
+      if (saved && supplyUpdateForApproval?.db) setSupplyDB(supplyUpdateForApproval.db);
       if (saved && !res?.duplicate) {
         void sendNotificationToAdmins(
           `✅ דוח בוצע: ${report.client}`,
@@ -3482,6 +3742,7 @@ useEffect(() => {
       showToast("✅ הדוח אושר ונשלח");
       void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
       void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+      void autoShareOrderAfterReport(report);
       trackUsageEvent("approve_sub_report", {screen:"daily", target:"pending_sub_report"});
     } else {
       setPending(p => [...p, report]);
@@ -3541,6 +3802,8 @@ useEffect(() => {
     setAction("submitReport", "loading");
     setSyncing(true);
     const elNext=calcNext(elDate);
+    let nextSupplyDB = null;
+    let supplyUpdate = null;
     const supplyLabel=[acid&&"חומצת מלח",phUpSupply&&"מעלה pH",saltPkg&&`מלח ×${saltBags}`].filter(Boolean).join(", ");
     if(client&&(acid||phUpSupply||saltPkg||suppliedEquipment.length)&&(!isSubOperatorRole(user?.role)||approvalEditId)){
       const newDB={...supplyDB};
@@ -3557,8 +3820,11 @@ useEffect(() => {
       } else if (suppliedEquipment.length) {
         newDB[client]={acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate:"",assignedOperator:prevSupply.assignedOperator||"",materialPrices};
       }
-      setSupplyDB(newDB);
-      if(sheetId){const rows=Object.entries(newDB).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices)]);void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply background sync failed", e));}
+      nextSupplyDB = newDB;
+      const nextSupply = newDB[client];
+      if (nextSupply) {
+        supplyUpdate = [client,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices)];
+      }
     }
     const reportOperatorName = dailyOwnerName(reportDate) || user?.name;
     if (!isSubOperatorRole(user?.role) || approvalEditId) {
@@ -3631,7 +3897,13 @@ const report = {
     rememberCompletedReport(report);
     setLastReadings(prev => {
       const previous = prev[client] || {};
-      const internalNote = String(customStatusText || "").trim() || String(previous.customStatusText || "").trim();
+      const internalNote = String(customStatusText || "").trim();
+      const previousInternalNote = String(previous.customStatusText || "").trim();
+      const internalNoteDate = internalNote
+        ? (internalNote === previousInternalNote
+            ? (previous.internalNoteDate || previous.customStatusDate || previous.date || reportDate)
+            : reportDate)
+        : "";
       return {
         ...prev,
         [client]: {
@@ -3646,13 +3918,14 @@ const report = {
           acidLiters: form.acidLiters > 0 ? form.acidLiters : 0,
           poolStatus,
           customStatusText: internalNote,
+          internalNoteDate,
           notes,
           missedTreatment: false
         }
       };
     });
 
-    if (!isEditingExistingReport) {
+    if (!isEditingExistingReport && !supplyUpdate) {
       setAction("submitReport", "success", 1200);
       showToast("✅ הדוח נשמר ונשלח ברקע");
       setSyncing(false);
@@ -3697,6 +3970,7 @@ const report = {
           }
           void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
           void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+          void autoShareOrderAfterReport(report);
           setAction("submitReport", "success", 1200);
         } else {
           setPending(prev => {
@@ -3719,16 +3993,18 @@ const report = {
     const adminEmail = getCompany().adminEmail||"";
        if (sheetId) {
       const res = isEditingExistingReport
-        ? await sheetCall("updateReport", {report, original:editingReport}).catch(() => null)
+        ? await sheetCall("updateReport", {report, original:editingReport, supplyUpdate: supplyUpdate || undefined}).catch(() => null)
         : await sheetCall("saveReport", {
           report,
           photos: photosBase64,
           adminEmail,
           clientAddress: clientAddress(client),
           clientPhone: clientPhone(client),
+          supplyUpdate: supplyUpdate || undefined,
         }).catch(() => null);
 
       saved = res?.success === true;
+      if (saved && nextSupplyDB) setSupplyDB(nextSupplyDB);
 
       if (!isEditingExistingReport && saved && !res?.duplicate && user?.role !== "admin") {
         void sendNotificationToAdmins(
@@ -3739,6 +4015,15 @@ const report = {
     }
 
     if (!saved && !isEditingExistingReport) {
+      if (supplyUpdate) {
+        setReports(prev => prev.filter(x => x.id !== report.id));
+        forgetCompletedReport(report.reportDate, report.client, report.operator);
+        setAction("submitReport", "error", 2200);
+        showToast("שמירת החומרים לטיפול הבא נכשלה - הדוח לא נשלח");
+        setSyncing(false);
+        haptic("medium");
+        return;
+      }
       setPending(p => [...p, report]);
       setDismissed(false);
       setAction("submitReport", "local", 2200);
@@ -3761,6 +4046,7 @@ const report = {
     if (!isEditingExistingReport) {
       void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
       void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+      void autoShareOrderAfterReport(report);
     }
   };
 
@@ -4067,6 +4353,7 @@ const report = {
     const operatorPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
+        <SuperMessageInbox user={user} C={C} showToast={showToast}/>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
@@ -4237,6 +4524,7 @@ const report = {
               {completedDayTasks.length ? completedDayTasks.map((t,i)=>{
                 const lr = lastReadings[t.client] || {};
                 const note = String(lr.customStatusText || "").trim();
+                const noteDate = normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date);
                 return (
                   <Press key={`${t.id || t.client}-done-${i}`} onClick={()=>openDoneReportEditor(t)} style={{padding:"8px 0",borderBottom:i<completedDayTasks.length-1?`1px solid ${C.border}`:"none",display:"grid",gap:5}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
@@ -4251,7 +4539,7 @@ const report = {
                         {lr.date&&<span>{fmtDate(String(lr.date).slice(0,10))}</span>}
                       </div>
                     )}
-                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערה פנימית: {note}</div>}
+                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערה פנימית{noteDate ? ` (${fmtDate(noteDate)})` : ""}: {note}</div>}
                   </Press>
                 );
               }) : <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין בריכות שהושלמו עדיין</div>}
@@ -4752,7 +5040,7 @@ const report = {
               )}
               {client&&(()=>{ const c=[...clients,...freeClients].find(x=>x.name===client); const meta=clientMetaLine(c); return meta?<div style={{marginTop:8,fontSize:12,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:10,padding:"8px 12px"}}>{meta}</div>:null; })()}
               {client&&clientPhone(client)&&<a href={`tel:${clientPhone(client)}`} style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"10px 14px",background:"#e8f5e9",border:`1px solid #c8e6c9`,borderRadius:12,textDecoration:"none",color:C.green,fontSize:13,fontWeight:700}}><span>📞</span><span>{client.split(" - ")[0]}</span><span style={{color:C.muted,fontSize:12,marginRight:"auto"}}>לחץ לחיוג</span></a>}
-              {client&&lastReadings[client]&&(()=>{ const lr=lastReadings[client]; const note=String(lr.customStatusText||"").trim(); return (
+              {client&&lastReadings[client]&&(()=>{ const lr=lastReadings[client]; const note=String(lr.customStatusText||"").trim(); const noteDate=normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date); return (
                 <div style={{marginTop:8,display:"grid",gap:6}}>
                   <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
                     <span style={{fontSize:12,fontWeight:900,color:C.blue}}>מדידה אחרונה:</span>
@@ -4762,7 +5050,7 @@ const report = {
                     {lr.date&&<span style={{fontSize:11,fontWeight:800,color:C.muted,marginRight:"auto"}}>{fmtDate(String(lr.date).slice(0,10))}</span>}
                   </div>
                   {note&&<div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:800,color:C.muted,lineHeight:1.5}}>
-                    <span style={{color:C.blue}}>הערה פנימית: </span>{note}
+                    <span style={{color:C.blue}}>הערה פנימית{noteDate ? ` (${fmtDate(noteDate)})` : ""}: </span>{note}
                   </div>}
                 </div>
               ); })()}
@@ -4824,7 +5112,7 @@ const report = {
             ))}
           </div>
           <div style={{...card()}}>
-            <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder={poolStatus==="אחר"?"תאר את הבעיה...":"הערה קצרה פנימית על מצב הבריכה (אופציונלי)..."} style={{...inp,resize:"none",marginBottom:poolStatus==="אחר"?10:0}}/>
+            <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder={poolStatus==="אחר"?"תאר את הבעיה...":"הערה פנימית..."} style={{...inp,resize:"none",marginBottom:poolStatus==="אחר"?10:0}}/>
             {poolStatus==="מאוזנת"&&<div style={{fontSize:11,fontWeight:800,color:C.blue,marginTop:6}}>הערה זו נשמרת כהערה פנימית ואינה נשלחת ללקוח.</div>}
             {poolStatus==="אחר"&&(
               <>
@@ -4837,7 +5125,7 @@ const report = {
 
         <Sec icon="📦" title="חומרים לטיפול הבא">
           <div style={{...card()}}>
-            <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",gap:6,alignItems:"center"}}><span>🔒</span><span style={{fontSize:11,fontWeight:700,color:C.blue}}>פנימי בלבד — לא נשלח ללקוח</span></div>
+            <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",gap:6,alignItems:"center"}}><span>🔒</span><span style={{fontSize:11,fontWeight:700,color:C.blue}}>נשלח ללקוח לאישור</span></div>
             {[["acid",acid,"🧪 חומצת מלח"],["phUpSupply",phUpSupply,"📈 מעלה pH"],["saltPkg",saltPkg,"🧂 שקי מלח"]].map(([k,v,lbl])=>(
               <Press key={k} onClick={()=>{sf(k,!v);haptic();}} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:`1px solid ${C.border}`}}>
                 <div style={{width:26,height:26,borderRadius:8,border:`2px solid ${v?C.blue:C.border}`,background:v?C.blue:C.white,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s",flexShrink:0}}>{v&&<span style={{color:"#fff",fontSize:14}}>✓</span>}</div>
