@@ -1459,6 +1459,7 @@ function SuperAdminScreen({ onClose }) {
               {auth&&<div style={{color:"rgba(255,255,255,0.6)",fontSize:12,marginTop:2}}>{clients.length} לקוחות · {pendingCount} תקלות ממתינות</div>}
             </div>
             <div style={{display:"flex",gap:8}}>
+              {auth&&<Press onClick={()=>{setTab("messages");haptic();}} style={{background:tab==="messages"?"rgba(255,255,255,0.32)":"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.25)",borderRadius:12,padding:"8px 12px",color:"#fff",fontSize:13,fontWeight:800}}>הודעות</Press>}
               {auth&&<Press onClick={()=>{loadData();haptic();}} style={{background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:12,padding:"8px 12px",color:"#fff",fontSize:13,fontWeight:700}}>🔄</Press>}
               <Press onClick={close} style={{width:36,height:36,borderRadius:"50%",background:"rgba(255,255,255,0.15)",backdropFilter:"blur(8px)",border:"1px solid rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:16}}>✕</Press>
             </div>
