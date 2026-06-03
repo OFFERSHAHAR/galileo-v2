@@ -1874,6 +1874,7 @@ useEffect(() => {
   const fileRef = useRef();
   const toastTimer = useRef();
   const operatorIssueSendingRef = useRef(false);
+  const internalNoteClientRef = useRef("");
 
   const setAction = (key, status, resetMs = 0) => {
     setActionStatus(prev => ({...prev, [key]: status}));
@@ -1901,6 +1902,22 @@ useEffect(() => {
   const {reportDate,client,chlorine,ph,salt,elModel,elSerial,elDate,waterLevel,clarity,fat,flow,acid,phUpSupply,saltPkg,saltBags,supplyStatus,supplyNote,suppliedEquipment=[],poolStatus,customStatusText,restrictedUntil,notes,photos} = form;
   const fmtTime = (d) => d.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
   const formatDateInput = (d) => d.toISOString().slice(0,10);
+  const normalizeDate = (d) => String(d||"").trim().slice(0,10);
+  useEffect(() => {
+    if (!client) {
+      internalNoteClientRef.current = "";
+      return;
+    }
+    if (poolStatus !== "\u05de\u05d0\u05d5\u05d6\u05e0\u05ea") return;
+    if (internalNoteClientRef.current === client) return;
+    internalNoteClientRef.current = client;
+    const savedNote = String(lastReadings[client]?.customStatusText || "").trim();
+    setForm(f => (
+      f.client === client && f.poolStatus === "\u05de\u05d0\u05d5\u05d6\u05e0\u05ea"
+        ? {...f, customStatusText: savedNote}
+        : f
+    ));
+  }, [client, poolStatus, lastReadings]);
   const applyChemicalRestriction = (minutes) => {
     const start = new Date();
     const end = new Date(start.getTime() + minutes * 60000);
@@ -1921,7 +1938,6 @@ useEffect(() => {
   const clientPhone = (n) => (findClientByName(n)||{}).phone||"";
   const clientAddress = (n) => (findClientByName(n)||{}).address||"";
   const clientGateCode = (n) => (findClientByName(n)||{}).gateCode||"";
-  const normalizeDate = (d) => String(d||"").trim().slice(0,10);
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
   const findPushUser = (value) => {
     if (!value) return null;
@@ -2885,6 +2901,73 @@ useEffect(() => {
     }
     return list;
   };
+  const subOperatorsForOperator = (date, opName) => {
+    const assigned = getAssignedSubOperator(date, opName);
+    return subOperatorUsers.filter(su =>
+      normalizeName(linkedOperatorName(su, date)) === normalizeName(opName) ||
+      isSameSubOperator(assigned, su)
+    );
+  };
+  const autoShareOrderAfterReport = async (report) => {
+    if (!report?.reportDate || !report?.client || isSubOperatorRole(user?.role)) return;
+    const opName = report.operator || dailyOwnerName(report.reportDate) || user?.name || "";
+    const subs = subOperatorsForOperator(report.reportDate, opName);
+    if (!opName || !subs.length) return;
+    const currentList = getOperatorDailyView(report.reportDate);
+    if (!currentList.length) return;
+    const completedClient = normalizeName(report.client);
+    const sharedEntries = currentList.map((t, i) => {
+      const completedNow = normalizeName(t.client) === completedClient;
+      const done = completedNow || t.status === "done" || isClientReportedDone(report.reportDate, t.client);
+      return {
+        id: t.id,
+        client: t.client,
+        note: t.adminNote || t.note || "",
+        orderIndex: Number(t.orderIndex || i + 1),
+        status: done ? "done" : "pending",
+        changeLog: t.changeLog || [],
+        completedAt: t.completedAt || (completedNow ? nowStr() : ""),
+        completedBy: t.completedBy || (completedNow ? user?.name || "" : ""),
+        reportId: t.reportId || (completedNow ? report.id || "" : "")
+      };
+    });
+    const subKeys = new Set(subs.map(su => normalizeName(su.username || su.name)).filter(Boolean));
+    const shareRows = subs.flatMap(su => sharedEntries.map((entry, i)=>({
+      date: report.reportDate,
+      operator: opName,
+      subUsername: su.username || su.name || "",
+      subOperator: su.name || su.username || "",
+      client: entry.client,
+      note: entry.note || "",
+      id: entry.id || "",
+      status: entry.status || "pending",
+      changeLog: entry.changeLog || [],
+      completedAt: entry.completedAt || "",
+      completedBy: entry.completedBy || "",
+      reportId: entry.reportId || "",
+      revoked: false,
+      orderIndex: Number(entry.orderIndex || i + 1),
+      sharedAt: nowStr(),
+      sharedBy: user?.name || ""
+    })));
+    const nextShared = [
+      ...sharedSubOrders.filter(row => !(
+        normalizeDate(row?.date) === report.reportDate &&
+        normalizeName(row?.operator) === normalizeName(opName) &&
+        subKeys.has(normalizeName(row?.subUsername || row?.subOperator))
+      )),
+      ...shareRows
+    ];
+    try {
+      const res = await sheetCall("saveSubOperatorShares", {sharedSubOrders: shareRows});
+      if (!res?.success) throw new Error(res?.error || "saveSubOperatorShares failed");
+      setSharedSubOrders(nextShared);
+      subs.forEach(su => writeLocalArray(sharedSubOrderKey(report.reportDate, opName, su.username || su.name), sharedEntries));
+      setSubOperatorRefresh(x=>x+1);
+    } catch (e) {
+      console.warn("Auto shared order sync failed", e);
+    }
+  };
   const moveDraftItem = (from, to) => {
     if (from === to || from < 0 || to < 0) return;
     setOperatorOrderDraft(current => {
@@ -3445,7 +3528,19 @@ useEffect(() => {
     }
     trackUsageEvent("save_work_hours", {screen:"daily", target:"clock_log", date:workClockEditor.date, total:totalStr});
   };
-  const handleStartWork = () => openWorkClockEditor("start");
+  const handleStartWork = () => {
+    if (workStart) return;
+    const now = new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
+    const date = todayStr();
+    localStorage.setItem("galileo_workstart", now);
+    setWorkStart(now);
+    showToast("▶ שעון עבודה התחיל");
+    haptic("success");
+    trackUsageEvent("save_work_start", {screen:"daily", target:"clock_start", date});
+    void (async () => {
+      if (sheetId) await sheetCall("saveWorkStart",{log:{username:user?.username||"",operator:user?.name,date,start:now}});
+    })().catch(e => console.warn("Work start sync failed", e));
+  };
   const handleEndWork = () => openWorkClockEditor("end");
 
   useEffect(() => {
@@ -3647,6 +3742,7 @@ useEffect(() => {
       showToast("✅ הדוח אושר ונשלח");
       void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
       void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+      void autoShareOrderAfterReport(report);
       trackUsageEvent("approve_sub_report", {screen:"daily", target:"pending_sub_report"});
     } else {
       setPending(p => [...p, report]);
@@ -3801,7 +3897,13 @@ const report = {
     rememberCompletedReport(report);
     setLastReadings(prev => {
       const previous = prev[client] || {};
-      const internalNote = String(customStatusText || "").trim() || String(previous.customStatusText || "").trim();
+      const internalNote = String(customStatusText || "").trim();
+      const previousInternalNote = String(previous.customStatusText || "").trim();
+      const internalNoteDate = internalNote
+        ? (internalNote === previousInternalNote
+            ? (previous.internalNoteDate || previous.customStatusDate || previous.date || reportDate)
+            : reportDate)
+        : "";
       return {
         ...prev,
         [client]: {
@@ -3816,6 +3918,7 @@ const report = {
           acidLiters: form.acidLiters > 0 ? form.acidLiters : 0,
           poolStatus,
           customStatusText: internalNote,
+          internalNoteDate,
           notes,
           missedTreatment: false
         }
@@ -3867,6 +3970,7 @@ const report = {
           }
           void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
           void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+          void autoShareOrderAfterReport(report);
           setAction("submitReport", "success", 1200);
         } else {
           setPending(prev => {
@@ -3942,6 +4046,7 @@ const report = {
     if (!isEditingExistingReport) {
       void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
       void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
+      void autoShareOrderAfterReport(report);
     }
   };
 
@@ -4419,6 +4524,7 @@ const report = {
               {completedDayTasks.length ? completedDayTasks.map((t,i)=>{
                 const lr = lastReadings[t.client] || {};
                 const note = String(lr.customStatusText || "").trim();
+                const noteDate = normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date);
                 return (
                   <Press key={`${t.id || t.client}-done-${i}`} onClick={()=>openDoneReportEditor(t)} style={{padding:"8px 0",borderBottom:i<completedDayTasks.length-1?`1px solid ${C.border}`:"none",display:"grid",gap:5}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
@@ -4433,7 +4539,7 @@ const report = {
                         {lr.date&&<span>{fmtDate(String(lr.date).slice(0,10))}</span>}
                       </div>
                     )}
-                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערה פנימית: {note}</div>}
+                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערה פנימית{noteDate ? ` (${fmtDate(noteDate)})` : ""}: {note}</div>}
                   </Press>
                 );
               }) : <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין בריכות שהושלמו עדיין</div>}
@@ -4934,7 +5040,7 @@ const report = {
               )}
               {client&&(()=>{ const c=[...clients,...freeClients].find(x=>x.name===client); const meta=clientMetaLine(c); return meta?<div style={{marginTop:8,fontSize:12,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:10,padding:"8px 12px"}}>{meta}</div>:null; })()}
               {client&&clientPhone(client)&&<a href={`tel:${clientPhone(client)}`} style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"10px 14px",background:"#e8f5e9",border:`1px solid #c8e6c9`,borderRadius:12,textDecoration:"none",color:C.green,fontSize:13,fontWeight:700}}><span>📞</span><span>{client.split(" - ")[0]}</span><span style={{color:C.muted,fontSize:12,marginRight:"auto"}}>לחץ לחיוג</span></a>}
-              {client&&lastReadings[client]&&(()=>{ const lr=lastReadings[client]; const note=String(lr.customStatusText||"").trim(); return (
+              {client&&lastReadings[client]&&(()=>{ const lr=lastReadings[client]; const note=String(lr.customStatusText||"").trim(); const noteDate=normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date); return (
                 <div style={{marginTop:8,display:"grid",gap:6}}>
                   <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
                     <span style={{fontSize:12,fontWeight:900,color:C.blue}}>מדידה אחרונה:</span>
@@ -4944,7 +5050,7 @@ const report = {
                     {lr.date&&<span style={{fontSize:11,fontWeight:800,color:C.muted,marginRight:"auto"}}>{fmtDate(String(lr.date).slice(0,10))}</span>}
                   </div>
                   {note&&<div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:800,color:C.muted,lineHeight:1.5}}>
-                    <span style={{color:C.blue}}>הערה פנימית: </span>{note}
+                    <span style={{color:C.blue}}>הערה פנימית{noteDate ? ` (${fmtDate(noteDate)})` : ""}: </span>{note}
                   </div>}
                 </div>
               ); })()}
@@ -5006,7 +5112,7 @@ const report = {
             ))}
           </div>
           <div style={{...card()}}>
-            <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder={poolStatus==="אחר"?"תאר את הבעיה...":"הערה קצרה פנימית על מצב הבריכה (אופציונלי)..."} style={{...inp,resize:"none",marginBottom:poolStatus==="אחר"?10:0}}/>
+            <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder={poolStatus==="אחר"?"תאר את הבעיה...":"הערה פנימית..."} style={{...inp,resize:"none",marginBottom:poolStatus==="אחר"?10:0}}/>
             {poolStatus==="מאוזנת"&&<div style={{fontSize:11,fontWeight:800,color:C.blue,marginTop:6}}>הערה זו נשמרת כהערה פנימית ואינה נשלחת ללקוח.</div>}
             {poolStatus==="אחר"&&(
               <>
@@ -5019,7 +5125,7 @@ const report = {
 
         <Sec icon="📦" title="חומרים לטיפול הבא">
           <div style={{...card()}}>
-            <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",gap:6,alignItems:"center"}}><span>🔒</span><span style={{fontSize:11,fontWeight:700,color:C.blue}}>פנימי בלבד — לא נשלח ללקוח</span></div>
+            <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",gap:6,alignItems:"center"}}><span>🔒</span><span style={{fontSize:11,fontWeight:700,color:C.blue}}>נשלח ללקוח לאישור</span></div>
             {[["acid",acid,"🧪 חומצת מלח"],["phUpSupply",phUpSupply,"📈 מעלה pH"],["saltPkg",saltPkg,"🧂 שקי מלח"]].map(([k,v,lbl])=>(
               <Press key={k} onClick={()=>{sf(k,!v);haptic();}} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:`1px solid ${C.border}`}}>
                 <div style={{width:26,height:26,borderRadius:8,border:`2px solid ${v?C.blue:C.border}`,background:v?C.blue:C.white,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s",flexShrink:0}}>{v&&<span style={{color:"#fff",fontSize:14}}>✓</span>}</div>
