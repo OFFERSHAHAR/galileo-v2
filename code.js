@@ -497,7 +497,10 @@
       }
 
       if (action === "appendMgmtRow") {
-        const sheet = ss.getSheetByName(data.sheet);
+        let sheet = ss.getSheetByName(data.sheet);
+        if (!sheet && String(data.sheet || "") === "הודעות") {
+          sheet = getSuperMessagesSheet_(ss);
+        }
         if (!sheet) return json({ error: "sheet not found" });
         sheet.appendRow(data.row);
         return json({ success: true });
