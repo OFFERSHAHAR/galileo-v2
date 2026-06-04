@@ -273,18 +273,17 @@ function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEF
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
 const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
 const SUPER_MESSAGE_TARGET = { username: "or", name: "אור מוסה" };
-const SUPER_MESSAGE_TARGET_ALIASES = ["or", "אור", "אור מוסה"].map(x => String(x).trim().toLowerCase());
+const SUPER_MESSAGE_TARGET_PASSWORD = "1892346";
 
 function isSuperMessageTargetUser(user) {
   const username = String(user?.username || "").trim().toLowerCase();
-  const name = String(user?.name || "").trim().toLowerCase();
-  return SUPER_MESSAGE_TARGET_ALIASES.includes(username) || SUPER_MESSAGE_TARGET_ALIASES.includes(name);
+  const password = String(user?.password || "").trim();
+  return username === SUPER_MESSAGE_TARGET.username && password === SUPER_MESSAGE_TARGET_PASSWORD;
 }
 
 function isSuperMessageForTarget(msg) {
   const to = String(msg?.to || "").trim().toLowerCase();
-  const toName = String(msg?.toName || "").trim().toLowerCase();
-  return SUPER_MESSAGE_TARGET_ALIASES.includes(to) || SUPER_MESSAGE_TARGET_ALIASES.includes(toName);
+  return to === SUPER_MESSAGE_TARGET.username;
 }
 
 async function mgmtCall(action, payload={}) {
@@ -1390,7 +1389,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false }) {
 
   if (!isTarget) return null;
   const active = messages.filter(m=>!m.reply);
-  const showPanel = panelVisible && active.length > 0;
+  const showPanel = showHomeCue && panelVisible && active.length > 0;
 
   return (
     <>
@@ -3810,7 +3809,14 @@ useEffect(() => {
       void autoShareOrderAfterReport(report);
       trackUsageEvent("approve_sub_report", {screen:"daily", target:"pending_sub_report"});
     } else {
-      setPending(p => [...p, report]);
+      setPending(prev => {
+        const exists = prev.some(x => x.id === report.id || (
+          normalizeDate(x.reportDate) === normalizeDate(report.reportDate) &&
+          normalizeName(x.operator) === normalizeName(report.operator) &&
+          normalizeName(x.client) === normalizeName(report.client)
+        ));
+        return exists ? prev : [...prev, report];
+      });
       await removePendingSubReport(item.id);
       setAction(`approveSubReport:${item.id}`, "local", 2200);
       trackUsageEvent("approve_sub_report_local", {screen:"daily", target:"pending_sub_report"});
@@ -4089,7 +4095,14 @@ const report = {
         haptic("medium");
         return;
       }
-      setPending(p => [...p, report]);
+      setPending(prev => {
+        const exists = prev.some(x => x.id === report.id || (
+          normalizeDate(x.reportDate) === normalizeDate(report.reportDate) &&
+          normalizeName(x.operator) === normalizeName(report.operator) &&
+          normalizeName(x.client) === normalizeName(report.client)
+        ));
+        return exists ? prev : [...prev, report];
+      });
       setDismissed(false);
       setAction("submitReport", "local", 2200);
       showToast("⚠️ הדוח נשמר מקומית");
@@ -4120,16 +4133,18 @@ const report = {
     setAction("syncPending", "loading");
     setSyncing(true);
 
-    let ok = true;
+    const sent = [];
+    const failed = [];
     for (const r of pending) {
       const res = await sheetCall("saveReport",{report:r}).catch(()=>null);
-      if(!res?.success) ok=false;
+      if(res?.success) sent.push(r);
+      else failed.push(r);
     }
 
-    if(ok){
+    if(sent.length){
       setReports(prev => {
         const next = [...prev];
-        pending.forEach(r => {
+        sent.forEach(r => {
           const idx = next.findIndex(x => x.id === r.id || (
             normalizeDate(x.reportDate) === normalizeDate(r.reportDate) &&
             normalizeName(x.operator) === normalizeName(r.operator) &&
@@ -4142,7 +4157,7 @@ const report = {
       });
       setSheetReports(prev => {
         const next = [...prev];
-        pending.forEach(r => {
+        sent.forEach(r => {
           const idx = next.findIndex(x => x.id === r.id || (
             normalizeDate(x.reportDate) === normalizeDate(r.reportDate) &&
             normalizeName(x.operator) === normalizeName(r.operator) &&
@@ -4153,9 +4168,13 @@ const report = {
         });
         return next;
       });
-      setPending([]);
-      setAction("syncPending", "success", 1600);
-      showToast("✅ כל הדוחות נשלחו!");
+      sent.forEach(r => {
+        void sendReportWhatsApp(r).catch(e => console.warn("Pending WhatsApp send failed", e));
+        void autoShareOrderAfterReport(r);
+      });
+      setPending(failed);
+      setAction("syncPending", failed.length ? "error" : "success", failed.length ? 2200 : 1600);
+      showToast(failed.length ? `⚠️ ${failed.length} דוחות עדיין ממתינים` : "✅ כל הדוחות נשלחו!");
     } else {
       setAction("syncPending", "error", 2200);
       showToast("⚠️ חלק מהדוחות עדיין ממתינים");
@@ -4163,6 +4182,29 @@ const report = {
 
     setSyncing(false);
   };
+
+  useEffect(() => {
+    if (!pending.length) return;
+
+    const retryPending = () => {
+      if (syncing || isActionLoading("syncPending")) return;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void syncPendingReports();
+    };
+
+    const retryTimer = window.setTimeout(retryPending, 1200);
+    window.addEventListener("online", retryPending);
+    window.addEventListener("focus", retryPending);
+    document.addEventListener("visibilitychange", retryPending);
+
+    return () => {
+      window.clearTimeout(retryTimer);
+      window.removeEventListener("online", retryPending);
+      window.removeEventListener("focus", retryPending);
+      document.removeEventListener("visibilitychange", retryPending);
+    };
+  }, [pending.length, syncing]);
 
   const openManualReport = async () => {
     if (isActionLoading("openManualReport")) return;
@@ -4382,6 +4424,7 @@ const report = {
     };
     const criticalOperatorNotice = null;
     const done = dayTasks.filter(isDailyTaskDone).length;
+    const isDailyOrderComplete = dayTasks.length > 0 && done === dayTasks.length && !operatorEditOrder;
     const completedDayTasks = dayTasks.filter(isDailyTaskDone);
     const doneManualTasks = todayManualTasks.filter(t=>t.status==="done").length;
     const workMonthKey = normalizeDate(dailyDate).slice(0,7);
@@ -4420,7 +4463,7 @@ const report = {
       <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
         <SuperMessageInbox user={user} C={C} showToast={showToast} showHomeCue={navTab===0}/>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
-        {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
+        {showDailyBriefing&&!welcomeMedia&&!isDailyOrderComplete&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
         {workClockEditor&&(
           <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.48)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
@@ -4762,7 +4805,7 @@ const report = {
           </div>}
           {dayTasks.length===0&&!isSubOperator&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>אין לקוחות לתאריך זה</div></div>}
           {dayTasks.length===0&&isSubOperator&&hasSharedOrderForSub&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>הסדר שותף ללא לקוחות לתאריך זה</div></div>}
-          {displayDayTasks.map((t,i)=>{
+          {!isDailyOrderComplete&&displayDayTasks.map((t,i)=>{
             const doneKey = `${dailyDate}:${t.id || t.client}`;
             const isDoneOpen = !!openDoneTasks[doneKey];
             const supply = clientSupply(t.client);
@@ -4968,7 +5011,7 @@ const report = {
               ))}
             </div>
           )}
-          {done===dayTasks.length&&dayTasks.length>0&&!clientSearch&&(
+          {isDailyOrderComplete&&!clientSearch&&(
             <div style={{...card({textAlign:"center",background:"linear-gradient(135deg,#e8f5e9,#f1f8e9)"}),padding:28,border:"2px solid #c8e6c9"}}>
               <div style={{fontSize:44,marginBottom:8}}>🎉</div>
               <div style={{fontWeight:900,fontSize:18,color:C.green,marginBottom:4}}>סיימת הכל!</div>
