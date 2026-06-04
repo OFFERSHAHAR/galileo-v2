@@ -3,6 +3,7 @@
 
   function doPost(e) {
     try {
+      const json = jsonResponse_;
       const data = JSON.parse(e.postData.contents);
       const action = data.action;
 
@@ -3422,11 +3423,15 @@ function getClientBrandingBySheetId_(sheetId) {
 }
 
 
-function json(obj) {
+function jsonResponse_(obj) {
   return ContentService
       .createTextOutput(JSON.stringify(obj))
       .setMimeType(ContentService.MimeType.JSON);
   }
+
+function json(obj) {
+  return jsonResponse_(obj);
+}
 
   function doOptions(e) {
     return ContentService

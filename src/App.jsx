@@ -265,7 +265,7 @@ function saveCompany(data) {
   applyTenantBranding(data);
 }
 
-const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxvbmAdypHr6r9lOlCwnlamUHzMT0wSFFHHZ-aT15Z8DOrJ2qmk4nlbFY1PKyNnla6e/exec";
+const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
 const DEFAULT_SUPER_PASS = "039076914";
 
