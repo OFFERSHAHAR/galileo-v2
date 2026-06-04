@@ -273,6 +273,19 @@ function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEF
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
 const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
 const SUPER_MESSAGE_TARGET = { username: "or", name: "אור מוסה" };
+const SUPER_MESSAGE_TARGET_ALIASES = ["or", "אור", "אור מוסה"].map(x => String(x).trim().toLowerCase());
+
+function isSuperMessageTargetUser(user) {
+  const username = String(user?.username || "").trim().toLowerCase();
+  const name = String(user?.name || "").trim().toLowerCase();
+  return SUPER_MESSAGE_TARGET_ALIASES.includes(username) || SUPER_MESSAGE_TARGET_ALIASES.includes(name);
+}
+
+function isSuperMessageForTarget(msg) {
+  const to = String(msg?.to || "").trim().toLowerCase();
+  const toName = String(msg?.toName || "").trim().toLowerCase();
+  return SUPER_MESSAGE_TARGET_ALIASES.includes(to) || SUPER_MESSAGE_TARGET_ALIASES.includes(toName);
+}
 
 async function mgmtCall(action, payload={}) {
   try {
@@ -1335,13 +1348,12 @@ function SuperMessageInbox({ user, C, showToast }) {
   const [drafts, setDrafts] = useState({});
   const [open, setOpen] = useState(true);
 
-  const isTarget = String(user?.username || "").trim().toLowerCase() === SUPER_MESSAGE_TARGET.username ||
-    String(user?.name || "").trim() === SUPER_MESSAGE_TARGET.name;
+  const isTarget = isSuperMessageTargetUser(user);
 
   const loadMessages = async () => {
     if (!isTarget) return;
-    const res = await mgmtCall("getSuperMessages", { to: SUPER_MESSAGE_TARGET.username });
-    if (res?.messages) setMessages(res.messages);
+    const res = await mgmtCall("getSuperMessages", { to: "" });
+    if (res?.messages) setMessages(res.messages.filter(isSuperMessageForTarget));
   };
 
   useEffect(() => {
@@ -1357,7 +1369,7 @@ function SuperMessageInbox({ user, C, showToast }) {
       showToast?.("כתוב תשובה לפני שליחה");
       return;
     }
-    const res = await mgmtCall("replySuperMessage", { id: msg.id, to: SUPER_MESSAGE_TARGET.username, reply: text });
+    const res = await mgmtCall("replySuperMessage", { id: msg.id, to: msg.to || SUPER_MESSAGE_TARGET.username, reply: text });
     if (res?.success) {
       setDrafts(x=>({...x,[msg.id]:""}));
       showToast?.("התשובה נשמרה");
