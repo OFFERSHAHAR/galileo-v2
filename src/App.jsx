@@ -1252,10 +1252,42 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
       toName: SUPER_MESSAGE_TARGET.name,
       message
     });
-    if (res?.success) {
+    let saved = res?.success;
+    let fallbackMessage = null;
+    if (!saved && res?.error === "unknown action") {
+      const now = new Date();
+      fallbackMessage = {
+        id: `local-${now.getTime()}`,
+        createdAt: now.toISOString(),
+        from: "סופר אדמין",
+        to: SUPER_MESSAGE_TARGET.username,
+        toName: SUPER_MESSAGE_TARGET.name,
+        message,
+        reply: "",
+        replyAt: "",
+        status: "open"
+      };
+      const fallback = await mgmtCall("appendMgmtRow", {
+        sheet: "הודעות",
+        row: [
+          fallbackMessage.id,
+          fallbackMessage.createdAt,
+          fallbackMessage.from,
+          fallbackMessage.to,
+          fallbackMessage.toName,
+          fallbackMessage.message,
+          "",
+          "",
+          "open"
+        ]
+      });
+      saved = fallback?.success;
+    }
+    if (saved) {
       setDraft("");
       showMsg("ההודעה נשמרה ונשלחה לאור");
-      await loadMessages();
+      if (fallbackMessage) setMessages(prev => [fallbackMessage, ...prev]);
+      else await loadMessages();
     } else {
       showMsg("שמירת ההודעה נכשלה");
       setLoading(false);
