@@ -1343,17 +1343,26 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
   );
 }
 
-function SuperMessageInbox({ user, C, showToast }) {
+function SuperMessageInbox({ user, C, showToast, showHomeCue=false }) {
   const [messages, setMessages] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [open, setOpen] = useState(true);
+  const [panelVisible, setPanelVisible] = useState(false);
+  const [fetchError, setFetchError] = useState("");
 
   const isTarget = isSuperMessageTargetUser(user);
 
   const loadMessages = async () => {
     if (!isTarget) return;
+    setFetchError("");
     const res = await mgmtCall("getSuperMessages", { to: "" });
-    if (res?.messages) setMessages(res.messages.filter(isSuperMessageForTarget));
+    if (res?.messages) {
+      const nextMessages = res.messages.filter(isSuperMessageForTarget);
+      setMessages(nextMessages);
+      if (nextMessages.some(m => !m.reply)) setPanelVisible(true);
+    } else if (res?.error) {
+      setFetchError(String(res.error));
+    }
   };
 
   useEffect(() => {
@@ -1379,12 +1388,24 @@ function SuperMessageInbox({ user, C, showToast }) {
     }
   };
 
-  if (!isTarget || messages.length===0) return null;
+  if (!isTarget) return null;
   const active = messages.filter(m=>!m.reply);
-  if (!active.length) return null;
+  const showPanel = panelVisible && active.length > 0;
 
   return (
-    <div style={{position:"fixed",left:12,right:12,bottom:118,zIndex:1200,background:"rgba(255,255,255,0.94)",border:`2px solid ${C.blue}`,borderRadius:18,boxShadow:"0 18px 50px rgba(15,23,42,0.18)",overflow:"hidden",backdropFilter:"blur(14px)"}}>
+    <>
+    {showHomeCue&&(
+      <Press onClick={async()=>{await loadMessages();setPanelVisible(true);haptic();if(!active.length&&!fetchError) showToast?.("אין הודעות פעילות כרגע");}} style={{position:"fixed",top:92,left:14,zIndex:1180,display:"flex",alignItems:"center",gap:8,padding:"9px 13px",borderRadius:14,background:active.length?"linear-gradient(135deg,#ef4444,#f97316)":"rgba(255,255,255,0.88)",color:active.length?"#fff":C.blue,border:`1px solid ${active.length?"rgba(255,255,255,0.35)":C.border}`,boxShadow:"0 14px 32px rgba(15,23,42,0.16)",fontSize:12,fontWeight:900,backdropFilter:"blur(14px)"}}>
+        <span>בוא נראה מה עכשיו</span>
+        {active.length>0&&<span style={{minWidth:20,height:20,borderRadius:99,background:"#fff",color:C.red,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:900}}>{active.length}</span>}
+      </Press>
+    )}
+    {showHomeCue&&fetchError&&(
+      <div style={{position:"fixed",top:136,left:14,zIndex:1180,maxWidth:250,padding:"7px 10px",borderRadius:12,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontSize:11,fontWeight:900,boxShadow:"0 10px 24px rgba(15,23,42,0.12)"}}>
+        חיבור הודעות לא זמין בסקריפט הפרוס
+      </div>
+    )}
+    {showPanel&&<div style={{position:"fixed",left:12,right:12,bottom:118,zIndex:1200,background:"rgba(255,255,255,0.94)",border:`2px solid ${C.blue}`,borderRadius:18,boxShadow:"0 18px 50px rgba(15,23,42,0.18)",overflow:"hidden",backdropFilter:"blur(14px)"}}>
       <Press onClick={()=>setOpen(x=>!x)} style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#e3f2fd"}}>
         <div style={{fontWeight:900,fontSize:14,color:C.text}}>הודעות מסופר־אדמין</div>
         <div style={{background:C.red,color:"#fff",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:900}}>{active.length}</div>
@@ -1398,7 +1419,8 @@ function SuperMessageInbox({ user, C, showToast }) {
           </div>
         ))}
       </div>}
-    </div>
+    </div>}
+    </>
   );
 }
 
@@ -4396,7 +4418,7 @@ const report = {
     const operatorPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
-        <SuperMessageInbox user={user} C={C} showToast={showToast}/>
+        <SuperMessageInbox user={user} C={C} showToast={showToast} showHomeCue={navTab===0}/>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {showDailyBriefing&&!welcomeMedia&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
