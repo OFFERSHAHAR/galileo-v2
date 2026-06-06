@@ -1342,7 +1342,7 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
   );
 }
 
-function SuperMessageInbox({ user, C, showToast, showHomeCue=false }) {
+function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false }) {
   const [messages, setMessages] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [open, setOpen] = useState(true);
@@ -1377,14 +1377,28 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false }) {
       showToast?.("כתוב תשובה לפני שליחה");
       return;
     }
-    const res = await mgmtCall("replySuperMessage", { id: msg.id, to: msg.to || SUPER_MESSAGE_TARGET.username, reply: text });
-    if (res?.success) {
-      setDrafts(x=>({...x,[msg.id]:""}));
-      showToast?.("התשובה נשמרה");
-      await loadMessages();
-    } else {
-      showToast?.("שמירת התשובה נכשלה");
-    }
+    setPanelVisible(false);
+    setDrafts(x=>({...x,[msg.id]:""}));
+    setMessages(x=>x.filter(m=>m.id!==msg.id));
+    showToast?.("התשובה נשלחת ברקע");
+    mgmtCall("replySuperMessage", { id: msg.id, to: msg.to || SUPER_MESSAGE_TARGET.username, reply: text })
+      .then(res => {
+        if (res?.success) {
+          showToast?.("התשובה נשמרה");
+          loadMessages();
+        } else {
+          setMessages(x=>[msg, ...x.filter(m=>m.id!==msg.id)]);
+          setPanelVisible(true);
+          setDrafts(x=>({...x,[msg.id]:text}));
+          showToast?.("שמירת התשובה נכשלה");
+        }
+      })
+      .catch(() => {
+        setMessages(x=>[msg, ...x.filter(m=>m.id!==msg.id)]);
+        setPanelVisible(true);
+        setDrafts(x=>({...x,[msg.id]:text}));
+        showToast?.("שמירת התשובה נכשלה");
+      });
   };
 
   if (!isTarget) return null;
@@ -1394,7 +1408,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false }) {
   return (
     <>
     {showHomeCue&&(
-      <Press onClick={async()=>{await loadMessages();setPanelVisible(true);haptic();if(!active.length&&!fetchError) showToast?.("אין הודעות פעילות כרגע");}} style={{position:"fixed",top:92,left:14,zIndex:1180,display:"flex",alignItems:"center",gap:8,padding:"9px 13px",borderRadius:14,background:active.length?"linear-gradient(135deg,#ef4444,#f97316)":"rgba(255,255,255,0.88)",color:active.length?"#fff":C.blue,border:`1px solid ${active.length?"rgba(255,255,255,0.35)":C.border}`,boxShadow:"0 14px 32px rgba(15,23,42,0.16)",fontSize:12,fontWeight:900,backdropFilter:"blur(14px)"}}>
+      <Press onClick={async()=>{await loadMessages();setPanelVisible(true);haptic();if(!active.length&&!fetchError) showToast?.("אין הודעות פעילות כרגע");}} style={{position:inline?"relative":"fixed",top:inline?undefined:92,left:inline?undefined:14,zIndex:1180,display:"inline-flex",alignItems:"center",gap:8,padding:inline?"8px 12px":"9px 13px",borderRadius:14,background:active.length?"linear-gradient(135deg,#ef4444,#f97316)":"rgba(255,255,255,0.88)",color:active.length?"#fff":C.blue,border:`1px solid ${active.length?"rgba(255,255,255,0.35)":C.border}`,boxShadow:inline?"0 10px 24px rgba(15,23,42,0.12)":"0 14px 32px rgba(15,23,42,0.16)",fontSize:12,fontWeight:900,backdropFilter:"blur(14px)",whiteSpace:"nowrap"}}>
         <span>בוא נראה מה עכשיו</span>
         {active.length>0&&<span style={{minWidth:20,height:20,borderRadius:99,background:"#fff",color:C.red,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:900}}>{active.length}</span>}
       </Press>
@@ -1404,12 +1418,16 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false }) {
         חיבור הודעות לא זמין בסקריפט הפרוס
       </div>
     )}
-    {showPanel&&<div style={{position:"fixed",left:12,right:12,bottom:118,zIndex:1200,background:"rgba(255,255,255,0.94)",border:`2px solid ${C.blue}`,borderRadius:18,boxShadow:"0 18px 50px rgba(15,23,42,0.18)",overflow:"hidden",backdropFilter:"blur(14px)"}}>
-      <Press onClick={()=>setOpen(x=>!x)} style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#e3f2fd"}}>
+    {showPanel&&<div style={{position:"fixed",inset:0,zIndex:1200,background:"rgba(15,23,42,0.38)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)"}}>
+      <div style={{width:"100%",maxWidth:430,background:"rgba(255,255,255,0.96)",border:`2px solid ${C.blue}`,borderRadius:22,boxShadow:"0 24px 80px rgba(15,23,42,0.26)",overflow:"hidden"}}>
+      <div style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#e3f2fd"}}>
         <div style={{fontWeight:900,fontSize:14,color:C.text}}>הודעות מסופר־אדמין</div>
-        <div style={{background:C.red,color:"#fff",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:900}}>{active.length}</div>
-      </Press>
-      {open&&<div style={{padding:12,maxHeight:"36vh",overflowY:"auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{background:C.red,color:"#fff",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:900}}>{active.length}</div>
+          <Press onClick={()=>setPanelVisible(false)} style={{width:30,height:30,borderRadius:99,background:"rgba(255,255,255,0.82)",border:`1px solid ${C.border}`,color:C.muted,fontSize:18,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
+        </div>
+      </div>
+      {open&&<div style={{padding:12,maxHeight:"58vh",overflowY:"auto"}}>
         {active.map(msg=>(
           <div key={msg.id} style={{padding:12,borderRadius:14,background:"#f5f9ff",border:"1px solid #d7e6f7",marginBottom:10}}>
             <div style={{fontSize:13,fontWeight:900,color:C.text,lineHeight:1.55,whiteSpace:"pre-wrap",marginBottom:10}}>{msg.message}</div>
@@ -1418,6 +1436,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false }) {
           </div>
         ))}
       </div>}
+      </div>
     </div>}
     </>
   );
@@ -2099,6 +2118,21 @@ useEffect(() => {
       return fields.some(v=>v.includes(q));
     });
   };
+  const clientIdSeed = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\u0590-\u05ff-]/gi, "").slice(0, 42);
+  const makeClientId = () => `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const stableClientId = (c, index = 0) => `client-${clientIdSeed([c?.name || c, c?.phone, c?.address].filter(Boolean).join("-")) || "unknown"}${index ? `-${index + 1}` : ""}`;
+  const clientId = (c) => String(c?.clientId || c?.id || c?.["לקוח_ID"] || c?.["מזהה_לקוח"] || "").trim() || stableClientId(c);
+  const ensureClientIds = (list = []) => {
+    const used = new Set();
+    return (list || []).map((c, i) => {
+      const base = String(c?.clientId || c?.id || c?.["לקוח_ID"] || c?.["מזהה_לקוח"] || "").trim() || stableClientId(c, i);
+      let id = base;
+      let n = 2;
+      while (used.has(id)) id = `${base}-${n++}`;
+      used.add(id);
+      return {...c, clientId:id};
+    });
+  };
   const adminClientRequiredFields = [
     ["name", "שם לקוח"],
     ["phone", "טלפון"],
@@ -2111,6 +2145,7 @@ useEffect(() => {
   const adminClientMissingFields = (c = {}) => adminClientRequiredFields.filter(([key]) => !String(c?.[key] || "").trim()).map(([, label]) => label);
   const adminClientDraft = (c = {}) => ({
     ...c,
+    clientId: clientId(c),
     name: String(c.name || ""),
     phone: String(c.phone || ""),
     address: String(c.address || ""),
@@ -2120,9 +2155,9 @@ useEffect(() => {
     poolType: String(c.poolType || "מלח"),
   });
   const saveAdminClientDetails = async (originalName, draft) => {
-    const next = {...adminClientDraft(draft), originalName};
+    const next = {...adminClientDraft(draft), clientId:clientId(draft), originalName};
     if (!next.name.trim()) { showToast("⚠️ נא להזין שם לקוח"); return; }
-    const updated = clients.map(c => c.name === originalName ? next : c);
+    const updated = ensureClientIds(clients.map(c => c.name === originalName ? next : c));
     if (sheetId) {
       const res = await sheetCall("saveClients", { clients: updated });
       if (!res?.success) { showToast("⚠️ השמירה לגיליון נכשלה"); haptic("medium"); return; }
@@ -4430,6 +4465,8 @@ const report = {
     const done = dayTasks.filter(isDailyTaskDone).length;
     const isDailyOrderComplete = dayTasks.length > 0 && done === dayTasks.length && !operatorEditOrder;
     const completedDayTasks = dayTasks.filter(isDailyTaskDone);
+    const operatorProgressEntries = getOperatorProgressEntries(dailyDate, dailyOwnerName(dailyDate) || user?.name || "");
+    const operatorProgressDone = operatorProgressEntries.filter(entry => entry.reported).length;
     const doneManualTasks = todayManualTasks.filter(t=>t.status==="done").length;
     const workMonthKey = normalizeDate(dailyDate).slice(0,7);
     const operatorWorkLogs = workLogs.filter(log=>normalizeName(log.operator)===normalizeName(user?.name));
@@ -4465,7 +4502,6 @@ const report = {
     const operatorPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     return (
       <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
-        <SuperMessageInbox user={user} C={C} showToast={showToast} showHomeCue={navTab===0}/>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {showDailyBriefing&&!welcomeMedia&&!isDailyOrderComplete&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
@@ -4572,7 +4608,10 @@ const report = {
           <div style={{position:"relative",display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
             <div>
               <p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px",letterSpacing:"0.04em"}}>{fmtDate(dailyDate)} 🌊</p>
-              <h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>שלום, {user?.name || user?.username || "מפעיל"}! {user?.icon}</h1>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>שלום, {user?.name || user?.username || "מפעיל"}! {user?.icon}</h1>
+                <SuperMessageInbox user={user} C={C} showToast={showToast} showHomeCue={navTab===0} inline/>
+              </div>
               <p style={{color:C.muted,fontSize:13,margin:"5px 0 0",fontWeight:700}}>{greeting || user?.welcomeMessage}</p>
               {clientPlan.plan&&(
                 <div style={{display:"flex",gap:6,marginTop:8}}>
@@ -5027,8 +5066,8 @@ const report = {
           )}
         </div>
         <div style={{position:"fixed",right:12,left:12,bottom:12,zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",justifyContent:"space-around",gap:8,boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
-          {[["🏠","בית",0],["📋","משימות",1],["📅","עתידי",2]].map(([ic,lb,idx])=>(
-            <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"7px 16px",borderRadius:18,background:navTab===idx?operatorPrimaryGradient:"rgba(241,245,249,0.50)",boxShadow:navTab===idx?"0 12px 28px rgba(79,70,229,0.22)":"none"}}>
+          {[["\uD83C\uDFE0","\u05D1\u05D9\u05EA",0],["\uD83D\uDCCB","\u05DE\u05E9\u05D9\u05DE\u05D5\u05EA",1],["\uD83D\uDCCA","\u05D4\u05EA\u05E7\u05D3\u05DE\u05D5\u05EA",3],["\uD83D\uDCC5","\u05E2\u05EA\u05D9\u05D3\u05D9",2]].map(([ic,lb,idx])=>(
+            <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"7px 12px",borderRadius:18,background:navTab===idx?operatorPrimaryGradient:"rgba(241,245,249,0.50)",boxShadow:navTab===idx?"0 12px 28px rgba(79,70,229,0.22)":"none"}}>
               {idx===1&&hasTaskChanges&&<span style={{position:"absolute",top:5,right:12,width:10,height:10,borderRadius:99,background:C.red,boxShadow:"0 0 0 3px rgba(255,255,255,0.86)",border:"1px solid rgba(255,255,255,0.95)"}}/>}
               <span style={{fontSize:22}}>{ic}</span>
               <span style={{fontSize:10,fontWeight:900,color:navTab===idx?"#fff":C.muted}}>{lb}</span>
@@ -5061,6 +5100,29 @@ const report = {
                 </div>
               ));
             })()}
+          </BottomSheet>
+        )}
+        {navTab===3&&(
+          <BottomSheet title={"\uD83D\uDCCA \u05D4\u05EA\u05E7\u05D3\u05DE\u05D5\u05EA \u05D9\u05D5\u05DE\u05D9\u05EA"} onClose={()=>setNavTab(0)}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+              <input type="date" value={dailyDate} onClick={openDatePicker} onFocus={openDatePicker} onChange={e=>setDailyDate(e.target.value)} style={{...inp,maxWidth:170,color:C.blue,border:`1px solid ${C.lightBlue}`,fontWeight:900,cursor:"pointer"}}/>
+              <Badge label={`${operatorProgressDone}/${operatorProgressEntries.length}`} col={operatorProgressEntries.length&&operatorProgressDone===operatorProgressEntries.length?C.green:C.blue}/>
+            </div>
+            {operatorProgressEntries.length>0 ? (
+              <>
+                <PBar done={operatorProgressDone} total={operatorProgressEntries.length} label={"\u05D1\u05E8\u05D9\u05DB\u05D5\u05EA"}/>
+                <div style={{marginTop:12}}>
+                  {operatorProgressEntries.map((entry,i)=>(
+                    <div key={`${entry.client}-${i}`} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"10px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                      <span style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(entry.client||"").split(" - ")[0]}</span>
+                      <Badge label={entry.reported?"\u2713 \u05D3\u05D5\u05D7 \u05E0\u05D5\u05E6\u05E8":"\u05DE\u05DE\u05EA\u05D9\u05DF \u05DC\u05D3\u05D5\u05D7"} col={entry.reported?C.green:C.orange}/>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div style={{textAlign:"center",padding:28,color:C.muted,fontWeight:800}}>{"\u05D0\u05D9\u05DF \u05D1\u05E8\u05D9\u05DB\u05D5\u05EA \u05DC\u05EA\u05D0\u05E8\u05D9\u05DA \u05D6\u05D4"}</div>
+            )}
           </BottomSheet>
         )}
         {navTab===2&&(
@@ -6010,7 +6072,7 @@ const report = {
                 <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
                   {["סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={()=>setNewClient(c=>({...c,poolType:setPoolTypePart(c.poolType,pt)}))} style={{padding:"6px 12px",borderRadius:99,fontSize:12,fontWeight:800,background:secondaryPoolType(newClient.poolType)===pt?C.blue:"#f0f4f8",color:secondaryPoolType(newClient.poolType)===pt?"#fff":C.muted}}>{pt}</Press>))}
                 </div>
-                <Press onClick={async()=>{ if(!newClient.name.trim()){showToast("⚠️ נא להזין שם לקוח");return;} const clientToAdd={name:newClient.name.trim(),phone:newClient.phone.trim(),address:newClient.address.trim(),gateCode:newClient.gateCode.trim(),qrUrl:"",poolType:newClient.poolType||"מלח",regularDays:newClient.regularDays.trim(),regularOperator:newClient.regularOperator||""}; const updated=[...clients,clientToAdd]; setClients(updated); setNewClient({name:"",phone:"",address:"",gateCode:"",regularDays:"",regularOperator:"",poolType:"מלח"}); if(sheetId) await sheetCall("saveClients",{clients:updated}); showToast("✅ לקוח נוסף"); haptic("success"); }} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>➕ הוסף לקוח</Press>
+                <Press onClick={async()=>{ if(!newClient.name.trim()){showToast("⚠️ נא להזין שם לקוח");return;} const clientToAdd={clientId:makeClientId(),name:newClient.name.trim(),phone:newClient.phone.trim(),address:newClient.address.trim(),gateCode:newClient.gateCode.trim(),qrUrl:"",poolType:newClient.poolType||"מלח",regularDays:newClient.regularDays.trim(),regularOperator:newClient.regularOperator||""}; const updated=ensureClientIds([...clients,clientToAdd]); setClients(updated); setNewClient({name:"",phone:"",address:"",gateCode:"",regularDays:"",regularOperator:"",poolType:"מלח"}); if(sheetId) await sheetCall("saveClients",{clients:updated}); showToast("✅ לקוח נוסף"); haptic("success"); }} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>➕ הוסף לקוח</Press>
               </div>
               <h3 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:"0 0 12px"}}>לקוחות קיימים — {clients.length}</h3>
               <div style={{position:"relative",marginBottom:12}}>

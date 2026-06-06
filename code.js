@@ -260,7 +260,7 @@
         const duplicateRow = findDuplicateOperatorIssueRow_(sheet, data);
         if (duplicateRow) return json({ success:true, duplicate:true, row:duplicateRow });
         sheet.appendRow([Date.now(), data.operator, data.client, data.desc, data.priority, "פתוח", "", data.date||new Date().toISOString().slice(0,10)]);
-        if (String(data.priority || "") === "קריטי" || String(data.priority || "") === "׳§׳¨׳™׳˜׳™") {
+        if (String(data.priority || "") === "קריטי") {
           sendAppNotificationToAdmins_(ss, {
             title: "🚨 תקלה קריטית",
             message: `${data.client || ""} · מפעיל: ${data.operator || ""} · ${data.desc || ""}`
@@ -647,9 +647,9 @@
     s = clientSS.getSheetByName("לקוחות");
     if(!s) {
       s = clientSS.insertSheet("לקוחות");
-    s.appendRow(["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
+    s.appendRow(["clientId","שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
   } else {
-    ensureColumns(s, ["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
+    ensureColumns(s, ["clientId","שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
   }
     
     // ── דוחות ──
@@ -2560,6 +2560,7 @@ function getClientsByHeaders_(ss) {
     }
     return "";
   };
+  const clientIdIdx = columnOf(["clientId", "client_id", "id"], -1);
   const nameIdx = columnOf(["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח", "client", "name"], 0);
   const phoneIdx = columnOf(["טלפון", "נייד", "מספר טלפון", "phone", "mobile"], 1);
   const addressIdx = columnOf(["כתובת", "address"], 2);
@@ -2574,6 +2575,7 @@ function getClientsByHeaders_(ss) {
   const phoneIndexes = columnsOf(["phone", "mobile", "whatsapp", "wa"], phoneIdx);
 
   return rows.slice(hi + 1).filter(r => r[nameIdx]).map(r => ({
+    clientId: String(clientIdIdx >= 0 ? r[clientIdIdx] || "" : ""),
     name: String(r[nameIdx] || ""),
     phone: firstPhone(r, phoneIndexes),
     address: String(r[addressIdx] || ""),
@@ -2677,11 +2679,22 @@ function trackUsageEvent_(ss, event) {
   return { success:true };
 }
 
+function stableClientId_(client) {
+  const raw = [
+    client && client.name,
+    client && client.phone,
+    client && client.address
+  ].filter(Boolean).join("|") || Utilities.getUuid();
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw);
+  return "client-" + Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, "").slice(0, 18);
+}
+
 function saveClients_(sheet, clients) {
   if (!sheet) return { success:false, error:"clients sheet not found" };
   const headerRowIndex = findHeaderRowIndex_(sheet, ["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח"]);
   const headerRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 3;
   ensureColumns(sheet, [
+    "clientId",
     "קוד_שער",
     "סוג_בריכה",
     "ימים_קבועים",
@@ -2697,6 +2710,7 @@ function saveClients_(sheet, clients) {
   const headerMap = {};
   headers.forEach((header, idx) => { if (header) headerMap[header] = idx; });
   const aliases = {
+    clientId: ["clientId", "client_id", "id"],
     name: ["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח"],
     phone: ["טלפון", "נייד", "מספר טלפון"],
     address: ["כתובת"],
@@ -2731,6 +2745,7 @@ function saveClients_(sheet, clients) {
   }
 
   const managedKeys = [
+    "clientId",
     "name",
     "phone",
     "address",
@@ -2751,6 +2766,7 @@ function saveClients_(sheet, clients) {
   const valueFor = (c, key, original) => {
     const monthIdx = colOf("monthlyTreatmentMonth");
     const values = {
+      clientId: String(c.clientId || c.id || (colOf("clientId") >= 0 ? original[colOf("clientId")] : "") || stableClientId_(c)),
       name: String(c.name || "").trim(),
       phone: String(c.phone || ""),
       address: String(c.address || ""),
