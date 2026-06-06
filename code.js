@@ -366,6 +366,7 @@
       if (action === "saveReport") {
         const sheet = ss.getSheetByName("דוחות");
         ensureColumns(sheet, ["ציוד_שסופק"]);
+        ensureReportsSheetReportId_(sheet);
         const r = data.report;
         if (data.supplyUpdate) {
           const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
@@ -378,10 +379,7 @@
           return json({ success: true, duplicate: true, row: duplicateRow });
         }
 
-        sheet.appendRow([r.reportDate, r.operator, r.client, r.chlorine, r.ph, r.salt,
-          r.waterLevel, r.clarity, r.fat, r.flow, r.elModel, r.elSerial,
-          r.elDate, r.elNext, r.supplyLabel, r.poolStatus, r.customStatusText,
-          r.restrictedUntil, r.notes, r.chlora||0, r.hth||0, r.phUp||0, r.acidLiters||0, r.suppliedEquipment||""]);
+        sheet.appendRow(reportRowValues_(r));
         refreshMonthlyTreatmentCounters_(ss);
         markSubOperatorShareDone_(ss, r);
 
@@ -442,6 +440,7 @@
       if (action === "updateReport") {
         const sheet = ss.getSheetByName("דוחות");
         ensureColumns(sheet, ["ציוד_שסופק"]);
+        ensureReportsSheetReportId_(sheet);
         const r = data.report;
         if (data.supplyUpdate) {
           const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
@@ -449,7 +448,7 @@
         }
         const row = findLatestReportRow_(sheet, data.original || {}, r);
         if (!row) return json({ success:false, error:"report row not found" });
-        sheet.getRange(row, 1, 1, 24).setValues([reportRowValues_(r)]);
+        sheet.getRange(row, 1, 1, 25).setValues([reportRowValues_(r)]);
         refreshMonthlyTreatmentCounters_(ss);
         markSubOperatorShareDone_(ss, r);
         return json({ success:true, row });
@@ -509,31 +508,32 @@
 
       if (action === "getReports") {
         const sheet = ss.getSheetByName("דוחות");
+        ensureReportsSheetReportId_(sheet);
         const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
+        let hi = rows.findIndex(r => String(r[0]).includes("reportId"));
         if (hi === -1) hi = 2;
-        const reports = rows.slice(hi + 1).filter(r => r[0]).map((r,i) => ({
-          id: `sheet-${i}`, // unique ID with sheet prefix
+        const reports = rows.slice(hi + 1).filter(r => reportCell_(r,0)).map((r,i) => ({
+          id: reportIdCell_(r) || `sheet-${i}`,
           _fromSheet: true,
-          reportDate: r[0] instanceof Date ? Utilities.formatDate(r[0],"Asia/Jerusalem","yyyy-MM-dd") : String(r[0]).slice(0,10),
-          operator: String(r[1]),
-          client: String(r[2]),
-          chlorine: r[3],
-          ph: r[4],
-          salt: r[5],
-          waterLevel: String(r[6]),
-          clarity: String(r[7]),
-          fat: String(r[8]),
-          flow: String(r[9]),
-          poolStatus: String(r[15])||"מאוזנת",
-          customStatusText: String(r[16]||""),
-          notes: String(r[18]||""),
-          supplyLabel: String(r[14]||""),
-          chlora: r[19]||0,
-          hth: r[20]||0,
-          phUp: r[21]||0,
-          acidLiters: r[22]||0,
-          suppliedEquipment: String(r[23]||""),
+          reportDate: reportCell_(r,0) instanceof Date ? Utilities.formatDate(reportCell_(r,0),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,0)).slice(0,10),
+          operator: String(reportCell_(r,1)),
+          client: String(reportCell_(r,2)),
+          chlorine: reportCell_(r,3),
+          ph: reportCell_(r,4),
+          salt: reportCell_(r,5),
+          waterLevel: String(reportCell_(r,6)),
+          clarity: String(reportCell_(r,7)),
+          fat: String(reportCell_(r,8)),
+          flow: String(reportCell_(r,9)),
+          poolStatus: String(reportCell_(r,15))||"\u05de\u05d0\u05d5\u05d6\u05e0\u05ea",
+          customStatusText: String(reportCell_(r,16)||""),
+          notes: String(reportCell_(r,18)||""),
+          supplyLabel: String(reportCell_(r,14)||""),
+          chlora: reportCell_(r,19)||0,
+          hth: reportCell_(r,20)||0,
+          phUp: reportCell_(r,21)||0,
+          acidLiters: reportCell_(r,22)||0,
+          suppliedEquipment: String(reportCell_(r,23)||""),
         }));
         return json({ reports });
       }
@@ -562,31 +562,32 @@
 
       if (action === "getLastReadings") {
         const sheet = ss.getSheetByName("דוחות");
+        ensureReportsSheetReportId_(sheet);
         const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
+        let hi = rows.findIndex(r => String(r[0]).includes("reportId"));
         if (hi === -1) hi = 2;
-        const dataRows = rows.slice(hi + 1).filter(r => r[0]);
+        const dataRows = rows.slice(hi + 1).filter(r => reportCell_(r,0));
         // columns: 0=date, 1=operator, 2=client, 3=chlorine, 4=ph, 5=salt,
         // 6=waterLevel, 7=clarity, 8=fat, 9=flow, 10=elModel, 11=elSerial, 12=elDate, 13=elNext
         // 14=supplyLabel, 15=poolStatus, 16=customStatus, 17=restrictedUntil, 18=notes, 19=chlora, 20=hth
         const readings = {};
         const lastInternalNotes = {};
         dataRows.forEach(r => {
-          const client = String(r[2]);
-          const date   = String(r[0]);
-          const internalNote = String(r[16]||"").trim();
+          const client = String(reportCell_(r,2));
+          const date   = String(reportCell_(r,0));
+          const internalNote = String(reportCell_(r,16)||"").trim();
           if (internalNote) lastInternalNotes[client] = internalNote;
           if (!readings[client] || date > readings[client].date) {
             readings[client] = {
-              date, chlorine: r[3], ph: r[4],
-              chlora: r[19]||0, hth: r[20]||0, phUp: r[21]||0, acidLiters: r[22]||0,
-              elModel: String(r[10]||""), elSerial: String(r[11]||""),
-              elDate: r[12] instanceof Date ? Utilities.formatDate(r[12],"Asia/Jerusalem","yyyy-MM-dd") : String(r[12]||""),
-              elNext: r[13] instanceof Date ? Utilities.formatDate(r[13],"Asia/Jerusalem","yyyy-MM-dd") : String(r[13]||""),
-              poolStatus: String(r[15]||""),
+              date, chlorine: reportCell_(r,3), ph: reportCell_(r,4),
+              chlora: reportCell_(r,19)||0, hth: reportCell_(r,20)||0, phUp: reportCell_(r,21)||0, acidLiters: reportCell_(r,22)||0,
+              elModel: String(reportCell_(r,10)||""), elSerial: String(reportCell_(r,11)||""),
+              elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||""),
+              elNext: reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||""),
+              poolStatus: String(reportCell_(r,15)||""),
               customStatusText: internalNote || lastInternalNotes[client] || String(readings[client]?.customStatusText || ""),
-              notes: String(r[18]||""),
-              missedTreatment: String(r[18]||"").trim() === "לא בוצע טיפול"
+              notes: String(reportCell_(r,18)||""),
+              missedTreatment: String(reportCell_(r,18)||"").trim() === "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc"
             };
           }
         });
@@ -919,6 +920,7 @@
     const clientsSheet = ss.getSheetByName("לקוחות");
     const reportsSheet = ss.getSheetByName("דוחות");
     if (!clientsSheet || !reportsSheet) return;
+    ensureReportsSheetReportId_(reportsSheet);
 
     const clientRows = clientsSheet.getDataRange().getValues();
     if (clientRows.length < 2) {
@@ -939,28 +941,26 @@
     const reportRows = reportsSheet.getDataRange().getValues();
     const alreadyReported = {};
     reportRows.slice(1).forEach(r => {
-      const date = normalizeSheetDate_(r[0]);
-      const client = String(r[2] || "").trim();
+      const date = normalizeSheetDate_(reportCell_(r,0));
+      const client = String(reportCell_(r,2) || "").trim();
       if (date === today && client) alreadyReported[client] = true;
     });
 
     let appended = 0;
     assigned.forEach(item => {
       if (alreadyReported[item.client]) return;
-      reportsSheet.appendRow([
-        today,
-        item.operator,
-        item.client,
-        0, 0, 0,
-        "", "", "", "",
-        "", "", "", "",
-        "",
-        "",
-        "",
-        "",
-        "לא בוצע טיפול",
-        0, 0, 0, 0
-      ]);
+      reportsSheet.appendRow(reportRowValues_({
+        id: Utilities.getUuid(),
+        reportDate: today,
+        operator: item.operator,
+        client: item.client,
+        chlorine: 0, ph: 0, salt: 0,
+        waterLevel: "", clarity: "", fat: "", flow: "",
+        elModel: "", elSerial: "", elDate: "", elNext: "",
+        supplyLabel: "", poolStatus: "", customStatusText: "", restrictedUntil: "",
+        notes: "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc",
+        chlora: 0, hth: 0, phUp: 0, acidLiters: 0, suppliedEquipment: ""
+      }));
       alreadyReported[item.client] = true;
       appended++;
     });
@@ -974,6 +974,7 @@
     const clientsSheet = ss.getSheetByName("לקוחות");
     const reportsSheet = ss.getSheetByName("דוחות");
     if (!clientsSheet || !reportsSheet) return [];
+    ensureReportsSheetReportId_(reportsSheet);
 
     ensureColumns(clientsSheet, ["יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל", "מכסת_טיפולים_חודשית", "חודש_טיפולים"]);
 
@@ -989,10 +990,10 @@
     const counts = {};
 
     reportsSheet.getDataRange().getValues().slice(1).forEach(r => {
-      const date = normalizeSheetDate_(r[0]);
-      const client = String(r[2] || "").trim();
-      const notes = String(r[18] || "").trim();
-      if (!client || !date.startsWith(monthKey) || notes === "לא בוצע טיפול") return;
+      const date = normalizeSheetDate_(reportCell_(r,0));
+      const client = String(reportCell_(r,2) || "").trim();
+      const notes = String(reportCell_(r,18) || "").trim();
+      if (!client || !date.startsWith(monthKey) || notes === "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc") return;
       counts[client] = (counts[client] || 0) + 1;
     });
 
@@ -1894,6 +1895,7 @@
   function saveClientInternalNote_(ss, data) {
     const sheet = ss.getSheetByName("דוחות");
     if (!sheet) return { success:false, error:"reports sheet not found" };
+    ensureReportsSheetReportId_(sheet);
 
     const client = String(data.client || "").trim();
     const note = String(data.note || "");
@@ -1906,9 +1908,9 @@
     let targetRow = 0;
     let targetDate = "";
     for (let i = hi + 1; i < rows.length; i++) {
-      const rowClient = String(rows[i][2] || "").trim();
+      const rowClient = String(reportCell_(rows[i],2) || "").trim();
       if (rowClient !== client) continue;
-      const rowDate = normalizeSheetDate_(rows[i][0]);
+      const rowDate = normalizeSheetDate_(reportCell_(rows[i],0));
       if (!targetRow || rowDate >= targetDate) {
         targetRow = i + 1;
         targetDate = rowDate;
@@ -1920,7 +1922,7 @@
     }
 
     // Column 17 is פירוט_מצב / customStatusText.
-    sheet.getRange(targetRow, 17).setValue(note);
+    sheet.getRange(targetRow, 18).setValue(note);
     return { success:true, row:targetRow, client:client, note:note };
   }
   function sendOneSignalRequest_(payload, label) {
@@ -2253,14 +2255,59 @@
   }
 
   function reportRowValues_(r) {
-    return [r.reportDate, r.operator, r.client, r.chlorine, r.ph, r.salt,
+    return [r.id || Utilities.getUuid(), r.reportDate, r.operator, r.client, r.chlorine, r.ph, r.salt,
       r.waterLevel, r.clarity, r.fat, r.flow, r.elModel, r.elSerial,
       r.elDate, r.elNext, r.supplyLabel, r.poolStatus, r.customStatusText,
       r.restrictedUntil, r.notes, r.chlora||0, r.hth||0, r.phUp||0, r.acidLiters||0, r.suppliedEquipment||""];
   }
 
+  function reportHasIdColumn_(row) {
+    const first = String(row && row[0] || "").trim();
+    const second = row && row.length > 1 ? row[1] : "";
+    return first === "reportId" || (!!first && !!normalizeReportDate_(second) && !normalizeReportDate_(first));
+  }
+
+  function reportCell_(row, index) {
+    return reportHasIdColumn_(row) ? row[index + 1] : row[index];
+  }
+
+  function reportIdCell_(row) {
+    return reportHasIdColumn_(row) ? String(row[0] || "").trim() : "";
+  }
+
+  function ensureReportsSheetReportId_(sheet) {
+    if (!sheet) return;
+    const lastRow = Math.max(sheet.getLastRow(), 1);
+    const lastCol = Math.max(sheet.getLastColumn(), 1);
+    const rows = sheet.getRange(1, 1, Math.min(lastRow, 10), lastCol).getValues();
+    let headerRow = rows.findIndex(r => String(r[0] || "").trim() === "reportId" || r.some(c => String(c || "").includes("׳×׳׳¨׳™׳")));
+    if (headerRow < 0) headerRow = 0;
+    const headerRowNumber = headerRow + 1;
+    const firstHeader = String(sheet.getRange(headerRowNumber, 1).getValue() || "").trim();
+    if (firstHeader !== "reportId") {
+      sheet.insertColumnBefore(1);
+      sheet.getRange(headerRowNumber, 1).setValue("reportId");
+    }
+    const dataRowCount = Math.max(sheet.getLastRow() - headerRowNumber, 0);
+    if (!dataRowCount) return;
+    const idRange = sheet.getRange(headerRowNumber + 1, 1, dataRowCount, 2);
+    const data = idRange.getValues();
+    const updates = [];
+    let changed = false;
+    data.forEach(r => {
+      if (!String(r[0] || "").trim() && r[1]) {
+        updates.push([Utilities.getUuid(), r[1]]);
+        changed = true;
+      } else {
+        updates.push(r);
+      }
+    });
+    if (changed && updates.length) idRange.setValues(updates);
+  }
+
   function findLatestReportRow_(sheet, original, report) {
     if (!sheet || sheet.getLastRow() < 2) return 0;
+    ensureReportsSheetReportId_(sheet);
     const date = normalizeReportDate_(original.date || original.reportDate || report.reportDate);
     const client = normalizeReportValue_(original.client || report.client);
     const operator = normalizeReportValue_(original.operator || report.operator);
@@ -2271,9 +2318,9 @@
     for (let i = rows.length - 1; i > hi; i--) {
       if (!rows[i][0]) continue;
       if (
-        normalizeReportDate_(rows[i][0]) === date &&
-        normalizeReportValue_(rows[i][1]) === operator &&
-        normalizeReportValue_(rows[i][2]) === client
+        normalizeReportDate_(reportCell_(rows[i],0)) === date &&
+        normalizeReportValue_(reportCell_(rows[i],1)) === operator &&
+        normalizeReportValue_(reportCell_(rows[i],2)) === client
       ) {
         return i + 1;
       }
@@ -2290,13 +2337,14 @@
 function findDuplicateReportRow_(sheet, report) {
     if (!sheet || sheet.getLastRow() < 2) return 0;
 
+    ensureReportsSheetReportId_(sheet);
     const targetKey = reportDuplicateKeyFromReport_(report);
     const rows = sheet.getDataRange().getValues();
     let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
     if (hi === -1) hi = 0;
 
     for (let i = hi + 1; i < rows.length; i++) {
-      if (!rows[i][0]) continue;
+      if (!reportCell_(rows[i],0)) continue;
       if (reportDuplicateKeyFromRow_(rows[i]) === targetKey) return i + 1;
     }
 
@@ -2358,29 +2406,29 @@ function findDuplicateReportRow_(sheet, report) {
 
   function reportDuplicateKeyFromRow_(r) {
     return [
-      normalizeReportDate_(r[0]),
-      normalizeReportValue_(r[1]),
-      normalizeReportValue_(r[2]),
-      normalizeReportValue_(r[3]),
-      normalizeReportValue_(r[4]),
-      normalizeReportValue_(r[5]),
-      normalizeReportValue_(r[6]),
-      normalizeReportValue_(r[7]),
-      normalizeReportValue_(r[8]),
-      normalizeReportValue_(r[9]),
-      normalizeReportValue_(r[10]),
-      normalizeReportValue_(r[11]),
-      normalizeReportDate_(r[12]),
-      normalizeReportDate_(r[13]),
-      normalizeReportValue_(r[15]),
-      normalizeReportValue_(r[16]),
-      normalizeReportDate_(r[17]),
-      normalizeReportValue_(r[18]),
-      normalizeReportValue_(r[19] || 0),
-      normalizeReportValue_(r[20] || 0),
-      normalizeReportValue_(r[21] || 0),
-      normalizeReportValue_(r[22] || 0),
-      normalizeReportValue_(r[23] || "")
+      normalizeReportDate_(reportCell_(r,0)),
+      normalizeReportValue_(reportCell_(r,1)),
+      normalizeReportValue_(reportCell_(r,2)),
+      normalizeReportValue_(reportCell_(r,3)),
+      normalizeReportValue_(reportCell_(r,4)),
+      normalizeReportValue_(reportCell_(r,5)),
+      normalizeReportValue_(reportCell_(r,6)),
+      normalizeReportValue_(reportCell_(r,7)),
+      normalizeReportValue_(reportCell_(r,8)),
+      normalizeReportValue_(reportCell_(r,9)),
+      normalizeReportValue_(reportCell_(r,10)),
+      normalizeReportValue_(reportCell_(r,11)),
+      normalizeReportDate_(reportCell_(r,12)),
+      normalizeReportDate_(reportCell_(r,13)),
+      normalizeReportValue_(reportCell_(r,15)),
+      normalizeReportValue_(reportCell_(r,16)),
+      normalizeReportDate_(reportCell_(r,17)),
+      normalizeReportValue_(reportCell_(r,18)),
+      normalizeReportValue_(reportCell_(r,19) || 0),
+      normalizeReportValue_(reportCell_(r,20) || 0),
+      normalizeReportValue_(reportCell_(r,21) || 0),
+      normalizeReportValue_(reportCell_(r,22) || 0),
+      normalizeReportValue_(reportCell_(r,23) || "")
     ].join("|");
   }
 
@@ -3271,23 +3319,24 @@ function getSupplyDB_(ss) {
 function getLastReadings_(ss) {
   const sheet = ss.getSheetByName("דוחות");
   if (!sheet) return {};
+  ensureReportsSheetReportId_(sheet);
   const rows = sheet.getDataRange().getValues();
-  let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
+  let hi = rows.findIndex(r => String(r[0]).includes("reportId"));
   if (hi === -1) hi = 2;
   const readings = {};
-  rows.slice(hi + 1).filter(r => r[0]).forEach(r => {
-    const client = String(r[2]);
-    const date = normalizeSheetDate_(r[0]);
+  rows.slice(hi + 1).filter(r => reportCell_(r,0)).forEach(r => {
+    const client = String(reportCell_(r,2));
+    const date = normalizeSheetDate_(reportCell_(r,0));
     if (!readings[client] || date > readings[client].date) {
       readings[client] = {
-        date, chlorine: r[3], ph: r[4],
-        chlora: r[19]||0, hth: r[20]||0, phUp: r[21]||0, acidLiters: r[22]||0,
-        elModel: String(r[10]||""), elSerial: String(r[11]||""),
-        elDate: r[12] instanceof Date ? Utilities.formatDate(r[12],"Asia/Jerusalem","yyyy-MM-dd") : String(r[12]||""),
-        elNext: r[13] instanceof Date ? Utilities.formatDate(r[13],"Asia/Jerusalem","yyyy-MM-dd") : String(r[13]||""),
-        poolStatus: String(r[15]||""),
-        customStatusText: String(r[16]||""),
-        notes: String(r[18]||""),
+        date, chlorine: reportCell_(r,3), ph: reportCell_(r,4),
+        chlora: reportCell_(r,19)||0, hth: reportCell_(r,20)||0, phUp: reportCell_(r,21)||0, acidLiters: reportCell_(r,22)||0,
+        elModel: String(reportCell_(r,10)||""), elSerial: String(reportCell_(r,11)||""),
+        elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||""),
+        elNext: reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||""),
+        poolStatus: String(reportCell_(r,15)||""),
+        customStatusText: String(reportCell_(r,16)||""),
+        notes: String(reportCell_(r,18)||""),
         missedTreatment: String(r[18]||"").trim() === "לא בוצע טיפול"
       };
     }
