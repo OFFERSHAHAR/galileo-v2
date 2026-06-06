@@ -1,4 +1,4 @@
-  // ─── מרכזי — תומך בכל לקוח לפי sheetId ───────────────────────────────────
+﻿  // ─── מרכזי — תומך בכל לקוח לפי sheetId ───────────────────────────────────
   // הלקוח משתף את הגיליון שלו עם האימייל שלך ומכניס את ה-ID באפליקציה
 
   function doPost(e) {
@@ -315,6 +315,7 @@
 
       if (action === "saveTasks") {
         const sheet = ss.getSheetByName("משימות");
+        ensureColumns(sheet, ["clientId"]);
         const rows = sheet.getDataRange().getValues();
         let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
         if (hi === -1) hi = 2;
@@ -322,7 +323,7 @@
         const last = sheet.getLastRow();
         if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
         dedupeTasks_(data.tasks || []).filter(t => !isAdminOrderTask_(t)).forEach(t => {
-          sheet.appendRow([t.id, t.date, t.client, t.operators.join(","), t.status, JSON.stringify(t.changeLog), t.orderIndex || 0, t.adminNote || "", t.createdByAdminOrder === true]);
+          sheet.appendRow([t.id, t.date, t.client, t.operators.join(","), t.status, JSON.stringify(t.changeLog), t.orderIndex || 0, t.adminNote || "", t.createdByAdminOrder === true, t.clientId || ""]);
         });
         return json({ success: true });
       }
@@ -448,7 +449,7 @@
         }
         const row = findLatestReportRow_(sheet, data.original || {}, r);
         if (!row) return json({ success:false, error:"report row not found" });
-        sheet.getRange(row, 1, 1, 25).setValues([reportRowValues_(r)]);
+        sheet.getRange(row, 1, 1, 26).setValues([reportRowValues_(r)]);
         refreshMonthlyTreatmentCounters_(ss);
         markSubOperatorShareDone_(ss, r);
         return json({ success:true, row });
@@ -534,6 +535,7 @@
           phUp: reportCell_(r,21)||0,
           acidLiters: reportCell_(r,22)||0,
           suppliedEquipment: String(reportCell_(r,23)||""),
+          clientId: String(reportCell_(r,24)||""),
         }));
         return json({ reports });
       }
@@ -579,6 +581,7 @@
           if (internalNote) lastInternalNotes[client] = internalNote;
           if (!readings[client] || date > readings[client].date) {
             readings[client] = {
+              client, clientId: String(reportCell_(r,24)||""),
               date, chlorine: reportCell_(r,3), ph: reportCell_(r,4),
               chlora: reportCell_(r,19)||0, hth: reportCell_(r,20)||0, phUp: reportCell_(r,21)||0, acidLiters: reportCell_(r,22)||0,
               elModel: String(reportCell_(r,10)||""), elSerial: String(reportCell_(r,11)||""),
@@ -1042,7 +1045,15 @@
 
   function normalizeSheetDate_(value) {
     if (value instanceof Date) return Utilities.formatDate(value, "Asia/Jerusalem", "yyyy-MM-dd");
-    return String(value || "").trim().slice(0, 10);
+    const text = String(value || "").trim();
+    const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (iso) return `${iso[1]}-${String(iso[2]).padStart(2, "0")}-${String(iso[3]).padStart(2, "0")}`;
+    const local = text.match(/^(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})/);
+    if (local) {
+      const year = String(local[3]).length === 2 ? `20${local[3]}` : local[3];
+      return `${year}-${String(local[2]).padStart(2, "0")}-${String(local[1]).padStart(2, "0")}`;
+    }
+    return "";
   }
 
   function hebrewDayName_(dateStr) {
@@ -1564,7 +1575,7 @@
   }
 
   function supplyHeaderMap_(sheet) {
-    const headers = ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא","supplyId"];
+    const headers = ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא","supplyId","clientId"];
     if (sheet.getLastRow() === 0) sheet.appendRow(headers);
     ensureColumns(sheet, headers);
     while (sheet.getLastRow() < 3) sheet.appendRow([""]);
@@ -1580,6 +1591,7 @@
       if (!sheet) sheet = ss.insertSheet("ציוד_לקוחות");
       const row = Array.isArray(inputRow) ? inputRow.slice() : [];
       const client = String(row[0] || "").trim();
+      const clientId = String(row[11] || "").trim();
       if (!client) return { success:false, error:"missing supply client" };
       const map = supplyHeaderMap_(sheet);
       const normalizedClient = normalizeReportValue_(client).toLowerCase();
@@ -1587,8 +1599,10 @@
       const last = sheet.getLastRow();
       if (last >= 4) {
         const clients = sheet.getRange(4, map["לקוח"], last - 3, 1).getValues();
+        const clientIds = map["clientId"] ? sheet.getRange(4, map["clientId"], last - 3, 1).getValues() : [];
         for (let i = 0; i < clients.length; i++) {
-          if (normalizeReportValue_(clients[i][0]).toLowerCase() === normalizedClient) {
+          const rowClientId = String(clientIds[i] && clientIds[i][0] || "").trim();
+          if ((clientId && rowClientId && clientId === rowClientId) || normalizeReportValue_(clients[i][0]).toLowerCase() === normalizedClient) {
             targetRow = i + 4;
             break;
           }
@@ -1609,7 +1623,8 @@
         "nextSupplyDate": row[7] || "",
         "assignedOperator": row[8] || "",
         "מחיר_פר_חומר_לטיפול_הבא": row[9] || defaultNextSupplyPricesText_(),
-        "supplyId": row[10] || supplyIdForClient_(client)
+        "supplyId": row[10] || supplyIdForClient_(client),
+        "clientId": clientId
       };
       Object.keys(values).forEach(function(header) {
         if (map[header]) sheet.getRange(targetRow, map[header]).setValue(values[header]);
@@ -1622,8 +1637,9 @@
       const dateOk = get("nextSupplyDate") === String(values["nextSupplyDate"]);
       const operatorOk = get("assignedOperator") === String(values["assignedOperator"]);
       const idOk = !!get("supplyId");
-      if (!materialOk || !dateOk || !operatorOk || !idOk) {
-        return { success:false, row:targetRow, error:"supply verification failed", materialOk:materialOk, dateOk:dateOk, operatorOk:operatorOk, idOk:idOk };
+      const clientIdOk = !clientId || get("clientId") === clientId;
+      if (!materialOk || !dateOk || !operatorOk || !idOk || !clientIdOk) {
+        return { success:false, row:targetRow, error:"supply verification failed", materialOk:materialOk, dateOk:dateOk, operatorOk:operatorOk, idOk:idOk, clientIdOk:clientIdOk };
       }
       return { success:true, row:targetRow, supplyId:get("supplyId") };
     } catch(e) {
@@ -1645,7 +1661,8 @@
         v.nextSupplyDate || "",
         v.assignedOperator || "",
         JSON.stringify(parseNextSupplyPrices_(v.materialPrices)),
-        v.supplyId || supplyIdForClient_(client)
+        v.supplyId || supplyIdForClient_(client),
+        v.clientId || ""
       ]);
     });
     return;
@@ -2258,7 +2275,7 @@
     return [r.id || Utilities.getUuid(), r.reportDate, r.operator, r.client, r.chlorine, r.ph, r.salt,
       r.waterLevel, r.clarity, r.fat, r.flow, r.elModel, r.elSerial,
       r.elDate, r.elNext, r.supplyLabel, r.poolStatus, r.customStatusText,
-      r.restrictedUntil, r.notes, r.chlora||0, r.hth||0, r.phUp||0, r.acidLiters||0, r.suppliedEquipment||""];
+      r.restrictedUntil, r.notes, r.chlora||0, r.hth||0, r.phUp||0, r.acidLiters||0, r.suppliedEquipment||"", r.clientId || ""];
   }
 
   function reportHasIdColumn_(row) {
@@ -2287,6 +2304,10 @@
     if (firstHeader !== "reportId") {
       sheet.insertColumnBefore(1);
       sheet.getRange(headerRowNumber, 1).setValue("reportId");
+    }
+    const headerValues = sheet.getRange(headerRowNumber, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0].map(String);
+    if (headerValues.indexOf("clientId") < 0) {
+      sheet.getRange(headerRowNumber, sheet.getLastColumn() + 1).setValue("clientId");
     }
     const dataRowCount = Math.max(sheet.getLastRow() - headerRowNumber, 0);
     if (!dataRowCount) return;
@@ -2435,7 +2456,15 @@ function findDuplicateReportRow_(sheet, report) {
   function normalizeReportDate_(value) {
     if (!value) return "";
     if (value instanceof Date) return Utilities.formatDate(value, "Asia/Jerusalem", "yyyy-MM-dd");
-    return String(value).trim().slice(0, 10);
+    const text = String(value).trim();
+    const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (iso) return `${iso[1]}-${String(iso[2]).padStart(2, "0")}-${String(iso[3]).padStart(2, "0")}`;
+    const local = text.match(/^(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})/);
+    if (local) {
+      const year = String(local[3]).length === 2 ? `20${local[3]}` : local[3];
+      return `${year}-${String(local[2]).padStart(2, "0")}-${String(local[1]).padStart(2, "0")}`;
+    }
+    return "";
   }
 
 function normalizeReportValue_(value) {
@@ -2494,6 +2523,7 @@ function dedupeAdminOrders_(adminOrders) {
       date: normalizeAdminOrderDate_(o.date),
       operator: String(o.operator || ""),
       client: String(o.client || ""),
+      clientId: String(o.clientId || ""),
       orderIndex: Number(o.orderIndex || 0),
       adminNote: String(o.adminNote || ""),
       status: String(o.status || "pending"),
@@ -2924,7 +2954,8 @@ function getTasks_(ss) {
       changeLog: r[5] ? JSON.parse(String(r[5])) : [],
       orderIndex: Number(r[6] || 0),
       adminNote: String(r[7] || ""),
-      createdByAdminOrder: String(r[8] || "").toLowerCase() === "true" || r[8] === true
+      createdByAdminOrder: String(r[8] || "").toLowerCase() === "true" || r[8] === true,
+      clientId: String(r[9] || "")
     };
   }).filter(t => !isAdminOrderTask_(t));
 }
@@ -2955,7 +2986,8 @@ function dedupeTasks_(tasks) {
       changeLog: Array.isArray(t.changeLog) ? t.changeLog : [],
       orderIndex: Number(t.orderIndex || 0),
       adminNote: String(t.adminNote || ""),
-      createdByAdminOrder: t.createdByAdminOrder === true
+      createdByAdminOrder: t.createdByAdminOrder === true,
+      clientId: String(t.clientId || "")
     };
   });
   return Object.keys(map).map(k => map[k]);
@@ -2983,7 +3015,8 @@ function getAdminOrders_(ss) {
         orderIndex: Number(r[4] || 0),
         adminNote: String(r[5] || ""),
         status: String(r[6] || "pending"),
-        changeLog: r[7] ? JSON.parse(String(r[7])) : []
+        changeLog: r[7] ? JSON.parse(String(r[7])) : [],
+        clientId: String(r[8] || "")
       };
     });
   }
@@ -3016,7 +3049,8 @@ function getAdminOrders_(ss) {
       orderIndex,
       adminNote: String(r[7] || ""),
       status: String(r[4] || "pending"),
-      changeLog: r[5] ? JSON.parse(String(r[5])) : []
+      changeLog: r[5] ? JSON.parse(String(r[5])) : [],
+      clientId: String(r[9] || "")
     };
   }).filter(Boolean);
   legacyOrders.forEach(o => {
@@ -3030,7 +3064,7 @@ function saveAdminOrders_(ss, adminOrders) {
   let sheet = ss.getSheetByName("חלוקת_עבודה");
   if (!sheet) sheet = ss.insertSheet("חלוקת_עבודה");
 
-  const headers = ["id","\u05ea\u05d0\u05e8\u05d9\u05da","\u05de\u05e4\u05e2\u05d9\u05dc","\u05dc\u05e7\u05d5\u05d7","\u05e1\u05d3\u05e8","\u05d4\u05e2\u05e8\u05ea_\u05de\u05e0\u05d4\u05dc","\u05e1\u05d8\u05d8\u05d5\u05e1","changeLog"];
+  const headers = ["id","\u05ea\u05d0\u05e8\u05d9\u05da","\u05de\u05e4\u05e2\u05d9\u05dc","\u05dc\u05e7\u05d5\u05d7","\u05e1\u05d3\u05e8","\u05d4\u05e2\u05e8\u05ea_\u05de\u05e0\u05d4\u05dc","\u05e1\u05d8\u05d8\u05d5\u05e1","changeLog","clientId"];
   const rows = dedupeAdminOrders_(adminOrders).filter(o => o && o.client).map(o => ([
     o.id,
     o.date,
@@ -3039,7 +3073,8 @@ function saveAdminOrders_(ss, adminOrders) {
     Number(o.orderIndex || 0),
     o.adminNote || "",
     o.status || "pending",
-    JSON.stringify(o.changeLog || [])
+    JSON.stringify(o.changeLog || []),
+    o.clientId || ""
   ]));
 
   sheet.clearContents();
@@ -3063,6 +3098,7 @@ function getSubOperatorShares_(ss) {
       subUsername: String(r[idx.subUsername] || ""),
       subOperator: String(r[idx.subOperator] || ""),
       client: String(r[idx.client] || ""),
+      clientId: String(r[idx.clientId] || ""),
       orderIndex: Number(r[idx.orderIndex] || 0),
       note: String(r[idx.note] || ""),
       sharedAt: String(r[idx.sharedAt] || ""),
@@ -3107,6 +3143,7 @@ function saveSubOperatorShares_(ss, sharedSubOrders) {
     subUsername: r[existingIdx.subUsername],
     subOperator: r[existingIdx.subOperator],
     client: r[existingIdx.client],
+    clientId: r[existingIdx.clientId],
     orderIndex: r[existingIdx.orderIndex],
     note: r[existingIdx.note],
     sharedAt: r[existingIdx.sharedAt],
@@ -3134,6 +3171,7 @@ function saveSubOperatorShares_(ss, sharedSubOrders) {
       r.subUsername || "",
       r.subOperator || "",
       r.client || "",
+      r.clientId || "",
       Number(r.orderIndex || 0),
       r.note || "",
       r.sharedAt || "",
@@ -3153,7 +3191,7 @@ function saveSubOperatorShares_(ss, sharedSubOrders) {
 }
 
 function subOperatorShareHeaders_() {
-  return ["date","operator","subUsername","subOperator","client","orderIndex","note","sharedAt","sharedBy","id","status","changeLog","completedAt","completedBy","reportId","revoked"];
+  return ["date","operator","subUsername","subOperator","client","clientId","orderIndex","note","sharedAt","sharedBy","id","status","changeLog","completedAt","completedBy","reportId","revoked"];
 }
 
 function subOperatorShareHeaderMap_(headers) {
@@ -3184,12 +3222,14 @@ function markSubOperatorShareDone_(ss, report) {
   const reportDate = String(report.reportDate || "").slice(0, 10);
   const reportOperator = normalizeReportValue_(report.operator);
   const reportClient = normalizeReportValue_(report.client);
+  const reportClientId = String(report.clientId || "").trim();
   if (!reportDate || !reportOperator || !reportClient) return;
   const completedAt = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss");
   for (let i = 1; i < rows.length; i++) {
     const sameDate = String(rows[i][idx.date] || "").slice(0, 10) === reportDate;
     const sameOperator = normalizeReportValue_(rows[i][idx.operator]) === reportOperator;
-    const sameClient = normalizeReportValue_(rows[i][idx.client]) === reportClient;
+    const rowClientId = String(rows[i][idx.clientId] || "").trim();
+    const sameClient = reportClientId && rowClientId ? rowClientId === reportClientId : normalizeReportValue_(rows[i][idx.client]) === reportClient;
     if (!sameDate || !sameOperator || !sameClient) continue;
     sheet.getRange(i + 1, idx.status + 1).setValue("done");
     sheet.getRange(i + 1, idx.completedAt + 1).setValue(rows[i][idx.completedAt] || completedAt);
@@ -3310,7 +3350,9 @@ function getSupplyDB_(ss) {
       supplyNote: String(r[6]||""),
       nextSupplyDate: String(r[7]||""),
       assignedOperator: String(r[8]||""),
-      materialPrices: parseNextSupplyPrices_(r[9])
+      materialPrices: parseNextSupplyPrices_(r[9]),
+      supplyId: String(r[10] || ""),
+      clientId: String(r[11] || "")
     };
   });
   return db;
@@ -3329,7 +3371,8 @@ function getLastReadings_(ss) {
     const date = normalizeSheetDate_(reportCell_(r,0));
     if (!readings[client] || date > readings[client].date) {
       readings[client] = {
-        date, chlorine: reportCell_(r,3), ph: reportCell_(r,4),
+        client, date, chlorine: reportCell_(r,3), ph: reportCell_(r,4),
+        clientId: String(reportCell_(r,24)||""),
         chlora: reportCell_(r,19)||0, hth: reportCell_(r,20)||0, phUp: reportCell_(r,21)||0, acidLiters: reportCell_(r,22)||0,
         elModel: String(reportCell_(r,10)||""), elSerial: String(reportCell_(r,11)||""),
         elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||""),

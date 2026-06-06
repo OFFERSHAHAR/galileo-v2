@@ -1970,6 +1970,7 @@ useEffect(() => {
   const [openCompletedPools,setOpenCompletedPools] = useState(false);
   const [openTodayTasks,setOpenTodayTasks] = useState(false);
   const [openMeasurementHistory,setOpenMeasurementHistory] = useState({});
+  const [allDailyCardsCollapsed,setAllDailyCardsCollapsed] = useState(false);
   const logoLongPress = useRef();
   const longPressTimers = useRef({});
   const fileRef = useRef();
@@ -2012,7 +2013,7 @@ useEffect(() => {
     if (poolStatus !== "\u05de\u05d0\u05d5\u05d6\u05e0\u05ea") return;
     if (internalNoteClientRef.current === client) return;
     internalNoteClientRef.current = client;
-    const savedNote = String(lastReadings[client]?.customStatusText || "").trim();
+    const savedNote = String(lastReadingForClient(client)?.customStatusText || "").trim();
     setForm(f => (
       f.client === client && f.poolStatus === "\u05de\u05d0\u05d5\u05d6\u05e0\u05ea"
         ? {...f, customStatusText: savedNote}
@@ -2122,6 +2123,21 @@ useEffect(() => {
   const makeClientId = () => `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const stableClientId = (c, index = 0) => `client-${clientIdSeed([c?.name || c, c?.phone, c?.address].filter(Boolean).join("-")) || "unknown"}${index ? `-${index + 1}` : ""}`;
   const clientId = (c) => String(c?.clientId || c?.id || c?.["לקוח_ID"] || c?.["מזהה_לקוח"] || "").trim() || stableClientId(c);
+  const clientByName = (name) => clients.find(c => normalizeName(c.name) === normalizeName(name));
+  const clientIdByName = (name) => clientId(clientByName(name) || {name});
+  const lastReadingForClient = (clientName, id = "") => {
+    const wantedId = String(id || clientIdByName(clientName) || "").trim();
+    const entries = Object.entries(lastReadings || {});
+    const readings = entries.map(([, value]) => value);
+    if (wantedId) {
+      const byId = readings.find(r => String(r?.clientId || "").trim() === wantedId);
+      if (byId) return byId;
+    }
+    return lastReadings?.[clientName] ||
+      entries.find(([key]) => normalizeName(key) === normalizeName(clientName))?.[1] ||
+      readings.find(r => normalizeName(r?.client) === normalizeName(clientName)) ||
+      null;
+  };
   const ensureClientIds = (list = []) => {
     const used = new Set();
     return (list || []).map((c, i) => {
@@ -2191,7 +2207,7 @@ useEffect(() => {
   };
   const isClientReportedDone = (date, clientName) => {
     const opName = dailyOwnerName(date) || user?.name || "";
-    const last = lastReadings[clientName];
+    const last = lastReadingForClient(clientName);
     return reports.some(r=>r.reportDate===date&&r.operator===opName&&r.client===clientName) ||
       completedReports.includes(completedReportKey(date, clientName, opName)) ||
       normalizeDate(last?.date) === date;
@@ -2240,7 +2256,7 @@ useEffect(() => {
       normalizeName(r.operator) === normalizeName(opName) &&
       normalizeName(r.client) === normalizeName(task.client)
     );
-    const lr = lastReadings[task.client] || {};
+    const lr = lastReadingForClient(task.client, task.clientId) || {};
     const source = existing || {
       reportDate: dailyDate,
       client: task.client,
@@ -2351,10 +2367,16 @@ useEffect(() => {
     const nameMatch = isAdminPanelRole(user?.role) || (t.operators||[]).some(op => normalizeName(op)===normalizeName(ownerName) || subValues.includes(normalizeName(op)));
     return dateMatch && nameMatch;
   });
-  const clientMeasurementHistory = (clientName) => {
+  const clientMeasurementHistory = (clientName, id = "") => {
+    const wantedId = String(id || clientIdByName(clientName) || "").trim();
+    const wantedName = normalizeName(clientName);
     const seen = new Set();
     return [...sheetReports, ...reports]
-      .filter(r => normalizeName(r?.client) === normalizeName(clientName))
+      .filter(r => {
+        const reportClientId = String(r?.clientId || "").trim();
+        if (wantedId && reportClientId) return reportClientId === wantedId;
+        return normalizeName(r?.client) === wantedName;
+      })
       .sort((a,b)=>normalizeDate(b.reportDate).localeCompare(normalizeDate(a.reportDate)))
       .filter(r => {
         const key = [normalizeDate(r.reportDate), r.chlorine ?? "", r.ph ?? "", r.salt ?? ""].join("|");
@@ -2848,13 +2870,13 @@ useEffect(() => {
     const byClient = new Map();
     getAdminOrderEntries(date, opName).forEach((entry, index) => {
       if (!entry?.client) return;
-      byClient.set(normalizeName(entry.client), {...entry, client:entry.client, orderIndex:Number(entry.orderIndex || index + 1), reported:false, source:"order"});
+      byClient.set(normalizeName(entry.client), {...entry, client:entry.client, clientId:entry.clientId||clientIdByName(entry.client), orderIndex:Number(entry.orderIndex || index + 1), reported:false, source:"order"});
     });
     progressReportsForOperator(date, opName).forEach((report, index) => {
       const key = normalizeName(report.client);
       const existing = byClient.get(key);
       byClient.set(key, {
-        ...(existing || {client:report.client, note:"", orderIndex:9999 + index, source:"report"}),
+        ...(existing || {client:report.client, clientId:report.clientId||clientIdByName(report.client), note:"", orderIndex:9999 + index, source:"report"}),
         reported:true,
         report
       });
@@ -2870,7 +2892,7 @@ useEffect(() => {
       const dayMatch = days.some(d=>d === dayName);
       if (opMatch && dayMatch) names.add(c.name);
     });
-    return [...names].filter(Boolean).map((clientName, index) => ({client: clientName, note: "", orderIndex: index + 1}));
+    return [...names].filter(Boolean).map((clientName, index) => ({client: clientName, clientId:clientIdByName(clientName), note: "", orderIndex: index + 1}));
   };
   const getAdminOrderEntries = (date, opName) => {
     const fromTasks = getSheetAdminOrderEntries(date, opName);
@@ -2879,11 +2901,11 @@ useEffect(() => {
   };
   const getLocalAdminOrderEntries = (date, opName) => readLocalArray(adminOrderKey(date, opName))
       .filter(x=>x?.client)
-      .map((x, i)=>({client:x.client, note:x.note || "", orderIndex:Number(x.orderIndex || i + 1)}));
+      .map((x, i)=>({client:x.client, clientId:x.clientId||clientIdByName(x.client), note:x.note || "", orderIndex:Number(x.orderIndex || i + 1)}));
   const getSheetAdminOrderEntries = (date, opName) => {
     const fromOrders = adminOrders
       .filter(o => normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName))
-      .map((o, i)=>({id:o.id, client:o.client, note:o.adminNote || "", orderIndex:Number(o.orderIndex || i + 1), status:o.status || "pending", changeLog:o.changeLog || []}))
+      .map((o, i)=>({id:o.id, client:o.client, clientId:o.clientId||clientIdByName(o.client), note:o.adminNote || "", orderIndex:Number(o.orderIndex || i + 1), status:o.status || "pending", changeLog:o.changeLog || []}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
     if (fromOrders.length) {
       const byClient = new Map();
@@ -2896,7 +2918,7 @@ useEffect(() => {
         (t.operators || []).some(op => normalizeName(op) === normalizeName(opName)) &&
         (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0)
       )
-      .map((t, i)=>({id:t.id, client:t.client, note:t.adminNote || "", orderIndex:Number(t.orderIndex || i + 1), status:t.status || "pending", changeLog:t.changeLog || []}))
+      .map((t, i)=>({id:t.id, client:t.client, clientId:t.clientId||clientIdByName(t.client), note:t.adminNote || "", orderIndex:Number(t.orderIndex || i + 1), status:t.status || "pending", changeLog:t.changeLog || []}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
   };
   const getEffectiveAdminOrderEntries = (date, opName) => {
@@ -2908,7 +2930,7 @@ useEffect(() => {
     const byClient = new Map();
     (entries || []).filter(x=>x?.client).forEach((x, i) => {
       const orderNumber = Number(x.orderIndex);
-      byClient.set(normalizeName(x.client), {client:x.client, note:x.note || "", orderIndex:Number.isFinite(orderNumber) && orderNumber > 0 ? orderNumber : i + 1});
+      byClient.set(normalizeName(x.client), {client:x.client, clientId:x.clientId||clientIdByName(x.client), note:x.note || "", orderIndex:Number.isFinite(orderNumber) && orderNumber > 0 ? orderNumber : i + 1});
     });
     return [...byClient.values()].sort((a,b)=>Number(a.orderIndex || 9999)-Number(b.orderIndex || 9999)).map((x, i)=>({...x, orderIndex:Number(x.orderIndex || i + 1)}));
   };
@@ -2932,6 +2954,7 @@ useEffect(() => {
         date,
         operator: opName,
         client: entry.client,
+        clientId: entry.clientId || clientIdByName(entry.client),
         status: existing?.status || "pending",
         changeLog: existing?.changeLog || [{at:nowStr(),note:"סדר יום עודכן",by:user?.name,needsAck:false,ackedBy:[]}],
         orderIndex: Number(entry.orderIndex || i + 1),
@@ -2955,19 +2978,19 @@ useEffect(() => {
   const getSharedSubOrderEntries = (date, opName, subUsername) => {
     const fromSheet = sharedSubOrders
       .filter(x=>sharedSubMatch(x, date, opName, subUsername) && x?.client)
-      .map((x, i)=>({id:x.id, client:x.client, note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || [], completedAt:x.completedAt || "", completedBy:x.completedBy || "", reportId:x.reportId || ""}))
+      .map((x, i)=>({id:x.id, client:x.client, clientId:x.clientId||clientIdByName(x.client), note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || [], completedAt:x.completedAt || "", completedBy:x.completedBy || "", reportId:x.reportId || ""}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
     if (fromSheet.length) return fromSheet;
     return readLocalArray(sharedSubOrderKey(date, opName, subUsername))
       .filter(x=>x?.client)
-      .map((x, i)=>({id:x.id, client:x.client, note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || [], completedAt:x.completedAt || "", completedBy:x.completedBy || "", reportId:x.reportId || ""}))
+      .map((x, i)=>({id:x.id, client:x.client, clientId:x.clientId||clientIdByName(x.client), note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || [], completedAt:x.completedAt || "", completedBy:x.completedBy || "", reportId:x.reportId || ""}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
   };
   const entriesToDailyTasks = (date, opName, entries, idPrefix="order") => (entries || [])
     .filter(entry=>entry?.client)
     .map((entry, i) => {
       const orderIndex = Number(entry.orderIndex || i + 1);
-      return {id:entry.id || `${idPrefix}-${date}-${entry.client}`, client:entry.client, operators:[opName], date, status:entry.status || "pending", changeLog:entry.changeLog || [], orderIndex, adminNote:entry.note || entry.adminNote || "", completedAt:entry.completedAt || "", completedBy:entry.completedBy || "", reportId:entry.reportId || "", createdByAdminOrder:true, _adminOrder:true};
+      return {id:entry.id || `${idPrefix}-${date}-${entry.client}`, client:entry.client, clientId:entry.clientId||clientIdByName(entry.client), operators:[opName], date, status:entry.status || "pending", changeLog:entry.changeLog || [], orderIndex, adminNote:entry.note || entry.adminNote || "", completedAt:entry.completedAt || "", completedBy:entry.completedBy || "", reportId:entry.reportId || "", createdByAdminOrder:true, _adminOrder:true};
     })
     .sort((a,b)=>Number(a.orderIndex||999)-Number(b.orderIndex||999));
   const moveAdminOrderItem = (from, to) => {
@@ -3039,6 +3062,7 @@ useEffect(() => {
       return {
         id: t.id,
         client: t.client,
+        clientId: t.clientId || report.clientId || clientIdByName(t.client),
         note: t.adminNote || t.note || "",
         orderIndex: Number(t.orderIndex || i + 1),
         status: done ? "done" : "pending",
@@ -3055,6 +3079,7 @@ useEffect(() => {
       subUsername: su.username || su.name || "",
       subOperator: su.name || su.username || "",
       client: entry.client,
+      clientId: entry.clientId || clientIdByName(entry.client),
       note: entry.note || "",
       id: entry.id || "",
       status: entry.status || "pending",
@@ -3537,7 +3562,7 @@ useEffect(() => {
 
   const saveTask = async (task) => {
     const isEdit=!!editTaskId;
-    const cleanTask={...task, date: task.date?.slice(0,10)||todayStr()};
+    const cleanTask={...task, date: task.date?.slice(0,10)||todayStr(), clientId: task.clientId || clientIdByName(task.client)};
     const note = task.noteOverride !== undefined ? task.noteOverride : taskNote;
     const logEntry={at:nowStr(),note:note||(isEdit?"משימה עודכנה":"📋 משימה חדשה הוקצתה לך"),by:user?.name,needsAck:true,ackedBy:[]};
     const newTasks=isEdit?tasks.map(t=>t.id===editTaskId?{...t,...cleanTask,changeLog:[...(t.changeLog||[]),logEntry]}:t):[...tasks,{id:Date.now(),...cleanTask,status:"pending",changeLog:[logEntry]}];
@@ -3931,16 +3956,17 @@ useEffect(() => {
       const nextSaltPkg = saltPkg;
       const nextSupplyDate = nextTreatmentDateForClient(client, reportDate);
       const prevSupply = newDB[client] || {};
+      const currentClientId = clientIdByName(client);
       const materialPrices = normalizeNextSupplyPrices(prevSupply.materialPrices);
       if (nextAcid || nextPhUpSupply || nextSaltPkg) {
-        newDB[client]={acid:nextAcid,phUpSupply:nextPhUpSupply,saltPkg:nextSaltPkg,saltBags:nextSaltPkg?saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate,assignedOperator:prevSupply.assignedOperator||"",materialPrices};
+        newDB[client]={acid:nextAcid,phUpSupply:nextPhUpSupply,saltPkg:nextSaltPkg,saltBags:nextSaltPkg?saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate,assignedOperator:prevSupply.assignedOperator||"",materialPrices,clientId:currentClientId};
       } else if (suppliedEquipment.length) {
-        newDB[client]={acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate:"",assignedOperator:prevSupply.assignedOperator||"",materialPrices};
+        newDB[client]={acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate:"",assignedOperator:prevSupply.assignedOperator||"",materialPrices,clientId:currentClientId};
       }
       nextSupplyDB = newDB;
       const nextSupply = newDB[client];
       if (nextSupply) {
-        supplyUpdate = [client,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices)];
+        supplyUpdate = [client,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices),nextSupply.supplyId||"",nextSupply.clientId||currentClientId];
       }
     }
     const reportOperatorName = dailyOwnerName(reportDate) || user?.name;
@@ -3953,6 +3979,7 @@ const report = {
   reportDate,
   operator:reportOperatorName||user?.name||"",
   client,
+  clientId: clientIdByName(client),
   chlorine,
   ph: form.phLowConfirmed && Number(ph) === 0 ? "PH נמוך" : ph,
   salt: form.lowSaltLight ? "נורת מלח נמוך דלוקה" : salt,
@@ -4025,6 +4052,8 @@ const report = {
         ...prev,
         [client]: {
           ...previous,
+          client,
+          clientId: clientIdByName(client),
           date: reportDate,
           chlorine,
           ph: report.ph,
@@ -4405,6 +4434,7 @@ const report = {
       const sharedEntries = (currentList || []).map((t, i)=>({
         id:t.id,
         client:t.client,
+        clientId:t.clientId||clientIdByName(t.client),
         note:t.adminNote || t.note || "",
         orderIndex:Number(t.orderIndex || i + 1),
         status:t.status === "done" || isClientReportedDone(dailyDate, t.client) ? "done" : "pending",
@@ -4420,6 +4450,7 @@ const report = {
         subUsername: su.username || su.name || "",
         subOperator: su.name || su.username || "",
         client: entry.client,
+        clientId: entry.clientId || clientIdByName(entry.client),
         note: entry.note || "",
         id: entry.id || "",
         status: entry.status || "pending",
@@ -4673,7 +4704,7 @@ const report = {
             <div style={{marginTop:10,background:"rgba(244,249,255,0.82)",border:`1px solid ${C.border}`,borderRadius:16,padding:"10px 12px",boxShadow:"0 12px 28px rgba(30,64,175,0.10)"}}>
               <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>בריכות שהושלמו</div>
               {completedDayTasks.length ? completedDayTasks.map((t,i)=>{
-                const lr = lastReadings[t.client] || {};
+                const lr = lastReadingForClient(t.client, t.clientId) || {};
                 const note = String(lr.customStatusText || "").trim();
                 const noteDate = normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date);
                 return (
@@ -4800,6 +4831,13 @@ const report = {
             <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📝</div>
             <div><div style={{fontWeight:800,fontSize:15,color:C.blue}}>{isActionLoading("openManualReport")?"⏳ פותח דוח...":"+ פתח דוח חדש"}</div><div style={{fontSize:12,color:C.muted}}>דוח ידני — לקוח מכל הרשימה</div></div>
           </Press>}
+          {canSubOperatorReport&&hasSharedOrderForSub&&dayTasks.length>0&&(
+            <div style={{display:"flex",justifyContent:"flex-start",alignItems:"center",margin:"-4px 0 14px"}}>
+              <Press onClick={()=>{setAllDailyCardsCollapsed(v=>!v);haptic("medium");}} style={{padding:"9px 15px",borderRadius:12,background:allDailyCardsCollapsed?"#fff8e1":"#e3f2fd",color:allDailyCardsCollapsed?C.orange:C.blue,fontWeight:900,fontSize:12,border:`2px solid ${allDailyCardsCollapsed?"#ffe082":C.lightBlue}`,boxShadow:"0 8px 18px rgba(37,99,235,0.08)"}}>
+                {allDailyCardsCollapsed?"בטל":"כווץ"}
+              </Press>
+            </div>
+          )}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
             <div>
               <h2 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:0}}>סידור יומי</h2>
@@ -4865,6 +4903,7 @@ const report = {
             const hasFreeClientTasks = freeClientTasks.length > 0;
             const isFreeClientTaskDone = freeClientTasks.some(ft => ft.status === "done");
             const isDone = t.status==="done" || isClientReportedDone(dailyDate, t.client) || isFreeClientTaskDone;
+            const forceCollapsed = allDailyCardsCollapsed && !operatorEditOrder;
             if(isDone && !isDoneOpen) {
               return (
                 <div
@@ -4934,6 +4973,7 @@ const report = {
                     {!isDone&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 דוח</Press>}
                   </div>
                 </div>
+                {!forceCollapsed&&<>
                 {operatorEditOrder&&(
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"#fff8e1",borderRadius:10,padding:"7px 10px",marginBottom:10,border:"1px solid #ffe082"}}>
                     <span style={{fontSize:12,fontWeight:900,color:C.orange}}>#{i+1}</span>
@@ -4961,18 +5001,23 @@ const report = {
                     {freeClientTaskNotes.length>0&&<div style={{fontSize:12,fontWeight:800}}>{freeClientTaskNotes.join(" · ")}</div>}
                   </div>
                 )}
-                {(()=>{const lr=lastReadings[t.client];if(!lr)return !isSubOperator ? (
+                {(()=>{const lr=lastReadingForClient(t.client,t.clientId);if(!lr)return (
                   <div style={{marginBottom:10}}>
-                    <Press onClick={()=>{setInternalNoteEdit({client:t.client,note:""});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11}}>
+                    {!isSubOperator&&<Press onClick={()=>{setInternalNoteEdit({client:t.client,note:""});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11}}>
                       ✏️ הוסף הערה פנימית
-                    </Press>
+                    </Press>}
+                    {isSubOperator&&(
+                      <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:800,color:C.muted}}>
+                        אין מדידה אחרונה להצגה
+                      </div>
+                    )}
                   </div>
-                ) : null;
+                );
                   return (
                     <div style={{marginBottom:10}}>
-                      {(()=>{ const history = clientMeasurementHistory(t.client); const historyOpen = !!openMeasurementHistory[t.client]; return (
+                      {(()=>{ const historyKey = t.clientId || t.client; const history = clientMeasurementHistory(t.client, t.clientId); const historyOpen = !!openMeasurementHistory[historyKey]; return (
                         <>
-                      <Press onClick={()=>{setOpenMeasurementHistory(x=>({...x,[t.client]:!x[t.client]}));haptic();}} style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",cursor:"pointer",width:"100%",border:historyOpen?`1px solid ${C.blue}`:"1px solid transparent"}}>
+                      <Press onClick={()=>{setOpenMeasurementHistory(x=>({...x,[historyKey]:!x[historyKey]}));haptic();}} style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",cursor:"pointer",width:"100%",border:historyOpen?`1px solid ${C.blue}`:"1px solid transparent"}}>
                         <span style={{fontSize:12,fontWeight:700,color:C.blue}}>📊 מדידה אחרונה:</span>
                         <span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>Cl: {lr.chlorine}</span>
                         <span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph}</span>
@@ -5040,6 +5085,7 @@ const report = {
                 {!isSubOperator&&<div style={{marginTop:isDone?0:8}}>
                   <Press onClick={()=>{setOpIssueClient(t.client);setShowOperatorIssue(true);haptic();}} style={{padding:"8px 14px",borderRadius:12,background:"#fff8e1",color:C.orange,fontWeight:800,fontSize:12,border:"1px solid #ffe082",display:"inline-flex",alignItems:"center",gap:6}}>🔧 דווח תקלה</Press>
                 </div>}
+                </>}
               </div>
             );
           })}
@@ -5217,7 +5263,7 @@ const report = {
               )}
               {client&&(()=>{ const c=[...clients,...freeClients].find(x=>x.name===client); const meta=clientMetaLine(c); return meta?<div style={{marginTop:8,fontSize:12,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:10,padding:"8px 12px"}}>{meta}</div>:null; })()}
               {client&&clientPhone(client)&&<a href={`tel:${clientPhone(client)}`} style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"10px 14px",background:"#e8f5e9",border:`1px solid #c8e6c9`,borderRadius:12,textDecoration:"none",color:C.green,fontSize:13,fontWeight:700}}><span>📞</span><span>{client.split(" - ")[0]}</span><span style={{color:C.muted,fontSize:12,marginRight:"auto"}}>לחץ לחיוג</span></a>}
-              {client&&lastReadings[client]&&(()=>{ const lr=lastReadings[client]; const note=String(lr.customStatusText||"").trim(); const noteDate=normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date); return (
+              {client&&lastReadingForClient(client)&&(()=>{ const lr=lastReadingForClient(client); const note=String(lr.customStatusText||"").trim(); const noteDate=normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date); return (
                 <div style={{marginTop:8,display:"grid",gap:6}}>
                   <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
                     <span style={{fontSize:12,fontWeight:900,color:C.blue}}>מדידה אחרונה:</span>
@@ -5430,7 +5476,7 @@ const report = {
         const text = String(value || "");
         return text.includes("נורת מלח") || text.includes("מלח נמוך");
       };
-      const lr = lastReadings[clientName];
+      const lr = lastReadingForClient(clientName);
       if (hasFlag(lr?.salt)) return true;
       const latest = [...sheetReports, ...reports]
         .filter(r => normalizeName(r.client) === normalizeName(clientName))
@@ -5962,7 +6008,7 @@ const report = {
                     setAction("saveTasks", "success", 1500);
                   } else {
                     if(!taskClients.length||!taskOps.length) { setAction("saveTasks", "idle"); return; }
-                    const newTasksBatch = taskClients.map(tc=>({id:Date.now()+Math.floor(Math.random()*100000),date:taskDate.slice(0,10),client:tc.name,operators:[...taskOps],status:"pending",changeLog:[{at:nowStr(),note:tc.note||taskNote||"📋 משימה חדשה הוקצתה לך",by:user?.name,needsAck:true,ackedBy:[]}]}));
+                    const newTasksBatch = taskClients.map(tc=>({id:Date.now()+Math.floor(Math.random()*100000),date:taskDate.slice(0,10),client:tc.name,clientId:tc.clientId||clientIdByName(tc.name),operators:[...taskOps],status:"pending",changeLog:[{at:nowStr(),note:tc.note||taskNote||"📋 משימה חדשה הוקצתה לך",by:user?.name,needsAck:true,ackedBy:[]}]}));
                     const newTasks = [...tasks, ...newTasksBatch];
                     setTasks(newTasks); setTaskClients([]); setTaskClientSearch(""); setTaskOps([]); setTaskNote("");
                     if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
