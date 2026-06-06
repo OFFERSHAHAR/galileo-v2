@@ -1762,6 +1762,23 @@ useEffect(() => {
   );
 }, [pending]);
 
+const getPendingReportPayload = (item) => item?.report ? item.report : item;
+const getPendingSupplyUpdate = (item) => item?.report ? item.supplyUpdate : undefined;
+const samePendingReport = (a, b) => {
+  const left = getPendingReportPayload(a) || {};
+  const right = getPendingReportPayload(b) || {};
+  return left.id === right.id || (
+    normalizeDate(left.reportDate) === normalizeDate(right.reportDate) &&
+    normalizeName(left.operator) === normalizeName(right.operator) &&
+    normalizeName(left.client) === normalizeName(right.client)
+  );
+};
+const makePendingReportItem = (report, supplyUpdate) => supplyUpdate ? { report, supplyUpdate } : report;
+const addPendingReport = (report, supplyUpdate) => {
+  const item = makePendingReportItem(report, supplyUpdate);
+  setPending(prev => prev.some(x => samePendingReport(x, item)) ? prev : [...prev, item]);
+};
+
 useEffect(() => {
   localStorage.setItem("galileo_sub_operator_pending_reports", JSON.stringify(pendingSubReports));
 }, [pendingSubReports]);
@@ -1890,6 +1907,7 @@ useEffect(() => {
   const [showQR,setShowQR] = useState(false);
   const [showQRCode,setShowQRCode] = useState(null);
   const [dismissed,setDismissed] = useState(false);
+  const [showPendingReportNames,setShowPendingReportNames] = useState(false);
   const [showSuperAdmin,setShowSuperAdmin] = useState(false);
   const [showReportIssue,setShowReportIssue] = useState(false);
   const [issueDesc,setIssueDesc] = useState("");
@@ -3809,14 +3827,7 @@ useEffect(() => {
       void autoShareOrderAfterReport(report);
       trackUsageEvent("approve_sub_report", {screen:"daily", target:"pending_sub_report"});
     } else {
-      setPending(prev => {
-        const exists = prev.some(x => x.id === report.id || (
-          normalizeDate(x.reportDate) === normalizeDate(report.reportDate) &&
-          normalizeName(x.operator) === normalizeName(report.operator) &&
-          normalizeName(x.client) === normalizeName(report.client)
-        ));
-        return exists ? prev : [...prev, report];
-      });
+      addPendingReport(report);
       await removePendingSubReport(item.id);
       setAction(`approveSubReport:${item.id}`, "local", 2200);
       trackUsageEvent("approve_sub_report_local", {screen:"daily", target:"pending_sub_report"});
@@ -3996,7 +4007,7 @@ const report = {
       };
     });
 
-    if (!isEditingExistingReport && !supplyUpdate) {
+    if (!isEditingExistingReport) {
       setAction("submitReport", "success", 1200);
       showToast("✅ הדוח נשמר ונשלח ברקע");
       setSyncing(false);
@@ -4016,10 +4027,12 @@ const report = {
             adminEmail:getCompany().adminEmail||"",
             clientAddress: clientAddress(client),
             clientPhone: clientPhone(client),
+            supplyUpdate: supplyUpdate || undefined,
           }).catch(() => null);
           savedInBackground = saveResponse?.success === true;
         }
         if (savedInBackground) {
+          if (nextSupplyDB) setSupplyDB(nextSupplyDB);
           setSheetReports(prev => {
             const idx = prev.findIndex(x => x.id === report.id || (
               normalizeDate(x.reportDate) === normalizeDate(report.reportDate) &&
@@ -4044,14 +4057,7 @@ const report = {
           void autoShareOrderAfterReport(report);
           setAction("submitReport", "success", 1200);
         } else {
-          setPending(prev => {
-            const exists = prev.some(x => x.id === report.id || (
-              normalizeDate(x.reportDate) === normalizeDate(report.reportDate) &&
-              normalizeName(x.operator) === normalizeName(report.operator) &&
-              normalizeName(x.client) === normalizeName(report.client)
-            ));
-            return exists ? prev : [...prev, report];
-          });
+          addPendingReport(report, supplyUpdate);
           setDismissed(false);
           setAction("submitReport", "local", 2200);
           showToast("⚠️ הדוח נשמר מקומית וממתין לסנכרון");
@@ -4095,14 +4101,7 @@ const report = {
         haptic("medium");
         return;
       }
-      setPending(prev => {
-        const exists = prev.some(x => x.id === report.id || (
-          normalizeDate(x.reportDate) === normalizeDate(report.reportDate) &&
-          normalizeName(x.operator) === normalizeName(report.operator) &&
-          normalizeName(x.client) === normalizeName(report.client)
-        ));
-        return exists ? prev : [...prev, report];
-      });
+      addPendingReport(report, supplyUpdate);
       setDismissed(false);
       setAction("submitReport", "local", 2200);
       showToast("⚠️ הדוח נשמר מקומית");
@@ -4135,16 +4134,19 @@ const report = {
 
     const sent = [];
     const failed = [];
-    for (const r of pending) {
-      const res = await sheetCall("saveReport",{report:r}).catch(()=>null);
-      if(res?.success) sent.push(r);
-      else failed.push(r);
+    for (const item of pending) {
+      const r = getPendingReportPayload(item);
+      const supplyUpdate = getPendingSupplyUpdate(item);
+      const res = await sheetCall("saveReport",{report:r, supplyUpdate}).catch(()=>null);
+      if(res?.success) sent.push(item);
+      else failed.push(item);
     }
 
     if(sent.length){
       setReports(prev => {
         const next = [...prev];
-        sent.forEach(r => {
+        sent.forEach(item => {
+          const r = getPendingReportPayload(item);
           const idx = next.findIndex(x => x.id === r.id || (
             normalizeDate(x.reportDate) === normalizeDate(r.reportDate) &&
             normalizeName(x.operator) === normalizeName(r.operator) &&
@@ -4157,7 +4159,8 @@ const report = {
       });
       setSheetReports(prev => {
         const next = [...prev];
-        sent.forEach(r => {
+        sent.forEach(item => {
+          const r = getPendingReportPayload(item);
           const idx = next.findIndex(x => x.id === r.id || (
             normalizeDate(x.reportDate) === normalizeDate(r.reportDate) &&
             normalizeName(x.operator) === normalizeName(r.operator) &&
@@ -4168,7 +4171,8 @@ const report = {
         });
         return next;
       });
-      sent.forEach(r => {
+      sent.forEach(item => {
+        const r = getPendingReportPayload(item);
         void sendReportWhatsApp(r).catch(e => console.warn("Pending WhatsApp send failed", e));
         void autoShareOrderAfterReport(r);
       });
@@ -4723,11 +4727,14 @@ const report = {
         </div>
         <div style={{padding:"16px 16px 0"}}>
           {pending.length>0&&!dismissed&&(
-            <div style={{...card({background:"#fff8e1",border:"1px solid #ffe082",marginBottom:12,display:"flex",alignItems:"center",gap:10}),padding:"12px 16px"}}>
+            <div onClick={()=>setShowPendingReportNames(v=>!v)} style={{...card({background:"#fff8e1",border:"1px solid #ffe082",marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}),padding:"12px 16px",cursor:"pointer"}}>
               <span style={{fontSize:18}}>⚠️</span>
               <div style={{flex:1}}><div style={{fontWeight:800,fontSize:13,color:C.orange}}>{pending.length} דוחות ממתינים לשליחה</div><div style={{fontSize:11,color:C.muted}}>שמורים מקומית — לחץ לשליחה</div></div>
-              <Press onClick={syncPendingReports} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
-              <Press onClick={()=>setDismissed(true)} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
+              <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
+              <Press onClick={(e)=>{e.stopPropagation();setDismissed(true);}} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
+              {showPendingReportNames&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.72)",borderRadius:12,padding:"8px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
+                {pending.map((item,i)=>{ const r=getPendingReportPayload(item)||{}; return <div key={r.id||i} style={{fontSize:12,fontWeight:900,color:C.text,padding:"3px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>{r.client||"לקוח ללא שם"}</div>; })}
+              </div>}
             </div>
           )}
           <div style={{...card({marginBottom:12})}}>
@@ -5281,9 +5288,12 @@ const report = {
         </Sec>
 
         {pending.length>0&&(
-          <div style={{...card({background:"#fff8e1",border:`1px solid #ffe082`}),marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div onClick={()=>setShowPendingReportNames(v=>!v)} style={{...card({background:"#fff8e1",border:`1px solid #ffe082`}),marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",cursor:"pointer"}}>
             <span style={{fontSize:13,fontWeight:700,color:C.orange}}>⚠️ {pending.length} דוחות ממתינים לשליחה</span>
-            <Press onClick={syncPendingReports} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח הכל",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
+            <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח הכל",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
+            {showPendingReportNames&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.72)",borderRadius:12,padding:"8px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
+              {pending.map((item,i)=>{ const r=getPendingReportPayload(item)||{}; return <div key={r.id||i} style={{fontSize:12,fontWeight:900,color:C.text,padding:"3px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>{r.client||"לקוח ללא שם"}</div>; })}
+            </div>}
           </div>
         )}
         <Press onClick={handleSubmit} disabled={!client||syncing||isActionLoading("submitReport")} style={{padding:"18px",borderRadius:18,background:actionStatus.submitReport==="success"?C.green:actionStatus.submitReport==="local"?C.orange:syncing||!client?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 16px 36px rgba(79,70,229,0.24)",marginBottom:8}}>{actionLabel("submitReport",{idle:"שלח דוח ⚡",loading:"⏳ שולח דוח...",success:"✅ נשלח",local:"⚠️ נשמר מקומית",error:"⚠️ שגיאה"})}</Press>
