@@ -1786,7 +1786,8 @@ const getPendingSupplyUpdate = (item) => item?.report ? item.supplyUpdate : unde
 const samePendingReport = (a, b) => {
   const left = getPendingReportPayload(a) || {};
   const right = getPendingReportPayload(b) || {};
-  return left.id === right.id || (
+  if (left.id && right.id) return String(left.id) === String(right.id);
+  return (
     normalizeDate(left.reportDate) === normalizeDate(right.reportDate) &&
     normalizeName(left.operator) === normalizeName(right.operator) &&
     normalizeName(left.client) === normalizeName(right.client)
@@ -1796,6 +1797,27 @@ const makePendingReportItem = (report, supplyUpdate) => supplyUpdate ? { report,
 const addPendingReport = (report, supplyUpdate) => {
   const item = makePendingReportItem(report, supplyUpdate);
   setPending(prev => prev.some(x => samePendingReport(x, item)) ? prev : [...prev, item]);
+};
+const sameReportIdentity = (a = {}, b = {}) => {
+  if (a.id && b.id) return String(a.id) === String(b.id);
+  return (
+    normalizeDate(a.reportDate) === normalizeDate(b.reportDate) &&
+    normalizeName(a.operator) === normalizeName(b.operator) &&
+    normalizeName(a.client) === normalizeName(b.client)
+  );
+};
+const reportWithServerId = (report, response) => {
+  const serverId = String(response?.id || "").trim();
+  return serverId && serverId !== String(report?.id || "") ? {...report, id:serverId} : report;
+};
+const upsertReportByIdentity = (list, report) => {
+  const idx = list.findIndex(x => sameReportIdentity(x, report));
+  if (idx >= 0) {
+    const next = [...list];
+    next[idx] = report;
+    return next;
+  }
+  return [...list, report];
 };
 
 useEffect(() => {
@@ -4118,29 +4140,19 @@ const report = {
           savedInBackground = saveResponse?.success === true;
         }
         if (savedInBackground) {
+          const savedReport = reportWithServerId(report, saveResponse);
           if (nextSupplyDB) setSupplyDB(nextSupplyDB);
-          setSheetReports(prev => {
-            const idx = prev.findIndex(x => x.id === report.id || (
-              normalizeDate(x.reportDate) === normalizeDate(report.reportDate) &&
-              normalizeName(x.operator) === normalizeName(report.operator) &&
-              normalizeName(x.client) === normalizeName(report.client)
-            ));
-            if (idx >= 0) {
-              const next = [...prev];
-              next[idx] = report;
-              return next;
-            }
-            return [...prev, report];
-          });
+          setReports(prev => upsertReportByIdentity(prev, savedReport));
+          setSheetReports(prev => upsertReportByIdentity(prev, savedReport));
           if (!saveResponse?.duplicate && user?.role !== "admin") {
             void sendNotificationToAdmins(
               `✅ דוח בוצע: ${client}`,
               `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
             ).catch(e => console.warn("Admin report notification failed", e));
           }
-          void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
-          void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
-          void autoShareOrderAfterReport(report);
+          void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
+          void sendReportWhatsApp(savedReport).catch(e => console.warn("WhatsApp send failed", e));
+          void autoShareOrderAfterReport(savedReport);
           setAction("submitReport", "success", 1200);
         } else {
           addPendingReport(report, supplyUpdate);
@@ -4153,6 +4165,7 @@ const report = {
     }
 
     let saved=false;
+    let savedReport = report;
     const adminEmail = getCompany().adminEmail||"";
        if (sheetId) {
       const res = isEditingExistingReport
@@ -4167,7 +4180,12 @@ const report = {
         }).catch(() => null);
 
       saved = res?.success === true;
+      if (saved) savedReport = reportWithServerId(report, res);
       if (saved && nextSupplyDB) setSupplyDB(nextSupplyDB);
+      if (saved) {
+        setReports(prev => upsertReportByIdentity(prev, savedReport));
+        setSheetReports(prev => upsertReportByIdentity(prev, savedReport));
+      }
 
       if (!isEditingExistingReport && saved && !res?.duplicate && user?.role !== "admin") {
         void sendNotificationToAdmins(
@@ -4207,9 +4225,9 @@ const report = {
     setEditingReport(null);
     setScreen("done");
     if (!isEditingExistingReport) {
-      void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
-      void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
-      void autoShareOrderAfterReport(report);
+      void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
+      void sendReportWhatsApp(savedReport).catch(e => console.warn("WhatsApp send failed", e));
+      void autoShareOrderAfterReport(savedReport);
     }
   };
 
@@ -4224,39 +4242,13 @@ const report = {
       const r = getPendingReportPayload(item);
       const supplyUpdate = getPendingSupplyUpdate(item);
       const res = await sheetCall("saveReport",{report:r, supplyUpdate}).catch(()=>null);
-      if(res?.success) sent.push(item);
+      if(res?.success) sent.push(makePendingReportItem(reportWithServerId(r, res), supplyUpdate));
       else failed.push(item);
     }
 
     if(sent.length){
-      setReports(prev => {
-        const next = [...prev];
-        sent.forEach(item => {
-          const r = getPendingReportPayload(item);
-          const idx = next.findIndex(x => x.id === r.id || (
-            normalizeDate(x.reportDate) === normalizeDate(r.reportDate) &&
-            normalizeName(x.operator) === normalizeName(r.operator) &&
-            normalizeName(x.client) === normalizeName(r.client)
-          ));
-          if (idx >= 0) next[idx] = r;
-          else next.push(r);
-        });
-        return next;
-      });
-      setSheetReports(prev => {
-        const next = [...prev];
-        sent.forEach(item => {
-          const r = getPendingReportPayload(item);
-          const idx = next.findIndex(x => x.id === r.id || (
-            normalizeDate(x.reportDate) === normalizeDate(r.reportDate) &&
-            normalizeName(x.operator) === normalizeName(r.operator) &&
-            normalizeName(x.client) === normalizeName(r.client)
-          ));
-          if (idx >= 0) next[idx] = r;
-          else next.push(r);
-        });
-        return next;
-      });
+      setReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
+      setSheetReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
       sent.forEach(item => {
         const r = getPendingReportPayload(item);
         void sendReportWhatsApp(r).catch(e => console.warn("Pending WhatsApp send failed", e));
@@ -6303,7 +6295,7 @@ const report = {
               </div>
               {(()=>{
                 const allReports = [...sheetReports, ...reports.filter(r=>!r._fromSheet)];
-                const seen = new Set(); const unique = allReports.filter(r=>{ if(seen.has(r.id))return false; seen.add(r.id); return true; });
+                const unique = allReports.filter((r, idx, arr)=>arr.findIndex(x=>sameReportIdentity(x, r))===idx);
                 const filtered = unique.reverse().filter(r=>{ const d=String(r.reportDate||"").slice(0,10); const matchText = !reportFilter || r.client?.includes(reportFilter) || r.operator?.includes(reportFilter); const matchFrom = !reportDateFilter || d>=reportDateFilter; const matchTo = !reportDateToFilter || d<=reportDateToFilter; return matchText && matchFrom && matchTo; });
                 if(filtered.length===0) return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted,fontSize:14}}>אין דוחות — לחץ "טען מגיליון"</div>;
                 return filtered.map((r,i)=>(
@@ -6383,7 +6375,7 @@ const report = {
                   </div>
                 ))}
               </div>
-              {(()=>{ const allRep=[...sheetReports,...reports]; const seen=new Set(); const filtered=allRep.filter(r=>{ if(seen.has(r.id))return false; seen.add(r.id); const d=String(r.reportDate||"").slice(0,10); if(supplySearch.date&&d<supplySearch.date)return false; if(supplySearch.dateTo&&d>supplySearch.dateTo)return false; return reportHasAllowedSupply(r) && reportMatchesSupplyType(r, supplySearch.type); }).sort((a,b)=>b.reportDate?.localeCompare(a.reportDate)); if(filtered.length===0)return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תוצאות — לחץ "טען מגיליון" בטאב דוחות</div>; return filtered.map((r,i)=>{ const labelText=allowedSupplyLabelParts(r.supplyLabel).join(", "); return (<div key={i} style={{...card({marginBottom:10})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{r.phUp>0&&<span style={{background:"#f3e5f5",color:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>מעלה pH כוסות: {r.phUp}</span>}{r.acidLiters>0&&<span style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>חומצת מלח L: {r.acidLiters}</span>}{labelText&&<span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>{labelText}</span>}</div></div>); }); })()}
+              {(()=>{ const allRep=[...sheetReports,...reports]; const unique=allRep.filter((r, idx, arr)=>arr.findIndex(x=>sameReportIdentity(x, r))===idx); const filtered=unique.filter(r=>{ const d=String(r.reportDate||"").slice(0,10); if(supplySearch.date&&d<supplySearch.date)return false; if(supplySearch.dateTo&&d>supplySearch.dateTo)return false; return reportHasAllowedSupply(r) && reportMatchesSupplyType(r, supplySearch.type); }).sort((a,b)=>b.reportDate?.localeCompare(a.reportDate)); if(filtered.length===0)return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תוצאות — לחץ "טען מגיליון" בטאב דוחות</div>; return filtered.map((r,i)=>{ const labelText=allowedSupplyLabelParts(r.supplyLabel).join(", "); return (<div key={i} style={{...card({marginBottom:10})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{r.phUp>0&&<span style={{background:"#f3e5f5",color:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>מעלה pH כוסות: {r.phUp}</span>}{r.acidLiters>0&&<span style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>חומצת מלח L: {r.acidLiters}</span>}{labelText&&<span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>{labelText}</span>}</div></div>); }); })()}
             </div>
           )}
           {adminTab==="users"&&(

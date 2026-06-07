@@ -369,20 +369,28 @@
         ensureColumns(sheet, ["ציוד_שסופק"]);
         ensureReportsSheetReportId_(sheet);
         const r = data.report;
-        if (data.supplyUpdate) {
-          const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
-          if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
-        }
-        const duplicateRow = findDuplicateReportRow_(sheet, r);
-        if (duplicateRow) {
-          Logger.log("Duplicate report skipped: row " + duplicateRow);
-          markSubOperatorShareDone_(ss, r);
-          return json({ success: true, duplicate: true, row: duplicateRow });
-        }
+        const lock = LockService.getScriptLock();
+        try {
+          lock.waitLock(10000);
+          if (data.supplyUpdate) {
+            const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
+            if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
+          }
+          const duplicate = findDuplicateReportRow_(sheet, r);
+          if (duplicate.row) {
+            Logger.log("Duplicate report skipped: row " + duplicate.row);
+            markSubOperatorShareDone_(ss, r);
+            return json({ success: true, duplicate: true, row: duplicate.row, id: duplicate.id || r.id || "" });
+          }
 
-        sheet.appendRow(reportRowValues_(r));
-        refreshMonthlyTreatmentCounters_(ss);
-        markSubOperatorShareDone_(ss, r);
+          sheet.appendRow(reportRowValues_(r));
+          const savedRow = sheet.getLastRow();
+          refreshMonthlyTreatmentCounters_(ss);
+          markSubOperatorShareDone_(ss, r);
+          data._savedReportRow = savedRow;
+        } finally {
+          try { lock.releaseLock(); } catch(e) {}
+        }
 
         // Send email with photos if adminEmail provided
         if (data.adminEmail && data.adminEmail.includes("@")) {
@@ -435,7 +443,7 @@
           }
         }
 
-        return json({ success: true });
+        return json({ success: true, row: data._savedReportRow || 0, id: r.id || "" });
       }
 
       if (action === "updateReport") {
@@ -452,7 +460,7 @@
         sheet.getRange(row, 1, 1, 26).setValues([reportRowValues_(r)]);
         refreshMonthlyTreatmentCounters_(ss);
         markSubOperatorShareDone_(ss, r);
-        return json({ success:true, row });
+        return json({ success:true, row, id: r.id || reportIdCell_(sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0]) || "" });
       }
 
       if (action === "saveSupplyDB") {
@@ -514,7 +522,7 @@
         let hi = rows.findIndex(r => String(r[0]).includes("reportId"));
         if (hi === -1) hi = 2;
         const reports = rows.slice(hi + 1).filter(r => reportCell_(r,0)).map((r,i) => ({
-          id: reportIdCell_(r) || `sheet-${i}`,
+          id: reportIdCell_(r),
           _fromSheet: true,
           reportDate: reportCell_(r,0) instanceof Date ? Utilities.formatDate(reportCell_(r,0),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,0)).slice(0,10),
           operator: String(reportCell_(r,1)),
@@ -1602,9 +1610,19 @@
         const clientIds = map["clientId"] ? sheet.getRange(4, map["clientId"], last - 3, 1).getValues() : [];
         for (let i = 0; i < clients.length; i++) {
           const rowClientId = String(clientIds[i] && clientIds[i][0] || "").trim();
-          if ((clientId && rowClientId && clientId === rowClientId) || normalizeReportValue_(clients[i][0]).toLowerCase() === normalizedClient) {
+          if (clientId && rowClientId && clientId === rowClientId) {
             targetRow = i + 4;
             break;
+          }
+        }
+        if (!targetRow) {
+          for (let i = 0; i < clients.length; i++) {
+            const rowClientId = String(clientIds[i] && clientIds[i][0] || "").trim();
+            if (clientId && rowClientId) continue;
+            if (normalizeReportValue_(clients[i][0]).toLowerCase() === normalizedClient) {
+              targetRow = i + 4;
+              break;
+            }
           }
         }
       }
@@ -2329,6 +2347,7 @@
   function findLatestReportRow_(sheet, original, report) {
     if (!sheet || sheet.getLastRow() < 2) return 0;
     ensureReportsSheetReportId_(sheet);
+    const wantedId = String(report && report.id || original && (original.id || original.localId) || "").trim();
     const date = normalizeReportDate_(original.date || original.reportDate || report.reportDate);
     const client = normalizeReportValue_(original.client || report.client);
     const operator = normalizeReportValue_(original.operator || report.operator);
@@ -2336,8 +2355,15 @@
     let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
     if (hi === -1) hi = 0;
 
+    if (wantedId) {
+      for (let i = rows.length - 1; i > hi; i--) {
+        if (reportIdCell_(rows[i]) === wantedId) return i + 1;
+      }
+    }
+
     for (let i = rows.length - 1; i > hi; i--) {
       if (!rows[i][0]) continue;
+      if (wantedId && reportIdCell_(rows[i])) continue;
       if (
         normalizeReportDate_(reportCell_(rows[i],0)) === date &&
         normalizeReportValue_(reportCell_(rows[i],1)) === operator &&
@@ -2356,20 +2382,29 @@
   }
 
 function findDuplicateReportRow_(sheet, report) {
-    if (!sheet || sheet.getLastRow() < 2) return 0;
+    if (!sheet || sheet.getLastRow() < 2) return { row:0, id:"" };
 
     ensureReportsSheetReportId_(sheet);
+    const targetId = String(report && report.id || "").trim();
     const targetKey = reportDuplicateKeyFromReport_(report);
     const rows = sheet.getDataRange().getValues();
     let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
     if (hi === -1) hi = 0;
 
-    for (let i = hi + 1; i < rows.length; i++) {
-      if (!reportCell_(rows[i],0)) continue;
-      if (reportDuplicateKeyFromRow_(rows[i]) === targetKey) return i + 1;
+    if (targetId) {
+      for (let i = hi + 1; i < rows.length; i++) {
+        const rowId = reportIdCell_(rows[i]);
+        if (rowId && rowId === targetId) return { row:i + 1, id:rowId };
+      }
     }
 
-    return 0;
+    for (let i = hi + 1; i < rows.length; i++) {
+      if (!reportCell_(rows[i],0)) continue;
+      if (reportIdCell_(rows[i])) continue;
+      if (reportDuplicateKeyFromRow_(rows[i]) === targetKey) return { row:i + 1, id:reportIdCell_(rows[i]) };
+    }
+
+    return { row:0, id:"" };
   }
 
   function findDuplicateOperatorIssueRow_(sheet, issue) {
