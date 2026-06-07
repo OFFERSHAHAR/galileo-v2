@@ -632,7 +632,7 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
     if (!supply) return acc;
     if (supply.acid) acc.acid += 1;
     if (supply.phUpSupply) acc.phUpSupply += 1;
-    if (supply.saltPkg) acc.saltBags += Number(supply.saltBags || 1);
+    if (supply.saltPkg) acc.saltBags += Number(supply.saltBags || 0);
     return acc;
   }, { acid: 0, phUpSupply: 0, saltBags: 0 });
   const materialRecipients = materialList.reduce((acc, task) => {
@@ -641,7 +641,7 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
     const client = String(task.client || "").split(" - ")[0];
     if (supply.acid) acc.acid.push(client);
     if (supply.phUpSupply) acc.phUpSupply.push(client);
-    if (supply.saltPkg) acc.saltBags.push(`${client} ×${Number(supply.saltBags || 1)}`);
+    if (supply.saltPkg && Number(supply.saltBags || 0) > 0) acc.saltBags.push(`${client} ×${Number(supply.saltBags || 0)}`);
     return acc;
   }, { acid: [], phUpSupply: [], saltBags: [] });
   const hasMaterials = materials.acid || materials.phUpSupply || materials.saltBags;
@@ -1145,7 +1145,7 @@ function LicenseScreen({ onDone, onSuperAdmin }) {
 const blank = () => ({
   reportDate:todayStr(),client:"",chlorine:0,ph:0,salt:0,chlora:0,hth:0,phUp:0,acidLiters:0,
   elModel:"",elSerial:"",elDate:"",waterLevel:"תקין",clarity:"תקין",fat:"תקין",flow:"",
-  acid:false,phUpSupply:false,saltPkg:false,saltBags:1,supplyStatus:"",supplyNote:"",suppliedEquipment:[],chlorineZeroConfirmed:false,phLowConfirmed:false,poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
+  acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyStatus:"",supplyNote:"",suppliedEquipment:[],chlorineZeroConfirmed:false,phLowConfirmed:false,poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
   notes:"",photos:[],clientLocked:false,adminReport:false,lowSaltLight:false,
 });
 
@@ -2239,11 +2239,13 @@ useEffect(() => {
     const labelParts = label.split(",").map(x=>x.trim()).filter(Boolean);
     const hasLabelPart = (...needles) => labelParts.some(part => needles.some(n => part.includes(n)));
     const saltMatch = label.match(/[×x]\s*(\d+)/i);
+    const saltBagsValue = Number(source.saltBags || saltMatch?.[1] || 0);
+    const hasSalt = source.saltPkg === true || hasLabelPart("שקי מלח", "מלח ×", "מלח x");
     return {
       acid: source.acid === true || hasLabelPart("חומצת"),
       phUpSupply: source.phUpSupply === true || hasLabelPart("מעלה"),
-      saltPkg: source.saltPkg === true || hasLabelPart("שקי מלח", "מלח ×", "מלח x"),
-      saltBags: Number(source.saltBags || saltMatch?.[1] || 1),
+      saltPkg: hasSalt && saltBagsValue > 0,
+      saltBags: saltBagsValue,
       suppliedEquipment: Array.isArray(source.suppliedEquipment)
         ? source.suppliedEquipment
         : String(source.suppliedEquipment || "").split(",").map(x=>x.trim()).filter(Boolean)
@@ -2338,7 +2340,7 @@ useEffect(() => {
   const supplyDueDate = (clientName, supply) => toISODate(supply?.nextSupplyDate) || nextTreatmentDateForClient(clientName, supply?.updatedAt);
   const isSupplyDueForDate = (clientName, date, supply = supplyDB[clientName]) => {
     const due = supplyDueDate(clientName, supply);
-    return !due || due === normalizeDate(date);
+    return !due || due <= normalizeDate(date);
   };
 
   const myDayClients = (date=dailyDate, opName=user?.name) => {
@@ -2387,23 +2389,71 @@ useEffect(() => {
       .slice(0,4);
   };
   const supplyPartsFromLabel = (label) => String(label || "").split(",").map(x=>x.trim()).filter(Boolean);
+  const suppliedListFrom = (value) => Array.isArray(value)
+    ? value
+    : String(value || "").split(",").map(x=>x.trim()).filter(Boolean);
+  const suppliedHas = (list, ...needles) => (list || []).some(item => needles.some(n => String(item || "").includes(n)));
   const supplyFromReportLike = (source = {}) => {
     const label = String(source.supplyLabel || source.meta?.supplyLabel || "");
     const parts = supplyPartsFromLabel(label);
     const saltPart = parts.find(x => x.includes("מלח"));
+    const saltBagsValue = Number(source.saltBags || source.meta?.saltBags || saltPart?.match(/\d+/)?.[0] || 0);
     return {
-      acid: Number(source.acidLiters || source.meta?.acidLiters || 0) > 0 || parts.some(x => x.includes("חומצת")),
-      phUpSupply: Number(source.phUp || source.meta?.phUp || 0) > 0 || parts.some(x => x.includes("מעלה") || x.includes("סודה")),
-      saltPkg: parts.some(x => x.includes("מלח")),
-      saltBags: Number(source.saltBags || source.meta?.saltBags || saltPart?.match(/\d+/)?.[0] || 1),
+      acid: source.acid === true || source.meta?.acid === true || parts.some(x => x.includes("חומצת")),
+      phUpSupply: source.phUpSupply === true || source.meta?.phUpSupply === true || parts.some(x => x.includes("מעלה") || x.includes("סודה")),
+      saltPkg: (source.saltPkg === true || source.meta?.saltPkg === true || parts.some(x => x.includes("מלח"))) && saltBagsValue > 0,
+      saltBags: saltBagsValue,
       label
     };
   };
   const materialNamesFromSupply = (supply) => [
     supply?.phUpSupply && "סודה אש",
     supply?.acid && "חומצת מלח",
-    supply?.saltPkg && `מלח ×${Number(supply?.saltBags || 1)}`
+    supply?.saltPkg && Number(supply?.saltBags || 0) > 0 && `מלח ×${Number(supply?.saltBags || 0)}`
   ].filter(Boolean);
+  const supplyLabelFromFlags = (flags = {}) => [
+    flags.acid && "חומצת מלח",
+    flags.phUpSupply && "מעלה pH",
+    flags.saltPkg && Number(flags.saltBags || 0) > 0 && `מלח ×${Number(flags.saltBags || 0)}`
+  ].filter(Boolean).join(", ");
+  const hasPendingSupply = (supply = {}) => !!(supply.acid || supply.phUpSupply || (supply.saltPkg && Number(supply.saltBags || 0) > 0));
+  const nextSupplyStateForReport = (clientName, source = {}, prevSupply = {}) => {
+    const requested = supplyFromReportLike(source);
+    const supplied = suppliedListFrom(source.suppliedEquipment);
+    const suppliedAcid = suppliedHas(supplied, "חומצת");
+    const suppliedPhUp = suppliedHas(supplied, "סודה", "מעלה");
+    const suppliedSalt = suppliedHas(supplied, "מלח");
+    const nextAcid = !!(requested.acid || prevSupply.acid) && !suppliedAcid;
+    const nextPhUpSupply = !!(requested.phUpSupply || prevSupply.phUpSupply) && !suppliedPhUp;
+    const requestedSaltBags = Number(requested.saltBags || 0);
+    const prevSaltBags = Number(prevSupply.saltBags || 0);
+    const nextSaltBags = suppliedSalt ? 0 : (requested.saltPkg ? requestedSaltBags : prevSaltBags);
+    const nextSaltPkg = !!(requested.saltPkg || prevSupply.saltPkg) && nextSaltBags > 0 && !suppliedSalt;
+    const explicitAfterSupplied = {
+      acid: !!requested.acid && !suppliedAcid,
+      phUpSupply: !!requested.phUpSupply && !suppliedPhUp,
+      saltPkg: !!requested.saltPkg && requestedSaltBags > 0 && !suppliedSalt,
+      saltBags: requestedSaltBags
+    };
+    const nextSupplyDate = nextAcid || nextPhUpSupply || nextSaltPkg ? nextTreatmentDateForClient(clientName, source.reportDate) : "";
+    return {
+      shouldUpdate: !!(requested.acid || requested.phUpSupply || requested.saltPkg || supplied.length || hasPendingSupply(prevSupply)),
+      explicitAfterSupplied,
+      nextSupply: {
+        acid: nextAcid,
+        phUpSupply: nextPhUpSupply,
+        saltPkg: nextSaltPkg,
+        saltBags: nextSaltPkg ? nextSaltBags : 0,
+        supplyNote: "",
+        updatedAt: source.reportDate || todayStr(),
+        nextSupplyDate,
+        assignedOperator: prevSupply.assignedOperator || "",
+        materialPrices: normalizeNextSupplyPrices(prevSupply.materialPrices),
+        supplyId: prevSupply.supplyId || "",
+        clientId: source.clientId || prevSupply.clientId || clientIdByName(clientName)
+      }
+    };
+  };
   const materialApprovalReport = (approval) => {
     const allReports = [...reports, ...sheetReports];
     return allReports.find(r => String(r.id || "") === String(approval?.reportId || "")) ||
@@ -2424,7 +2474,7 @@ useEffect(() => {
   };
   const persistSupplyDB = (db) => {
     if (!sheetId) return;
-    const rows = Object.entries(db).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices)]);
+    const rows = Object.entries(db).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices),v.supplyId||"",v.clientId||clientIdByName(c)]);
     void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply sync failed", e));
   };
   useEffect(() => {
@@ -2435,30 +2485,11 @@ useEffect(() => {
   const buildSupplyUpdateForReport = (source = {}) => {
     const clientName = source.client || "";
     if (!clientName) return null;
-    const supply = supplyFromReportLike(source);
-    const supplied = String(source.suppliedEquipment || "");
-    const suppliedAcid = supplied.includes("חומצת");
-    const suppliedPhUp = supplied.includes("סודה") || supplied.includes("מעלה");
-    const nextAcid = supply.acid && !suppliedAcid;
-    const nextPhUpSupply = supply.phUpSupply && !suppliedPhUp;
-    const nextSaltPkg = supply.saltPkg;
-    if (!nextAcid && !nextPhUpSupply && !nextSaltPkg && !supplied) return null;
     const prevSupply = supplyDB[clientName] || {};
-    const materialPrices = normalizeNextSupplyPrices(prevSupply.materialPrices);
-    const nextSupplyDate = nextAcid || nextPhUpSupply || nextSaltPkg ? nextTreatmentDateForClient(clientName, source.reportDate) : "";
-    const nextSupply = {
-      acid: nextAcid,
-      phUpSupply: nextPhUpSupply,
-      saltPkg: nextSaltPkg,
-      saltBags: nextSaltPkg ? Number(supply.saltBags || prevSupply.saltBags || 1) : 0,
-      supplyNote: "",
-      updatedAt: source.reportDate || todayStr(),
-      nextSupplyDate,
-      assignedOperator: prevSupply.assignedOperator || "",
-      materialPrices
-    };
+    const {shouldUpdate, nextSupply} = nextSupplyStateForReport(clientName, source, prevSupply);
+    if (!shouldUpdate) return null;
     const db = {...supplyDB, [clientName]: nextSupply};
-    const row = [clientName,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices)];
+    const row = [clientName,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices),nextSupply.supplyId||"",nextSupply.clientId||clientIdByName(clientName)];
     return {db, row};
   };
 
@@ -3946,23 +3977,14 @@ useEffect(() => {
     const elNext=calcNext(elDate);
     let nextSupplyDB = null;
     let supplyUpdate = null;
-    const supplyLabel=[acid&&"חומצת מלח",phUpSupply&&"מעלה pH",saltPkg&&`מלח ×${saltBags}`].filter(Boolean).join(", ");
-    if(client&&(acid||phUpSupply||saltPkg||suppliedEquipment.length)&&(!isSubOperatorRole(user?.role)||approvalEditId)){
+    const currentClientId = clientIdByName(client);
+    const supplySource = {reportDate, client, clientId: currentClientId, acid, phUpSupply, saltPkg, saltBags, suppliedEquipment};
+    const prevSupplyForClient = supplyDB[client] || {};
+    const computedSupply = nextSupplyStateForReport(client, supplySource, prevSupplyForClient);
+    const supplyLabel = supplyLabelFromFlags(computedSupply.explicitAfterSupplied);
+    if(client&&computedSupply.shouldUpdate&&(!isSubOperatorRole(user?.role)||approvalEditId)){
       const newDB={...supplyDB};
-      const suppliedAcid = suppliedEquipment.includes("חומצת מלח");
-      const suppliedPhUp = suppliedEquipment.includes("סודה אש");
-      const nextAcid = acid && !suppliedAcid;
-      const nextPhUpSupply = phUpSupply && !suppliedPhUp;
-      const nextSaltPkg = saltPkg;
-      const nextSupplyDate = nextTreatmentDateForClient(client, reportDate);
-      const prevSupply = newDB[client] || {};
-      const currentClientId = clientIdByName(client);
-      const materialPrices = normalizeNextSupplyPrices(prevSupply.materialPrices);
-      if (nextAcid || nextPhUpSupply || nextSaltPkg) {
-        newDB[client]={acid:nextAcid,phUpSupply:nextPhUpSupply,saltPkg:nextSaltPkg,saltBags:nextSaltPkg?saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate,assignedOperator:prevSupply.assignedOperator||"",materialPrices,clientId:currentClientId};
-      } else if (suppliedEquipment.length) {
-        newDB[client]={acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyNote:"",updatedAt:reportDate,nextSupplyDate:"",assignedOperator:prevSupply.assignedOperator||"",materialPrices,clientId:currentClientId};
-      }
+      newDB[client]=computedSupply.nextSupply;
       nextSupplyDB = newDB;
       const nextSupply = newDB[client];
       if (nextSupply) {
@@ -4515,7 +4537,7 @@ const report = {
       if (!supply) return acc;
       if (supply.acid) acc.acid += 1;
       if (supply.phUpSupply) acc.phUpSupply += 1;
-      if (supply.saltPkg) acc.saltBags += Number(supply.saltBags || 1);
+      if (supply.saltPkg) acc.saltBags += Number(supply.saltBags || 0);
       return acc;
     }, { acid:0, phUpSupply:0, saltBags:0 });
     const dailySupplyRecipients = dailySupplyTasks.reduce((acc, task) => {
@@ -4524,7 +4546,7 @@ const report = {
       const clientName = String(task.client || "").split(" - ")[0];
       if (supply.acid) acc.acid.push(clientName);
       if (supply.phUpSupply) acc.phUpSupply.push(clientName);
-      if (supply.saltPkg) acc.saltBags.push(`${clientName} ×${Number(supply.saltBags || 1)}`);
+      if (supply.saltPkg && Number(supply.saltBags || 0) > 0) acc.saltBags.push(`${clientName} ×${Number(supply.saltBags || 0)}`);
       return acc;
     }, { acid:[], phUpSupply:[], saltBags:[] });
     const hasDailySupply = dailySupplySummary.acid || dailySupplySummary.phUpSupply || dailySupplySummary.saltBags;
@@ -5365,8 +5387,8 @@ const report = {
             )}
             <div style={{paddingTop:12}}>
               <label style={{fontSize:13,fontWeight:700,color:C.text,display:"block",marginBottom:8}}>חומרים שסופקו היום</label>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                {["סודה אש","חומצת מלח"].map(item=>{
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
+                {["סודה אש","חומצת מלח","שקי מלח"].map(item=>{
                   const selected = suppliedEquipment.includes(item);
                   return (
                     <Press key={item} onClick={()=>{toggleSuppliedEquipment(item);haptic();}}
@@ -5552,7 +5574,7 @@ const report = {
           acid: !!(prev.acid || supply.acid),
           phUpSupply: !!(prev.phUpSupply || supply.phUpSupply),
           saltPkg: !!(prev.saltPkg || supply.saltPkg),
-          saltBags: supply.saltPkg ? Number(supply.saltBags || prev.saltBags || 1) : Number(prev.saltBags || 0),
+          saltBags: supply.saltPkg ? Number(supply.saltBags || prev.saltBags || 0) : Number(prev.saltBags || 0),
           supplyNote: prev.supplyNote || "",
           updatedAt: todayStr(),
           nextSupplyDate: taskDate,
@@ -5602,12 +5624,12 @@ const report = {
     }, { phUpSupply:0, acid:0 });
     const supplyLabelParts = (label) => String(label || "").split(",").map(x=>x.trim()).filter(Boolean);
     const allowedSupplyLabelParts = (label) => supplyLabelParts(label).filter(x=>x.includes("מעלה") || x.includes("חומצת") || x.includes("מלח"));
-    const reportHasAllowedSupply = (r) => Number(r?.phUp || 0) > 0 || Number(r?.acidLiters || 0) > 0 || allowedSupplyLabelParts(r?.supplyLabel).length > 0;
+    const reportHasAllowedSupply = (r) => allowedSupplyLabelParts(r?.supplyLabel).length > 0;
     const reportMatchesSupplyType = (r, type) => {
       if (!type) return true;
       const labels = allowedSupplyLabelParts(r?.supplyLabel).join(" ");
-      if (type === "מעלה pH") return Number(r?.phUp || 0) > 0 || labels.includes("מעלה");
-      if (type === "חומצת מלח") return Number(r?.acidLiters || 0) > 0 || labels.includes("חומצת");
+      if (type === "מעלה pH") return labels.includes("מעלה");
+      if (type === "חומצת מלח") return labels.includes("חומצת");
       if (type === "מלח") return labels.includes("מלח");
       return true;
     };
@@ -5622,7 +5644,7 @@ const report = {
       const materials = [
         supply?.phUpSupply && "סודה אש",
         supply?.acid && "חומצת מלח",
-        supply?.saltPkg && `מלח ×${Number(supply?.saltBags || 1)}`
+        supply?.saltPkg && Number(supply?.saltBags || 0) > 0 && `מלח ×${Number(supply?.saltBags || 0)}`
       ].filter(Boolean);
       if (!materials.length) return rows;
       const clientObj = clients.find(c=>normalizeName(c.name)===normalizeName(clientName));
