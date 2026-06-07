@@ -103,6 +103,26 @@ const getDailyGreeting = (username) => {
 const CITY = "ישראל";
 const wazeUrl = (a) => `https://waze.com/ul?q=${encodeURIComponent(a+", "+CITY)}&navigate=yes`;
 const todayStr = () => new Date().toISOString().slice(0,10);
+const isIOSDevice = () => {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const platform = navigator.platform || "";
+  const touchMac = platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  return /iPad|iPhone|iPod/.test(ua) || touchMac;
+};
+const IPhoneComfortLayer = () => (
+  <style>{`
+    html, body, #root { overscroll-behavior-y: contain; }
+    .galileo-ios-vh { min-height: 100vh; }
+    .galileo-ios-sheet { height: 100vh; }
+    @supports (-webkit-touch-callout: none) {
+      @supports (min-height: 100dvh) {
+        .galileo-ios-vh { min-height: 100dvh !important; }
+        .galileo-ios-sheet { height: 100dvh !important; }
+      }
+    }
+  `}</style>
+);
 const LOGIN_DAY_KEY = "galileo_login_day";
 const localDayKey = (date = new Date()) => {
   const y = date.getFullYear();
@@ -485,7 +505,7 @@ function Press({children,onClick,style={},disabled=false,tag="div"}) {
 
 function Toast({msg,visible}) {
   return (
-    <div style={{position:"fixed",bottom:96,right:"50%",transform:`translateX(50%) translateY(${visible?0:16}px)`,background:"#0d47a1",color:"#fff",borderRadius:99,padding:"10px 22px",fontSize:13,fontWeight:700,zIndex:999,opacity:visible?1:0,transition:"all 0.35s cubic-bezier(0.34,1.56,0.64,1)",pointerEvents:"none",boxShadow:"0 8px 24px rgba(13,71,161,0.4)",whiteSpace:"nowrap"}}>
+    <div style={{position:"fixed",bottom:"calc(96px + env(safe-area-inset-bottom, 0px))",right:"50%",transform:`translateX(50%) translateY(${visible?0:16}px)`,background:"#0d47a1",color:"#fff",borderRadius:99,padding:"10px 22px",fontSize:13,fontWeight:700,zIndex:999,opacity:visible?1:0,transition:"all 0.35s cubic-bezier(0.34,1.56,0.64,1)",pointerEvents:"none",boxShadow:"0 8px 24px rgba(13,71,161,0.4)",whiteSpace:"nowrap"}}>
       {msg}
     </div>
   );
@@ -783,12 +803,12 @@ function BottomSheet({children,onClose,title}) {
   return (
     <div style={{position:"fixed",inset:0,zIndex:200,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
       <div onClick={close} style={{position:"absolute",inset:0,background:`rgba(15,23,42,${vis?0.36:0})`,transition:"background 0.3s",backdropFilter:"blur(8px)"}}/>
-      <div style={{position:"relative",background:"rgba(255,255,255,0.86)",backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:"28px 28px 0 0",boxShadow:"0 -24px 70px rgba(15,23,42,0.16), 0 1px 0 rgba(255,255,255,0.86) inset",transform:vis?"translateY(0)":"translateY(100%)",transition:"transform 0.4s cubic-bezier(0.34,1.2,0.64,1)",maxHeight:"85vh",overflowY:"auto"}}>
+      <div style={{position:"relative",background:"rgba(255,255,255,0.86)",backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:"28px 28px 0 0",boxShadow:"0 -24px 70px rgba(15,23,42,0.16), 0 1px 0 rgba(255,255,255,0.86) inset",transform:vis?"translateY(0)":"translateY(100%)",transition:"transform 0.4s cubic-bezier(0.34,1.2,0.64,1)",maxHeight:"calc(85vh - env(safe-area-inset-top, 0px))",overflowY:"auto"}}>
         <div style={{padding:"16px 20px 8px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(148,163,184,0.16)",position:"sticky",top:0,background:"rgba(232,241,253,0.82)",backdropFilter:"blur(18px)",zIndex:1}}>
           <h2 style={{margin:0,fontSize:17,fontWeight:900,color:"#0d47a1"}}>{title}</h2>
           <Press onClick={close} style={{width:34,height:34,borderRadius:12,background:"rgba(241,245,249,0.84)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:"#546e7a"}}>✕</Press>
         </div>
-        <div style={{padding:"16px 20px 32px"}}>{children}</div>
+        <div style={{padding:"16px 20px calc(32px + env(safe-area-inset-bottom, 0px))"}}>{children}</div>
       </div>
     </div>
   );
@@ -1113,7 +1133,8 @@ function LicenseScreen({ onDone, onSuperAdmin }) {
     }
   };
   return (
-    <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+    <div dir="rtl" className="galileo-ios-vh" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px))"}}>
+      <IPhoneComfortLayer/>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}`}</style>
       <div style={{width:"100%",maxWidth:380}}>
         <div style={{textAlign:"center",marginBottom:36}}>
@@ -1534,8 +1555,9 @@ function SuperAdminScreen({ onClose }) {
   return (
     <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",flexDirection:"column"}}>
       <div onClick={close} style={{position:"absolute",inset:0,background:`rgba(0,0,0,${vis?0.6:0})`,transition:"background 0.3s",backdropFilter:"blur(6px)"}}/>
-      <div dir="rtl" style={{position:"relative",background:"#f0f7ff",transform:vis?"translateY(0)":"translateY(100%)",transition:"transform 0.4s cubic-bezier(0.34,1.2,0.64,1)",height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
-        <div style={{background:`linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)`,padding:"28px 20px 20px",position:"relative",overflow:"hidden",flexShrink:0}}>
+      <div dir="rtl" className="galileo-ios-sheet" style={{position:"relative",background:"#f0f7ff",transform:vis?"translateY(0)":"translateY(100%)",transition:"transform 0.4s cubic-bezier(0.34,1.2,0.64,1)",height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
+        <IPhoneComfortLayer/>
+        <div style={{background:`linear-gradient(145deg,#0d47a1,#1565c0,#1976d2)`,padding:"calc(28px + env(safe-area-inset-top, 0px)) 20px 20px",position:"relative",overflow:"hidden",flexShrink:0}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <div>
               <div style={{color:"rgba(255,255,255,0.55)",fontSize:11,fontWeight:700,letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:4}}>Super Admin</div>
@@ -1548,7 +1570,7 @@ function SuperAdminScreen({ onClose }) {
             </div>
           </div>
         </div>
-        {toast2&&<div style={{position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",background:"#0d47a1",color:"#fff",borderRadius:99,padding:"10px 22px",fontSize:13,fontWeight:700,zIndex:999,whiteSpace:"nowrap",boxShadow:"0 8px 24px rgba(13,71,161,0.4)"}}>{toast2}</div>}
+        {toast2&&<div style={{position:"fixed",bottom:"calc(90px + env(safe-area-inset-bottom, 0px))",left:"50%",transform:"translateX(-50%)",background:"#0d47a1",color:"#fff",borderRadius:99,padding:"10px 22px",fontSize:13,fontWeight:700,zIndex:999,whiteSpace:"nowrap",boxShadow:"0 8px 24px rgba(13,71,161,0.4)"}}>{toast2}</div>}
         {!auth?(
           <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
             <div style={{background:"#fff",borderRadius:24,padding:28,width:"100%",maxWidth:340,boxShadow:"0 20px 60px rgba(0,0,0,0.15)"}}>
@@ -1685,6 +1707,7 @@ function SuperAdminScreen({ onClose }) {
 
 export default function App() {
   const company = getCompany();
+  const isIOS = isIOSDevice();
   const [showSetup, setShowSetup] = useState(()=>{
     const lic = getLicense();
     if(lic.key && lic.sheetId) return false;
@@ -1949,6 +1972,7 @@ useEffect(() => {
   const [showQRCode,setShowQRCode] = useState(null);
   const [dismissed,setDismissed] = useState(false);
   const [showPendingReportNames,setShowPendingReportNames] = useState(false);
+  const [pendingBackgroundSync,setPendingBackgroundSync] = useState(false);
   const [showSuperAdmin,setShowSuperAdmin] = useState(false);
   const [showReportIssue,setShowReportIssue] = useState(false);
   const [issueDesc,setIssueDesc] = useState("");
@@ -3337,6 +3361,19 @@ useEffect(() => {
     );
   };
 
+  const IOSInstallHint = ({compact=false}) => {
+    if (!isIOS || isStandalone) return null;
+    return (
+      <div style={{...card({marginTop: compact ? 0 : 10, marginBottom: compact ? 8 : 0, background:"#fff8e1", border:"1px solid #ffe082", display:"flex", alignItems:"center", gap:10}), padding: compact ? "8px 10px" : "10px 12px", borderRadius:14}}>
+        <span style={{fontSize:18}}>↗️</span>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:900,fontSize:13,color:C.orange}}>הוסף למסך הבית באייפון</div>
+          <div style={{fontSize:11,color:C.muted,lineHeight:1.45}}>לחץ שיתוף ואז הוסף למסך הבית כדי לפתוח כאפליקציה מלאה ולקבל התראות.</div>
+        </div>
+      </div>
+    );
+  };
+
   useEffect(()=>{
     applyTenantBranding(getCompany());
     try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); setSheetId("connected"); } } catch {}
@@ -4255,6 +4292,7 @@ const report = {
         void autoShareOrderAfterReport(r);
       });
       setPending(failed);
+      if (!failed.length) setPendingBackgroundSync(false);
       setAction("syncPending", failed.length ? "error" : "success", failed.length ? 2200 : 1600);
       showToast(failed.length ? `⚠️ ${failed.length} דוחות עדיין ממתינים` : "✅ כל הדוחות נשלחו!");
     } else {
@@ -4265,7 +4303,17 @@ const report = {
     setSyncing(false);
   };
 
+  const togglePendingBackgroundSync = (e) => {
+    e?.stopPropagation?.();
+    setPendingBackgroundSync(active => {
+      const next = !active;
+      showToast(next ? "שליחת דוחות ברקע הופעלה" : "שליחת דוחות ברקע נעצרה");
+      return next;
+    });
+  };
+
   useEffect(() => {
+    if (!pendingBackgroundSync) return;
     if (!pending.length) return;
 
     const retryPending = () => {
@@ -4276,17 +4324,19 @@ const report = {
     };
 
     const retryTimer = window.setTimeout(retryPending, 1200);
+    const retryInterval = window.setInterval(retryPending, 15000);
     window.addEventListener("online", retryPending);
     window.addEventListener("focus", retryPending);
     document.addEventListener("visibilitychange", retryPending);
 
     return () => {
       window.clearTimeout(retryTimer);
+      window.clearInterval(retryInterval);
       window.removeEventListener("online", retryPending);
       window.removeEventListener("focus", retryPending);
       document.removeEventListener("visibilitychange", retryPending);
     };
-  }, [pending.length, syncing]);
+  }, [pending.length, syncing, pendingBackgroundSync]);
 
   const openManualReport = async () => {
     if (isActionLoading("openManualReport")) return;
@@ -4330,6 +4380,7 @@ const report = {
 
   if (showSetup) return (
     <>
+      <IPhoneComfortLayer/>
       <LicenseScreen onDone={()=>{ const c=getCompany(); setCompanyName(c.name||DEFAULT_APP_NAME); setShowSetup(false); }} onSuperAdmin={()=>setShowSuperAdmin(true)}/>
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
     </>
@@ -4337,7 +4388,8 @@ const report = {
 
   if(screen==="login") {
     return (
-    <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+    <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:"calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px))"}}>
+      <IPhoneComfortLayer/>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}input[type=range]{-webkit-appearance:none;height:6px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#1565c0;box-shadow:0 2px 8px rgba(21,101,192,0.4)}textarea,input,select{font-family:'Plus Jakarta Sans',sans-serif}`}</style>
       {showSuperAdmin&&<SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>}
       <div style={{width:"100%",maxWidth:360}}>
@@ -4365,6 +4417,7 @@ const report = {
           </Press>
         </div>
         <InstallAppCard/>
+        <IOSInstallHint/>
         <p style={{textAlign:"center",fontSize:10.5,color:C.muted,marginTop:16,marginBottom:0,letterSpacing:"0.03em",fontWeight:800,lineHeight:1.55}}>
           © 2026 Poolmang™ by Or Musa. All rights reserved.
           <br/>
@@ -4546,7 +4599,8 @@ const report = {
     const operatorHeroBg = "linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))";
     const operatorPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     return (
-      <div dir="rtl" style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
+      <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:"calc(112px + env(safe-area-inset-bottom, 0px))"}}>
+        <IPhoneComfortLayer/>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {showDailyBriefing&&!welcomeMedia&&!isDailyOrderComplete&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
         {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
@@ -4744,6 +4798,7 @@ const report = {
         </div>
         <div style={{margin:"14px 16px 0",position:"relative",zIndex:10}}>
           <InstallAppCard compact/>
+          <IOSInstallHint compact/>
           <div style={{...card({marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}),padding:"14px 18px"}}>
             <div>
               <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4}}>שעון עבודה</div>
@@ -4813,7 +4868,8 @@ const report = {
           {pending.length>0&&!dismissed&&(
             <div onClick={()=>setShowPendingReportNames(v=>!v)} style={{...card({background:"#fff8e1",border:"1px solid #ffe082",marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}),padding:"12px 16px",cursor:"pointer"}}>
               <span style={{fontSize:18}}>⚠️</span>
-              <div style={{flex:1}}><div style={{fontWeight:800,fontSize:13,color:C.orange}}>{pending.length} דוחות ממתינים לשליחה</div><div style={{fontSize:11,color:C.muted}}>שמורים מקומית — לחץ לשליחה</div></div>
+              <div style={{flex:1}}><div style={{fontWeight:800,fontSize:13,color:C.orange}}>{pending.length} דוחות ממתינים לשליחה</div><div style={{fontSize:11,color:C.muted}}>{pendingBackgroundSync ? "שליחה ברקע פעילה" : "שמורים מקומית — הפעל שליחה ברקע או שלח ידנית"}</div></div>
+              <Press onClick={togglePendingBackgroundSync} style={{background:pendingBackgroundSync?C.green:"#fff7ed",border:`1px solid ${pendingBackgroundSync?"#86efac":"#fed7aa"}`,borderRadius:99,padding:"6px 12px",color:pendingBackgroundSync?"#fff":C.orange,fontWeight:900,fontSize:12}}>{pendingBackgroundSync?"עצור רקע":"הפעל רקע"}</Press>
               <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
               <Press onClick={(e)=>{e.stopPropagation();setDismissed(true);}} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
               {showPendingReportNames&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.72)",borderRadius:12,padding:"8px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
@@ -5125,7 +5181,7 @@ const report = {
             </div>
           )}
         </div>
-        <div style={{position:"fixed",right:12,left:12,bottom:12,zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",justifyContent:"space-around",gap:8,boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
+        <div style={{position:"fixed",right:12,left:12,bottom:"calc(12px + env(safe-area-inset-bottom, 0px))",zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px calc(9px + env(safe-area-inset-bottom, 0px))",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",justifyContent:"space-around",gap:8,boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
           {[["\uD83C\uDFE0","\u05D1\u05D9\u05EA",0],["\uD83D\uDCCB","\u05DE\u05E9\u05D9\u05DE\u05D5\u05EA",1],["\uD83D\uDCCA","\u05D4\u05EA\u05E7\u05D3\u05DE\u05D5\u05EA",3],["\uD83D\uDCC5","\u05E2\u05EA\u05D9\u05D3\u05D9",2]].map(([ic,lb,idx])=>(
             <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"7px 12px",borderRadius:18,background:navTab===idx?operatorPrimaryGradient:"rgba(241,245,249,0.50)",boxShadow:navTab===idx?"0 12px 28px rgba(79,70,229,0.22)":"none"}}>
               {idx===1&&hasTaskChanges&&<span style={{position:"absolute",top:5,right:12,width:10,height:10,borderRadius:99,background:C.red,boxShadow:"0 0 0 3px rgba(255,255,255,0.86)",border:"1px solid rgba(255,255,255,0.95)"}}/>}
@@ -5232,7 +5288,8 @@ const report = {
   }
 
   if(screen==="form") return (
-    <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:100}}>
+    <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:"calc(100px + env(safe-area-inset-bottom, 0px))"}}>
+      <IPhoneComfortLayer/>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:8px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}select option{background:#fff}`}</style>
       <div style={{margin:"12px 14px 0",background:"linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))",border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
@@ -5412,6 +5469,7 @@ const report = {
         {pending.length>0&&(
           <div onClick={()=>setShowPendingReportNames(v=>!v)} style={{...card({background:"#fff8e1",border:`1px solid #ffe082`}),marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",cursor:"pointer"}}>
             <span style={{fontSize:13,fontWeight:700,color:C.orange}}>⚠️ {pending.length} דוחות ממתינים לשליחה</span>
+            <Press onClick={togglePendingBackgroundSync} style={{background:pendingBackgroundSync?C.green:"#fff7ed",border:`1px solid ${pendingBackgroundSync?"#86efac":"#fed7aa"}`,borderRadius:99,padding:"6px 12px",color:pendingBackgroundSync?"#fff":C.orange,fontWeight:900,fontSize:12}}>{pendingBackgroundSync?"עצור רקע":"הפעל רקע"}</Press>
             <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח הכל",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
             {showPendingReportNames&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.72)",borderRadius:12,padding:"8px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
               {pending.map((item,i)=>{ const r=getPendingReportPayload(item)||{}; return <div key={r.id||i} style={{fontSize:12,fontWeight:900,color:C.text,padding:"3px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>{r.client||"לקוח ללא שם"}</div>; })}
@@ -5436,7 +5494,8 @@ const report = {
   if(screen==="done") {
     const last = reports[reports.length-1];
     return (
-      <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,textAlign:"center",color:C.text}}>
+      <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px))",textAlign:"center",color:C.text}}>
+        <IPhoneComfortLayer/>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}@keyframes pop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}`}</style>
         <div style={{position:"absolute",top:14,left:14}}><RefreshTopButton compact/></div>
         <div style={{width:104,height:104,borderRadius:32,background:"rgba(232,241,253,0.82)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(37,99,235,0.12), 0 1px 0 rgba(232,241,253,0.82) inset",display:"flex",alignItems:"center",justifyContent:"center",fontSize:58,marginBottom:18,animation:"pop 0.5s cubic-bezier(0.34,1.56,0.64,1)"}}>✅</div>
@@ -5679,7 +5738,8 @@ const report = {
     ].filter(b=>!b.hidden);
     const adminDisplayName = user?.name || user?.username || (isSubAdminPanel ? "סאב אדמין" : "מנהל");
     return (
-      <div dir="rtl" style={{minHeight:"100vh",background:adminShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:112}}>
+      <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:adminShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:"calc(112px + env(safe-area-inset-bottom, 0px))"}}>
+        <IPhoneComfortLayer/>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
         {criticalAdminIssue&&(()=>{
           const [id, operator, clientName, desc, priority, status, response, date] = criticalAdminIssue;
@@ -5767,6 +5827,7 @@ const report = {
         </div>
         <div style={{padding:"18px 16px 0"}}>
           <InstallAppCard compact/>
+          <IOSInstallHint compact/>
           {adminTab==="dashboard"&&(
             <div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(148px,1fr))",gap:12,marginBottom:14}}>
@@ -6402,5 +6463,3 @@ const report = {
   if(showSuperAdmin) return <SuperAdminScreen onClose={()=>setShowSuperAdmin(false)}/>;
   return null;
 }
-
-
