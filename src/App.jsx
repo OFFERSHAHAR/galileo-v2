@@ -1819,7 +1819,16 @@ const samePendingReport = (a, b) => {
 const makePendingReportItem = (report, supplyUpdate) => supplyUpdate ? { report, supplyUpdate } : report;
 const addPendingReport = (report, supplyUpdate) => {
   const item = makePendingReportItem(report, supplyUpdate);
-  setPending(prev => prev.some(x => samePendingReport(x, item)) ? prev : [...prev, item]);
+  setPending(prev => {
+    const idx = prev.findIndex(x => samePendingReport(x, item));
+    if (idx < 0) return [...prev, item];
+    const next = [...prev];
+    next[idx] = item;
+    return next;
+  });
+};
+const removePendingReport = (item) => {
+  setPending(prev => prev.filter(x => !samePendingReport(x, item)));
 };
 const sameReportIdentity = (a = {}, b = {}) => {
   if (a.id && b.id) return String(a.id) === String(b.id);
@@ -4005,7 +4014,7 @@ useEffect(() => {
 
   const handleSubmit = async () => {
     if (!client || syncing || isActionLoading("submitReport")) return;
-    const isEditingExistingReport = !!editingReport;
+    const isEditingExistingReport = !!editingReport && !editingReport.pendingLocal;
     if (chlorine === "" || ph === "" || !flow) {
       showToast("⚠️ חובה למלא כלור, pH וזרימה");
       if (chlorine === "") sf("_exp_chlorine", true);
@@ -4101,6 +4110,13 @@ const report = {
         return;
       }
     }
+    if (!isEditingExistingReport) {
+      addPendingReport(report, supplyUpdate);
+      setDismissed(false);
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        setPendingBackgroundSync(true);
+      }
+    }
     if (isEditingExistingReport) {
       setReports(prev => {
         const next = [...prev];
@@ -4117,7 +4133,7 @@ const report = {
         forgetCompletedReport(editingReport.date, editingReport.client, editingReport.operator);
       }
     } else {
-      setReports(r=>[...r,report]);
+      setReports(prev => upsertReportByIdentity(prev, report));
     }
     rememberCompletedReport(report);
     setLastReadings(prev => {
@@ -4178,6 +4194,7 @@ const report = {
         }
         if (savedInBackground) {
           const savedReport = reportWithServerId(report, saveResponse);
+          removePendingReport(makePendingReportItem(report, supplyUpdate));
           if (nextSupplyDB) setSupplyDB(nextSupplyDB);
           setReports(prev => upsertReportByIdentity(prev, savedReport));
           setSheetReports(prev => upsertReportByIdentity(prev, savedReport));
@@ -4194,6 +4211,7 @@ const report = {
         } else {
           addPendingReport(report, supplyUpdate);
           setDismissed(false);
+          setPendingBackgroundSync(true);
           setAction("submitReport", "local", 2200);
           showToast("⚠️ הדוח נשמר מקומית וממתין לסנכרון");
         }
@@ -4269,9 +4287,8 @@ const report = {
   };
 
   const syncPendingReports = async () => {
-    if (!pending.length || syncing || isActionLoading("syncPending")) return;
+    if (!pending.length || isActionLoading("syncPending")) return;
     setAction("syncPending", "loading");
-    setSyncing(true);
 
     const sent = [];
     const failed = [];
@@ -4292,15 +4309,15 @@ const report = {
         void autoShareOrderAfterReport(r);
       });
       setPending(failed);
-      if (!failed.length) setPendingBackgroundSync(false);
+      setPendingBackgroundSync(!!failed.length);
       setAction("syncPending", failed.length ? "error" : "success", failed.length ? 2200 : 1600);
       showToast(failed.length ? `⚠️ ${failed.length} דוחות עדיין ממתינים` : "✅ כל הדוחות נשלחו!");
     } else {
+      setPendingBackgroundSync(true);
       setAction("syncPending", "error", 2200);
       showToast("⚠️ חלק מהדוחות עדיין ממתינים");
     }
 
-    setSyncing(false);
   };
 
   const togglePendingBackgroundSync = (e) => {
@@ -4312,12 +4329,56 @@ const report = {
     });
   };
 
+  const openPendingReportForEdit = (item, e) => {
+    e?.stopPropagation?.();
+    const r = getPendingReportPayload(item) || {};
+    if (!r.client) return;
+    setForm({
+      ...blank(),
+      ...r,
+      ...reportSupplyFlags(r),
+      reportDate: r.reportDate || todayStr(),
+      client: r.client,
+      clientLocked: true,
+      ph: isLowPhValue(r.ph) ? 0 : r.ph,
+      chlorineZeroConfirmed: Number(r.chlorine || 0) === 0,
+      phLowConfirmed: isLowPhValue(r.ph)
+    });
+    setEditingReport({date:r.reportDate, client:r.client, operator:r.operator || user?.name, localId:r.id, pendingLocal:true});
+    setScreen("form");
+    haptic("medium");
+    showToast("הדוח הממתין נטען לעריכה ושליחה מחדש");
+  };
+
+  const deletePendingReport = (item, e) => {
+    e?.stopPropagation?.();
+    removePendingReport(item);
+    if (pending.length <= 1) setPendingBackgroundSync(false);
+    showToast("הדוח הוסר מהתור המקומי");
+    haptic("medium");
+  };
+
+  const renderPendingReportRows = () => pending.map((item,i)=>{
+    const r = getPendingReportPayload(item)||{};
+    return (
+      <div key={r.id||i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+        <div style={{flex:1,minWidth:0,fontSize:12,fontWeight:900,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.client||"לקוח ללא שם"}</div>
+        <Press onClick={(e)=>openPendingReportForEdit(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#e3f2fd",color:C.blue,fontSize:11,fontWeight:900}}>טען</Press>
+        <Press onClick={(e)=>deletePendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#ffebee",color:C.red,fontSize:11,fontWeight:900}}>מחק</Press>
+      </div>
+    );
+  });
+
+  useEffect(() => {
+    if (pending.length) setPendingBackgroundSync(true);
+  }, [pending.length]);
+
   useEffect(() => {
     if (!pendingBackgroundSync) return;
     if (!pending.length) return;
 
     const retryPending = () => {
-      if (syncing || isActionLoading("syncPending")) return;
+      if (isActionLoading("syncPending")) return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void syncPendingReports();
@@ -4336,7 +4397,7 @@ const report = {
       window.removeEventListener("focus", retryPending);
       document.removeEventListener("visibilitychange", retryPending);
     };
-  }, [pending.length, syncing, pendingBackgroundSync]);
+  }, [pending.length, pendingBackgroundSync]);
 
   const openManualReport = async () => {
     if (isActionLoading("openManualReport")) return;
@@ -4873,7 +4934,7 @@ const report = {
               <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
               <Press onClick={(e)=>{e.stopPropagation();setDismissed(true);}} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
               {showPendingReportNames&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.72)",borderRadius:12,padding:"8px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
-                {pending.map((item,i)=>{ const r=getPendingReportPayload(item)||{}; return <div key={r.id||i} style={{fontSize:12,fontWeight:900,color:C.text,padding:"3px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>{r.client||"לקוח ללא שם"}</div>; })}
+                {renderPendingReportRows()}
               </div>}
             </div>
           )}
@@ -5472,7 +5533,7 @@ const report = {
             <Press onClick={togglePendingBackgroundSync} style={{background:pendingBackgroundSync?C.green:"#fff7ed",border:`1px solid ${pendingBackgroundSync?"#86efac":"#fed7aa"}`,borderRadius:99,padding:"6px 12px",color:pendingBackgroundSync?"#fff":C.orange,fontWeight:900,fontSize:12}}>{pendingBackgroundSync?"עצור רקע":"הפעל רקע"}</Press>
             <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח הכל",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
             {showPendingReportNames&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.72)",borderRadius:12,padding:"8px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
-              {pending.map((item,i)=>{ const r=getPendingReportPayload(item)||{}; return <div key={r.id||i} style={{fontSize:12,fontWeight:900,color:C.text,padding:"3px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>{r.client||"לקוח ללא שם"}</div>; })}
+              {renderPendingReportRows()}
             </div>}
           </div>
         )}
