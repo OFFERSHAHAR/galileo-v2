@@ -2308,11 +2308,15 @@ useEffect(() => {
   };
   const openDoneReportEditor = (task) => {
     const opName = dailyOwnerName(dailyDate) || user?.name || "";
-    const existing = [...sheetReports, ...reports.filter(r=>!r._fromSheet)].reverse().find(r =>
-      normalizeDate(r.reportDate) === normalizeDate(dailyDate) &&
-      normalizeName(r.operator) === normalizeName(opName) &&
-      normalizeName(r.client) === normalizeName(task.client)
-    );
+    const taskClientId = String(task?.clientId || clientIdByName(task?.client) || "").trim();
+    const reportCandidates = [...sheetReports, ...reports.filter(r=>!r._fromSheet)].reverse().filter(r => {
+      if (normalizeDate(r.reportDate) !== normalizeDate(dailyDate)) return false;
+      if (task?.reportId && String(r.id || "") === String(task.reportId)) return true;
+      const reportClientId = String(r.clientId || "").trim();
+      if (taskClientId && reportClientId) return reportClientId === taskClientId;
+      return normalizeName(r.client) === normalizeName(task.client);
+    });
+    const existing = reportCandidates.find(r => normalizeName(r.operator) === normalizeName(opName)) || reportCandidates[0];
     const lr = lastReadingForClient(task.client, task.clientId) || {};
     const source = existing || {
       reportDate: dailyDate,
@@ -2338,13 +2342,13 @@ useEffect(() => {
       ...source,
       ...reportSupplyFlags(source),
       reportDate: source.reportDate || dailyDate,
-      client: task.client,
+      client: source.client || task.client,
       clientLocked: true,
       ph: isLowPhValue(source.ph) ? 0 : source.ph,
       chlorineZeroConfirmed: Number(source.chlorine || 0) === 0,
       phLowConfirmed: isLowPhValue(source.ph)
     });
-    setEditingReport({date:dailyDate, client:task.client, operator:opName, localId:existing?.id || ""});
+    setEditingReport({date:source.reportDate || dailyDate, client:source.client || task.client, operator:source.operator || opName, localId:existing?.id || task?.reportId || ""});
     setOpenDoneTasks(x=>({...x,[`${dailyDate}:${task.id || task.client}`]:true}));
     setScreen("form");
     haptic("medium");
@@ -3862,22 +3866,22 @@ useEffect(() => {
 
     if (res?.idMessage || res?.response?.idMessage) {
       if (report.supplyLabel) {
-        setTimeout(() => {
-          void sheetCall("sendGreenApiPoll", {
+        const pollRes = await sheetCall("sendGreenApiPoll", {
             phone,
             client: report.client,
             reportId: report.id,
             supplyLabel: report.supplyLabel || "",
-            phUp: report.phUp || 0,
-            acidLiters: report.acidLiters || 0,
             saltBags: String(report.supplyLabel || "").match(/מלח\s*[×xX]\s*(\d+)/)?.[1] || 0,
             materialPrices: normalizeNextSupplyPrices(supplyDB[report.client]?.materialPrices),
             message: [normalizeWaPollMessage(waPollMessage), nextSupplyPriceSummary(report.supplyLabel, supplyDB[report.client]?.materialPrices)].filter(Boolean).join("\n\n"),
             options: normalizeWaPollOptions(waPollOptions),
             multipleAnswers: false,
             ensureWebhook: true
-          }).catch(e => console.warn("Green API poll failed", e));
-        }, 2500);
+          }).catch(e => {
+            console.warn("Green API poll failed", e);
+            return null;
+          });
+        if (!pollRes?.success) console.warn("Green API poll failed", pollRes);
       }
       showToast("✅ הודעת WhatsApp נשלחה ללקוח");
       return true;
@@ -4292,15 +4296,21 @@ const report = {
 
     const sent = [];
     const failed = [];
+    let nextSupplyDBFromSync = null;
     for (const item of pending) {
       const r = getPendingReportPayload(item);
-      const supplyUpdate = getPendingSupplyUpdate(item);
+      const rebuiltSupply = buildSupplyUpdateForReport(r);
+      const supplyUpdate = rebuiltSupply?.row || getPendingSupplyUpdate(item);
       const res = await sheetCall("saveReport",{report:r, supplyUpdate}).catch(()=>null);
-      if(res?.success) sent.push(makePendingReportItem(reportWithServerId(r, res), supplyUpdate));
+      if(res?.success) {
+        if (rebuiltSupply?.db) nextSupplyDBFromSync = rebuiltSupply.db;
+        sent.push(makePendingReportItem(reportWithServerId(r, res), supplyUpdate));
+      }
       else failed.push(item);
     }
 
     if(sent.length){
+      if (nextSupplyDBFromSync) setSupplyDB(nextSupplyDBFromSync);
       setReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
       setSheetReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
       sent.forEach(item => {

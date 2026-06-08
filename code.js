@@ -372,15 +372,16 @@
         const lock = LockService.getScriptLock();
         try {
           lock.waitLock(10000);
-          if (data.supplyUpdate) {
-            const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
-            if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
-          }
           const duplicate = findDuplicateReportRow_(sheet, r);
           if (duplicate.row) {
             Logger.log("Duplicate report skipped: row " + duplicate.row);
             markSubOperatorShareDone_(ss, r);
             return json({ success: true, duplicate: true, row: duplicate.row, id: duplicate.id || r.id || "" });
+          }
+
+          if (data.supplyUpdate) {
+            const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
+            if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
           }
 
           sheet.appendRow(reportRowValues_(r));
@@ -474,18 +475,21 @@
 
       if (action === "getSupplyDB") {
         const sheet = ss.getSheetByName("ציוד_לקוחות");
+        if (!sheet) return json({ supplyDB: {} });
         ensureNextSupplyPriceColumn_(sheet);
         const rows = sheet.getDataRange().getValues();
         const db = {};
         rows.slice(3).filter(r => r[0]).forEach(r => {
           db[String(r[0])] = {
             acid: r[1] === "כן", phUp: r[2] === "כן", phUpSupply: r[2] === "כן",
-            saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 1,
+            saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 0,
             updatedAt: String(r[5]),
             supplyNote: String(r[6]||""),
             nextSupplyDate: String(r[7]||""),
             assignedOperator: String(r[8]||""),
-            materialPrices: parseNextSupplyPrices_(r[9])
+            materialPrices: parseNextSupplyPrices_(r[9]),
+            supplyId: String(r[10] || ""),
+            clientId: String(r[11] || "")
           };
         });
         return json({ supplyDB: db });
@@ -534,8 +538,13 @@
           clarity: String(reportCell_(r,7)),
           fat: String(reportCell_(r,8)),
           flow: String(reportCell_(r,9)),
+          elModel: String(reportCell_(r,10)||""),
+          elSerial: String(reportCell_(r,11)||""),
+          elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||"").slice(0,10),
+          elNext: reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||"").slice(0,10),
           poolStatus: String(reportCell_(r,15))||"\u05de\u05d0\u05d5\u05d6\u05e0\u05ea",
           customStatusText: String(reportCell_(r,16)||""),
+          restrictedUntil: reportCell_(r,17) instanceof Date ? Utilities.formatDate(reportCell_(r,17),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,17)||"").slice(0,10),
           notes: String(reportCell_(r,18)||""),
           supplyLabel: String(reportCell_(r,14)||""),
           chlora: reportCell_(r,19)||0,
@@ -695,9 +704,9 @@
     s = clientSS.getSheetByName("ציוד_לקוחות");
     if(!s) {
       s = clientSS.insertSheet("ציוד_לקוחות");
-      s.appendRow(["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"]);
+      s.appendRow(["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא","supplyId","clientId"]);
     } else {
-      ensureColumns(s, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"]);
+      ensureColumns(s, ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא","supplyId","clientId"]);
     }
     
     // ── שעות_עבודה ──
@@ -1510,16 +1519,17 @@
     const label = String(meta.supplyLabel || "").trim();
     const parts = label.split(",").map(x => x.trim()).filter(Boolean);
     const saltPart = parts.find(x => x.indexOf("מלח") >= 0) || "";
+    const saltBags = Number(meta.saltBags || (saltPart.match(/\d+/) || [0])[0] || 0);
     return {
-      acid: Number(meta.acidLiters || 0) > 0 || parts.some(x => x.indexOf("חומצת") >= 0),
-      phUpSupply: Number(meta.phUp || 0) > 0 || parts.some(x => x.indexOf("מעלה") >= 0 || x.indexOf("סודה") >= 0),
-      saltPkg: parts.some(x => x.indexOf("מלח") >= 0),
-      saltBags: Number(meta.saltBags || (saltPart.match(/\d+/) || [0])[0] || 1)
+      acid: parts.some(x => x.indexOf("חומצת") >= 0),
+      phUpSupply: parts.some(x => x.indexOf("מעלה") >= 0 || x.indexOf("סודה") >= 0),
+      saltPkg: parts.some(x => x.indexOf("מלח") >= 0) && saltBags > 0,
+      saltBags: saltBags
     };
   }
 
   function hasMaterialSupply_(supply) {
-    return !!(supply && (supply.acid || supply.phUpSupply || supply.saltPkg));
+    return !!(supply && (supply.acid || supply.phUpSupply || (supply.saltPkg && Number(supply.saltBags || 0) > 0)));
   }
 
   function parseNextSupplyPrices_(value) {
@@ -1767,7 +1777,7 @@
         acid: !!(prev.acid || supply.acid),
         phUpSupply: !!(prev.phUpSupply || supply.phUpSupply),
         saltPkg: !!(prev.saltPkg || supply.saltPkg),
-        saltBags: supply.saltPkg ? Number(supply.saltBags || prev.saltBags || 1) : Number(prev.saltBags || 0),
+        saltBags: supply.saltPkg ? Number(supply.saltBags || prev.saltBags || 0) : Number(prev.saltBags || 0),
         supplyNote: prev.supplyNote || "",
         updatedAt: targetDate,
         nextSupplyDate: targetDate,
@@ -1792,6 +1802,57 @@
     const res = syncDailyMaterialApprovals_(ss);
     Logger.log(JSON.stringify(res));
     return res;
+  }
+
+  function dryRunReportMaterialSupplyFlow() {
+    const tests = [
+      {
+        name: "quantities_do_not_create_supply",
+        approval: { meta: { supplyLabel: "", acidLiters: 2, phUp: 1, saltBags: 1 } },
+        expected: { acid:false, phUpSupply:false, saltPkg:false, saltBags:0, has:false }
+      },
+      {
+        name: "acid_label_creates_acid_only",
+        approval: { meta: { supplyLabel: "חומצת מלח" } },
+        expected: { acid:true, phUpSupply:false, saltPkg:false, saltBags:0, has:true }
+      },
+      {
+        name: "ph_up_label_creates_ph_up_only",
+        approval: { meta: { supplyLabel: "מעלה pH" } },
+        expected: { acid:false, phUpSupply:true, saltPkg:false, saltBags:0, has:true }
+      },
+      {
+        name: "salt_without_quantity_is_not_supply",
+        approval: { meta: { supplyLabel: "מלח" } },
+        expected: { acid:false, phUpSupply:false, saltPkg:false, saltBags:0, has:false }
+      },
+      {
+        name: "salt_with_quantity_creates_supply",
+        approval: { meta: { supplyLabel: "מלח ×2" } },
+        expected: { acid:false, phUpSupply:false, saltPkg:true, saltBags:2, has:true }
+      }
+    ];
+
+    const results = tests.map(function(test) {
+      const actual = materialSupplyFromApproval_(test.approval);
+      actual.has = hasMaterialSupply_(actual);
+      const ok = actual.acid === test.expected.acid &&
+        actual.phUpSupply === test.expected.phUpSupply &&
+        actual.saltPkg === test.expected.saltPkg &&
+        Number(actual.saltBags || 0) === Number(test.expected.saltBags || 0) &&
+        actual.has === test.expected.has;
+      return { name:test.name, ok:ok, expected:test.expected, actual:actual };
+    });
+
+    const summary = {
+      success: results.every(function(r) { return r.ok; }),
+      dryRun: true,
+      writesToSheets: false,
+      sendsWhatsApp: false,
+      results: results
+    };
+    Logger.log(JSON.stringify(summary));
+    return summary;
   }
 
   function testMaterialApprovalWebhookDryRun() {
@@ -3380,7 +3441,7 @@ function getSupplyDB_(ss) {
   rows.slice(3).filter(r => r[0]).forEach(r => {
     db[String(r[0])] = {
       acid: r[1] === "כן", phUp: r[2] === "כן", phUpSupply: r[2] === "כן",
-      saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 1,
+      saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 0,
       updatedAt: String(r[5]),
       supplyNote: String(r[6]||""),
       nextSupplyDate: String(r[7]||""),
@@ -3702,7 +3763,7 @@ function json(obj) {
       "דוחות": ["תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק"],
       "משימות": ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"],
       "חלוקת_עבודה": ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"],
-      "ציוד_לקוחות": ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"],
+      "ציוד_לקוחות": ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא","supplyId","clientId"],
       "שעות_עבודה": ["id","מפעיל","תאריך","התחלה","סיום","סה\"כ"],
       "שעון_פעיל": ["username","operator","date","start","noonNotified"],
       "תקלות_מפעילים": ["id","מפעיל","לקוח","תיאור","דחיפות","סטטוס","תגובת_אדמין","תאריך"],
@@ -3769,7 +3830,7 @@ function json(obj) {
     let sheet = ss.getSheetByName("ציוד_לקוחות");
     if (!sheet) {
       sheet = ss.insertSheet("ציוד_לקוחות");
-      sheet.appendRow(["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא"]);
+      sheet.appendRow(["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא","supplyId","clientId"]);
     }
     ensureNextSupplyPriceColumn_(sheet);
     const res = {
