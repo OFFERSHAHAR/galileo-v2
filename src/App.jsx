@@ -287,11 +287,29 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
-const APP_BUILD_ID = "20260609-login-update-gate-1";
+const APP_BUILD_ID = "20260609-login-update-gate-2";
 const APP_VERSION_URL = "/version.json";
+const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
+const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
 const DEFAULT_SUPER_PASS = "039076914";
 
 const normalizeBuildId = (value) => String(value || "").trim();
+function getAcceptedAppBuildId() {
+  try { return normalizeBuildId(localStorage.getItem(APP_ACCEPTED_BUILD_KEY)); } catch { return ""; }
+}
+function markCurrentAppBuildAccepted() {
+  try { localStorage.setItem(APP_ACCEPTED_BUILD_KEY, APP_BUILD_ID); } catch {}
+}
+function consumePendingRefreshAcceptance() {
+  try {
+    if (localStorage.getItem(APP_REFRESH_PENDING_KEY) === "1") {
+      localStorage.removeItem(APP_REFRESH_PENDING_KEY);
+      markCurrentAppBuildAccepted();
+      return true;
+    }
+  } catch {}
+  return false;
+}
 async function fetchLatestAppBuildId() {
   const res = await fetch(`${APP_VERSION_URL}?ts=${Date.now()}`, { cache: "no-store" });
   if (!res.ok) throw new Error("version_fetch_failed");
@@ -299,6 +317,7 @@ async function fetchLatestAppBuildId() {
   return normalizeBuildId(data.buildId || data.version || data.appBuildId);
 }
 async function hardRefreshApp() {
+  try { localStorage.setItem(APP_REFRESH_PENDING_KEY, "1"); } catch {}
   try {
     if (typeof caches !== "undefined") {
       const keys = await caches.keys();
@@ -1918,12 +1937,14 @@ useEffect(() => {
 
 useEffect(() => {
   let active = true;
+  consumePendingRefreshAcceptance();
   const checkForUpdate = async () => {
     setAppUpdate(prev => ({...prev,checking:true,error:false}));
     try {
       const latest = await fetchLatestAppBuildId();
       if (!active) return;
-      const available = !!latest && latest !== APP_BUILD_ID;
+      const currentBuildAccepted = getAcceptedAppBuildId() === APP_BUILD_ID;
+      const available = (!!latest && latest !== APP_BUILD_ID) || !currentBuildAccepted;
       setAppUpdate({checking:false,available,latest,error:false});
     } catch {
       if (active) setAppUpdate(prev => ({...prev,checking:false,error:true}));
