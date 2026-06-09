@@ -958,12 +958,36 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
 
 const clientMetaLine = (c) => [c?.regularOperator && `מפעיל: ${c.regularOperator}`, c?.regularDays && `ימים: ${c.regularDays}`].filter(Boolean).join(" · ");
 
+const LOW_SALT_REPORT_TEXT = "מלח נמוך";
+const numericSaltPpm = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+  const match = String(value || "").replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : NaN;
+};
+const isLowSaltFlagValue = (value) => {
+  const text = String(value || "");
+  return text.includes("נורת מלח") || text.includes("מלח נמוך");
+};
+const isNormalSaltLevelValue = (value) => {
+  const n = numericSaltPpm(value);
+  return Number.isFinite(n) && n >= 2500;
+};
+const isLowSaltLevelValue = (value) => {
+  const n = numericSaltPpm(value);
+  return Number.isFinite(n) && n > 0 && n < 2500;
+};
+const isLowSaltReportValue = (value) => {
+  if (isNormalSaltLevelValue(value)) return false;
+  return isLowSaltFlagValue(value) || isLowSaltLevelValue(value);
+};
+
 function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,val,fn,large,expandKey,form,sf,disabled=false,disabledReason="",zeroButtonLabel="",phLowButton=false,saltLowLightButton=false,required=false}) {
   const isOpen = !!form[expandKey];
   const displayVal = Number(val) || 0;
   const zeroConfirmKey = `${expandKey}_zero`;
   const zeroConfirmed = !!form[zeroConfirmKey] && displayVal === 0;
-  const hasValue = displayVal > 0 || (phLowButton && form.phLowConfirmed);
+  const saltLowActive = saltLowLightButton && !isNormalSaltLevelValue(val) && (!!form.lowSaltLight || isLowSaltLevelValue(val) || isLowSaltFlagValue(val));
+  const hasValue = displayVal > 0 || (phLowButton && form.phLowConfirmed) || saltLowActive;
   const setSliderValue = (v) => {
     if (Number(v) > 0 && form[zeroConfirmKey]) sf(zeroConfirmKey, false);
     fn(v);
@@ -975,7 +999,7 @@ function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontWeight:700,fontSize:14,color:C.text}}>{label}</span>
           {required&&!disabled&&<span style={{background:"#ffebee",color:C.red,border:"1px solid #ffcdd2",borderRadius:99,padding:"2px 8px",fontSize:10,fontWeight:900}}>חובה</span>}
-          {hasValue&&!isOpen&&<span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"2px 10px",fontSize:12,fontWeight:800}}>{phLowButton&&form.phLowConfirmed?"PH נמוך":`${displayVal}${unit}`}</span>}
+          {hasValue&&!isOpen&&<span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"2px 10px",fontSize:12,fontWeight:800}}>{phLowButton&&form.phLowConfirmed?"PH נמוך":saltLowActive?LOW_SALT_REPORT_TEXT:`${displayVal}${unit}`}</span>}
         </div>
         <span style={{fontSize:16,color:C.blue,display:"inline-block",transform:isOpen?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▾</span>
       </Press>
@@ -997,8 +1021,8 @@ function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,
             </Press>
           )}
           {saltLowLightButton&&(
-            <Press onClick={()=>{sf("lowSaltLight",!form.lowSaltLight);haptic(form.lowSaltLight?"light":"success");}} style={{padding:"9px 12px",borderRadius:12,background:form.lowSaltLight?"#fff8e1":"#f0f4f8",color:form.lowSaltLight?C.orange:C.muted,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${form.lowSaltLight?"#ffe082":C.border}`}}>
-              {form.lowSaltLight?"✓ ":""}נורת מלח נמוך דלוקה
+            <Press onClick={()=>{ if(isNormalSaltLevelValue(val)){sf("lowSaltLight",false);haptic("light");return;} sf("lowSaltLight",!form.lowSaltLight);haptic(saltLowActive?"light":"success");}} style={{padding:"9px 12px",borderRadius:12,background:saltLowActive?"#fff8e1":"#f0f4f8",color:saltLowActive?C.orange:C.muted,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${saltLowActive?"#ffe082":C.border}`}}>
+              {saltLowActive?"✓ ":""}מלח נמוך
             </Press>
           )}
           <SliderField label={label} min={min} max={max} step={step} value={displayVal} onChange={setSliderValue} unit={unit} warnAbove={warnAbove} warnBelow={warnBelow} optimal={optimal} large={large} disabled={disabled} disabledReason={disabledReason}/>
@@ -2016,7 +2040,7 @@ useEffect(() => {
   const [saltSearch,setSaltSearch] = useState("");
   const [lowSaltSearch,setLowSaltSearch] = useState("");
   const [selectedSaltReport,setSelectedSaltReport] = useState(null);
-  const [reportDateFilter,setReportDateFilter] = useState("");
+  const [reportDateFilter,setReportDateFilter] = useState(()=>todayStr());
   const [reportDateToFilter,setReportDateToFilter] = useState("");
   const [sheetReports,setSheetReports] = useState([]);
   const [treatmentCounts,setTreatmentCounts] = useState([]);
@@ -2345,8 +2369,10 @@ useEffect(() => {
       client: source.client || task.client,
       clientLocked: true,
       ph: isLowPhValue(source.ph) ? 0 : source.ph,
+      salt: isLowSaltFlagValue(source.salt) ? 0 : source.salt,
       chlorineZeroConfirmed: Number(source.chlorine || 0) === 0,
-      phLowConfirmed: isLowPhValue(source.ph)
+      phLowConfirmed: isLowPhValue(source.ph),
+      lowSaltLight: isLowSaltReportValue(source.salt)
     });
     setEditingReport({date:source.reportDate || dailyDate, client:source.client || task.client, operator:source.operator || opName, localId:existing?.id || task?.reportId || ""});
     setOpenDoneTasks(x=>({...x,[`${dailyDate}:${task.id || task.client}`]:true}));
@@ -3424,8 +3450,9 @@ useEffect(() => {
     const loadTimer = setTimeout(()=>{ (async()=>{
       try {
         if(["daily","progress"].includes(adminTab)){
+          const reportLoadDate = adminTab==="daily" ? taskDate : dailyDate;
           const [rep,tR,oR,lrR,maR] = await Promise.all([
-            sheetCall("getReports").catch(()=>null),
+            sheetCall("getReports",{fromDate:reportLoadDate,toDate:reportLoadDate,limit:300}).catch(()=>null),
             sheetCall("getTasks").catch(()=>null),
             sheetCall("getAdminOrders").catch(()=>null),
             sheetCall("getLastReadings").catch(()=>null),
@@ -3440,7 +3467,12 @@ useEffect(() => {
           return;
         }
         if(adminTab==="reports" || adminTab==="supply"){
-          const rep = await sheetCall("getReports").catch(()=>null);
+          const rep = await sheetCall("getReports",{
+            fromDate:reportDateFilter || "",
+            toDate:reportDateToFilter || reportDateFilter || "",
+            query:reportFilter || "",
+            limit:reportDateFilter || reportDateToFilter || reportFilter ? 500 : 250
+          }).catch(()=>null);
           if(!cancelled && Array.isArray(rep?.reports)) setSheetReports(rep.reports);
           return;
         }
@@ -3474,7 +3506,7 @@ useEffect(() => {
       } catch {}
     })(); }, 140);
     return () => { cancelled = true; clearTimeout(loadTimer); };
-  },[screen, adminTab, dailyDate, taskDate, sheetId]);
+  },[screen, adminTab, dailyDate, taskDate, sheetId, reportDateFilter, reportDateToFilter, reportFilter]);
 
   const connectSheets = async (bg=false) => {
     try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,waMessageTemplate:wt}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(wt) setWaMessageTemplate(normalizeWaMessageTemplate(wt)); setSheetId("connected"); if(!bg) return; } } catch {}
@@ -3514,7 +3546,13 @@ useEffect(() => {
       if (screen === "daily" || screen === "admin") await loadOperatorIssues(true);
       if (screen === "admin" && adminTab === "treatments") await loadTreatmentCounts();
       if (screen === "admin" && ["daily","progress","reports"].includes(adminTab)) {
-        const [rep, maR] = await Promise.all([sheetCall("getReports").catch(()=>null), sheetCall("getMaterialApprovals").catch(()=>null)]);
+        const refreshReportDate = adminTab === "daily" ? taskDate : adminTab === "progress" ? dailyDate : reportDateFilter;
+        const [rep, maR] = await Promise.all([sheetCall("getReports",{
+          fromDate:refreshReportDate || "",
+          toDate:adminTab === "reports" ? (reportDateToFilter || refreshReportDate || "") : (refreshReportDate || ""),
+          query:adminTab === "reports" ? (reportFilter || "") : "",
+          limit:adminTab === "reports" ? (refreshReportDate || reportDateToFilter || reportFilter ? 500 : 250) : 300
+        }).catch(()=>null), sheetCall("getMaterialApprovals").catch(()=>null)]);
         if (Array.isArray(rep?.reports)) setSheetReports(rep.reports);
         if (Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
       }
@@ -4068,7 +4106,8 @@ useEffect(() => {
       const match=tasks.find(t=>t.date===reportDate&&t.client===client&&t.operators.includes(reportOperatorName)&&t.status!=="done"); if(match)markDone(match.id);
     }
     let photosBase64 = [];
-const report = {
+    const lowSaltActive = isLowSaltReportValue(salt) || (!!form.lowSaltLight && !isNormalSaltLevelValue(salt));
+    const report = {
   id: editingReport?.localId || crypto.randomUUID(),
   reportDate,
   operator:reportOperatorName||user?.name||"",
@@ -4076,7 +4115,7 @@ const report = {
   clientId: clientIdByName(client),
   chlorine,
   ph: form.phLowConfirmed && Number(ph) === 0 ? "PH נמוך" : ph,
-  salt: form.lowSaltLight ? "נורת מלח נמוך דלוקה" : salt,
+  salt: lowSaltActive ? LOW_SALT_REPORT_TEXT : salt,
   chlora:form.chlora>0?form.chlora:undefined,
   hth:form.hth>0?form.hth:undefined,
   phUp:form.phUp>0?form.phUp:undefined,
@@ -4351,8 +4390,10 @@ const report = {
       client: r.client,
       clientLocked: true,
       ph: isLowPhValue(r.ph) ? 0 : r.ph,
+      salt: isLowSaltFlagValue(r.salt) ? 0 : r.salt,
       chlorineZeroConfirmed: Number(r.chlorine || 0) === 0,
-      phLowConfirmed: isLowPhValue(r.ph)
+      phLowConfirmed: isLowPhValue(r.ph),
+      lowSaltLight: isLowSaltReportValue(r.salt)
     });
     setEditingReport({date:r.reportDate, client:r.client, operator:r.operator || user?.name, localId:r.id, pendingLocal:true});
     setScreen("form");
@@ -4437,7 +4478,7 @@ const report = {
   const SLIDER_CONFIGS = [
     {key:"chlorine",label:"כלור",min:0,max:8,step:0.1,unit:" ppm",warnAbove:3,optimal:1.5,val:chlorine,fn:v=>setForm(f=>({...f,chlorine:v,chlorineZeroConfirmed:Number(v)===0?f.chlorineZeroConfirmed:false})),required:true},
     {key:"ph",label:"pH",min:5,max:9,step:0.1,unit:"",warnAbove:8,warnBelow:6,optimal:7.4,val:ph,fn:v=>setForm(f=>({...f,ph:v,phLowConfirmed:Number(v)===0?f.phLowConfirmed:false})),phLowButton:true,required:true},
-    {key:"salt",label:"רמת מלח",min:0,max:6000,step:100,unit:" PPM",optimal:3500,val:salt,fn:v=>sf("salt",v),disabled:currentPrimaryPool==="כלור",disabledReason:"נעול בבריכת כלור",saltLowLightButton:true},
+    {key:"salt",label:"רמת מלח",min:0,max:6000,step:100,unit:" PPM",optimal:3500,val:salt,fn:v=>setForm(f=>({...f,salt:v,lowSaltLight:isNormalSaltLevelValue(v)?false:f.lowSaltLight})),disabled:currentPrimaryPool==="כלור",disabledReason:"נעול בבריכת כלור",saltLowLightButton:true},
     {key:"chlora",label:"טבליות כלור (TAB)",min:0,max:5,step:0.25,unit:"",val:form.chlora??0,fn:v=>sf("chlora",v),zeroButtonLabel:"אין צורך להוסיף",required:true},
     {key:"hth",label:"HTH",min:0,max:5,step:0.5,unit:" cups",val:form.hth??0,fn:v=>sf("hth",v)},
     {key:"phUp",label:"מעלה pH",min:0,max:5,step:0.5,unit:" כוסות",val:form.phUp??0,fn:v=>updateMeasurement("phUp",v),disabled:currentPrimaryPool==="מלח",disabledReason:"נעול בבריכת מלח"},
@@ -5585,7 +5626,7 @@ const report = {
           <Press onClick={()=>setScreen("daily")} style={{padding:14,borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>🏠 לוח יומי</Press>
         </div>
         {reports.length>0&&(
-          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,...reportSupplyFlags(last),ph:isLowPhValue(last.ph)?0:last.ph,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0,phLowConfirmed:isLowPhValue(last.ph)}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:18,border:`1px solid rgba(194,65,12,0.24)`,background:"rgba(255,247,237,0.82)",color:C.orange,fontWeight:900,fontSize:13,textAlign:"center",width:"100%",maxWidth:340,boxShadow:"0 10px 24px rgba(194,65,12,0.08)"}}>✏️ ערוך דוח אחרון</Press>
+          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,...reportSupplyFlags(last),ph:isLowPhValue(last.ph)?0:last.ph,salt:isLowSaltFlagValue(last.salt)?0:last.salt,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0,phLowConfirmed:isLowPhValue(last.ph),lowSaltLight:isLowSaltReportValue(last.salt)}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:18,border:`1px solid rgba(194,65,12,0.24)`,background:"rgba(255,247,237,0.82)",color:C.orange,fontWeight:900,fontSize:13,textAlign:"center",width:"100%",maxWidth:340,boxShadow:"0 10px 24px rgba(194,65,12,0.08)"}}>✏️ ערוך דוח אחרון</Press>
         )}
       </div>
     );
@@ -5616,16 +5657,12 @@ const report = {
     const adminOrderSearchPool = adminOrderSearchActive ? allOrderClients : [...adminOrderEligibleMap.values()];
     const adminOrderEligibleClients = filterClientOptions(sortByClientName(adminOrderSearchPool), adminOrderClientSearch);
     const hasLowSaltLight = (clientName) => {
-      const hasFlag = (value) => {
-        const text = String(value || "");
-        return text.includes("נורת מלח") || text.includes("מלח נמוך");
-      };
       const lr = lastReadingForClient(clientName);
-      if (hasFlag(lr?.salt)) return true;
+      if (isLowSaltReportValue(lr?.salt)) return true;
       const latest = [...sheetReports, ...reports]
         .filter(r => normalizeName(r.client) === normalizeName(clientName))
         .sort((a,b)=>normalizeDate(b.reportDate).localeCompare(normalizeDate(a.reportDate)))[0];
-      return hasFlag(latest?.salt);
+      return isLowSaltReportValue(latest?.salt);
     };
     const selectedAdminOrderEntries = adminOrderList
       .filter(entry => !adminOrderClientSearch || filterClientOptions([{name:entry.client, ...(adminOrderClientMap.get(entry.client)||{})}], adminOrderClientSearch).length)
@@ -6391,8 +6428,7 @@ const report = {
                     const q = lowSaltSearch.trim().toLowerCase();
                     const rows = [...sheetReports, ...reports.filter(r=>!r._fromSheet)]
                       .filter(r=>{
-                        const saltText = String(r.salt || "");
-                        return saltText.includes("נורת מלח") || saltText.includes("מלח נמוך");
+                        return isLowSaltReportValue(r.salt);
                       })
                       .filter(r=>{
                         if(!q) return true;
@@ -6421,14 +6457,14 @@ const report = {
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                     <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>מתאריך</label><input type="date" value={reportDateFilter} onChange={e=>setReportDateFilter(e.target.value)} style={inp}/></div>
                     <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>עד תאריך</label><input type="date" value={reportDateToFilter} onChange={e=>setReportDateToFilter(e.target.value)} style={inp}/></div>
-                    <div style={{display:"flex",alignItems:"flex-end"}}><Press onClick={async()=>{ showToast("⏳ טוען דוחות..."); const res = await sheetCall("getReports"); if(res?.reports?.length){setSheetReports(res.reports);showToast(`✅ ${res.reports.length} דוחות נטענו`);}else{showToast("⚠️ לא נמצאו דוחות");} }} style={{width:"100%",padding:"12px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:13,textAlign:"center"}}>🔄 טען מגיליון</Press></div>
+                    <div style={{display:"flex",alignItems:"flex-end"}}><Press onClick={async()=>{ showToast("⏳ טוען דוחות..."); const res = await sheetCall("getReports",{fromDate:reportDateFilter || "",toDate:reportDateToFilter || reportDateFilter || "",query:reportFilter || "",limit:reportDateFilter || reportDateToFilter || reportFilter ? 500 : 250}); if(res?.reports?.length){setSheetReports(res.reports);showToast(`✅ ${res.reports.length} דוחות נטענו`);}else{showToast("⚠️ לא נמצאו דוחות");} }} style={{width:"100%",padding:"12px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:13,textAlign:"center"}}>🔄 טען מגיליון</Press></div>
                   </div>
                 </div>
               </div>
               {(()=>{
                 const allReports = [...sheetReports, ...reports.filter(r=>!r._fromSheet)];
                 const unique = allReports.filter((r, idx, arr)=>arr.findIndex(x=>sameReportIdentity(x, r))===idx);
-                const filtered = unique.reverse().filter(r=>{ const d=String(r.reportDate||"").slice(0,10); const matchText = !reportFilter || r.client?.includes(reportFilter) || r.operator?.includes(reportFilter); const matchFrom = !reportDateFilter || d>=reportDateFilter; const matchTo = !reportDateToFilter || d<=reportDateToFilter; return matchText && matchFrom && matchTo; });
+                const filtered = unique.reverse().filter(r=>{ const d=String(r.reportDate||"").slice(0,10); const q=reportFilter.trim().toLowerCase(); const matchText = !q || String(r.client||"").toLowerCase().includes(q) || String(r.operator||"").toLowerCase().includes(q); const matchFrom = !reportDateFilter || d>=reportDateFilter; const matchTo = !reportDateToFilter || d<=reportDateToFilter; return matchText && matchFrom && matchTo; });
                 if(filtered.length===0) return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted,fontSize:14}}>אין דוחות — לחץ "טען מגיליון"</div>;
                 return filtered.map((r,i)=>(
                   <div key={i} style={{...card({marginBottom:12})}}>

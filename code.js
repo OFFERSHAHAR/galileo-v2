@@ -525,7 +525,27 @@
         const rows = sheet.getDataRange().getValues();
         let hi = rows.findIndex(r => String(r[0]).includes("reportId"));
         if (hi === -1) hi = 2;
-        const reports = rows.slice(hi + 1).filter(r => reportCell_(r,0)).map((r,i) => ({
+        const fromDate = normalizeSheetDate_(data.fromDate || data.reportDate || data.dateFrom || "");
+        const toDate = normalizeSheetDate_(data.toDate || data.dateTo || "");
+        const query = String(data.query || data.search || "").trim().toLowerCase();
+        const limit = Math.max(0, Number(data.limit || 0) || 0);
+        let dataRows = rows.slice(hi + 1).filter(r => reportCell_(r,0));
+        if (fromDate) dataRows = dataRows.filter(r => normalizeSheetDate_(reportCell_(r,0)) >= fromDate);
+        if (toDate) dataRows = dataRows.filter(r => normalizeSheetDate_(reportCell_(r,0)) <= toDate);
+        if (query) {
+          dataRows = dataRows.filter(r => {
+            const haystack = [
+              reportCell_(r,1),
+              reportCell_(r,2),
+              reportCell_(r,5),
+              reportCell_(r,14),
+              reportCell_(r,18)
+            ].map(v => String(v || "").toLowerCase()).join(" ");
+            return haystack.indexOf(query) >= 0;
+          });
+        }
+        if (limit && dataRows.length > limit) dataRows = dataRows.slice(dataRows.length - limit);
+        const reports = dataRows.map((r,i) => ({
           id: reportIdCell_(r),
           _fromSheet: true,
           reportDate: reportCell_(r,0) instanceof Date ? Utilities.formatDate(reportCell_(r,0),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,0)).slice(0,10),
