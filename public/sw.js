@@ -1,4 +1,4 @@
-const CACHE = "galileo-v2-cache-v6";
+const CACHE = "galileo-v2-cache-v7";
 const STATIC = [
   "/",
   "/index.html",
@@ -26,6 +26,7 @@ self.addEventListener("fetch", e => {
   if (e.request.url.includes("script.google.com")) return;
   if (e.request.url.includes("googleapis.com")) return;
   if (e.request.url.includes("wa.me")) return;
+  if (e.request.url.includes("/version.json")) return;
 
   e.respondWith(
     fetch(e.request)

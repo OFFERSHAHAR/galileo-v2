@@ -287,7 +287,7 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
-const APP_BUILD_ID = "20260609-login-update-gate-2";
+const APP_BUILD_ID = "20260609-login-update-gate-3";
 const APP_VERSION_URL = "/version.json";
 const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
 const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
@@ -4613,6 +4613,11 @@ useEffect(() => {
           <Press onClick={handleLogin} disabled={appUpdate.available} style={{padding:16,borderRadius:18,background:appUpdate.available?"#cbd5e1":loginLoading?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:(loginLoading||appUpdate.available)?"none":"0 16px 36px rgba(79,70,229,0.24)",opacity:appUpdate.available?0.82:1}}>
             {actionLabel("login",{idle:"כניסה →",loading:"⏳ מתחבר...",success:"✅ התחברת",error:"⚠️ נסה שוב"})}
           </Press>
+          {!appUpdate.available&&(
+            <Press onClick={hardRefreshApp} style={{marginTop:10,padding:13,borderRadius:18,background:"rgba(255,255,255,0.72)",border:"1px solid rgba(148,163,184,0.30)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center"}}>
+              עדכן אפליקציה
+            </Press>
+          )}
           <Press onClick={async()=>{ setAction("push","loading"); const res = await connectPushUser(loginUser, true); if(res?.success){ markPushEnabledForLogin(); setAction("push","success"); } else setAction("push","error",2200); showToast(res?.success ? "✅ ההתראות הופעלו" : "⚠️ לא ניתן להפעיל התראות"); }} style={{marginTop:10,padding:13,borderRadius:18,background:"rgba(30,64,175,0.12)",border:"1px solid rgba(37,99,235,0.18)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center"}}>
             {isPushEnabledForLogin() ? "✅ התראות מופעלות" : actionLabel("push",{idle:"🔔 הפעל התראות",loading:"⏳ מפעיל...",success:"✅ התראות מופעלות",error:"⚠️ נסה שוב"})}
           </Press>
