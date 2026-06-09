@@ -6538,7 +6538,7 @@ useEffect(() => {
                   <div key={i} style={{...card({marginBottom:12})}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div><Badge label={r.poolStatus==="מאוזנת"?"✅ מאוזנת":"⚠️ אחר"} col={r.poolStatus==="מאוזנת"?C.green:C.orange}/></div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:6}}>{[["כלור",`${r.chlorine} ppm`,"#e3f2fd","#1565c0"],["pH",r.ph,"#f3e5f5","#6a1b9a"],["רמת מלח",`${r.salt} PPM`,"#e8f5e9","#1b5e20"]].map(([k,v,bg,col])=>(<div key={k} style={{background:bg,borderRadius:10,padding:"8px",textAlign:"center"}}><div style={{fontSize:10,fontWeight:700,color:"#90a4ae",marginBottom:2}}>{k}</div><div style={{fontSize:14,fontWeight:900,color:col}}>{v}</div></div>))}</div>
-                    {r.notes&&<div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 12px",fontSize:12,color:C.muted}}>📝 {r.notes}</div>}
+                    {r.notes&&(()=>{ const noTreatmentNote = String(r.notes || "").includes("לא בוצע טיפול"); return <div style={{background:noTreatmentNote?"#ffebee":"#f5f9ff",border:noTreatmentNote?"1px solid #ffcdd2":"none",borderRadius:10,padding:"8px 12px",fontSize:12,color:noTreatmentNote?C.red:C.muted,fontWeight:noTreatmentNote?900:undefined}}>📝 {r.notes}</div>; })()}
                     {r.supplyLabel&&<div style={{marginTop:8,fontSize:11,color:C.blue,fontWeight:700}}>📦 {r.supplyLabel}</div>}
                   </div>
                 ));
