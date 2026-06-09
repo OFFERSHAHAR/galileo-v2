@@ -287,7 +287,34 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
+const APP_BUILD_ID = "20260609-login-update-gate-1";
+const APP_VERSION_URL = "/version.json";
 const DEFAULT_SUPER_PASS = "039076914";
+
+const normalizeBuildId = (value) => String(value || "").trim();
+async function fetchLatestAppBuildId() {
+  const res = await fetch(`${APP_VERSION_URL}?ts=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("version_fetch_failed");
+  const data = await res.json();
+  return normalizeBuildId(data.buildId || data.version || data.appBuildId);
+}
+async function hardRefreshApp() {
+  try {
+    if (typeof caches !== "undefined") {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter(k => String(k || "").includes("galileo")).map(k => caches.delete(k)));
+    }
+  } catch {}
+  try {
+    if (navigator.serviceWorker?.getRegistrations) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(reg => reg.update().catch(() => null)));
+    }
+  } catch {}
+  const url = new URL(window.location.href);
+  url.searchParams.set("appRefresh", String(Date.now()));
+  window.location.replace(url.toString());
+}
 
 function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
 function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
@@ -1757,6 +1784,7 @@ export default function App() {
   const [loginPass,setLoginPass] = useState("");
   const [loginErr,setLoginErr] = useState("");
   const [loginLoading,setLoginLoading] = useState(false);
+  const [appUpdate,setAppUpdate] = useState({checking:false,available:false,latest:"",error:false});
   const [sheetId,setSheetId] = useState("");
   const [waMessageTemplate,setWaMessageTemplate] = useState(() => {
     try { return normalizeWaMessageTemplate(localStorage.getItem(WA_TEMPLATE_STORAGE_KEY)); } catch { return DEFAULT_WA_MESSAGE_TEMPLATE; }
@@ -1887,6 +1915,31 @@ useEffect(() => {
 useEffect(() => {
   localStorage.setItem("galileo_completed_reports", JSON.stringify(completedReports));
 }, [completedReports]);
+
+useEffect(() => {
+  let active = true;
+  const checkForUpdate = async () => {
+    setAppUpdate(prev => ({...prev,checking:true,error:false}));
+    try {
+      const latest = await fetchLatestAppBuildId();
+      if (!active) return;
+      const available = !!latest && latest !== APP_BUILD_ID;
+      setAppUpdate({checking:false,available,latest,error:false});
+    } catch {
+      if (active) setAppUpdate(prev => ({...prev,checking:false,error:true}));
+    }
+  };
+  checkForUpdate();
+  const onFocus = () => checkForUpdate();
+  const onVisibility = () => { if (!document.hidden) checkForUpdate(); };
+  window.addEventListener("focus", onFocus);
+  document.addEventListener("visibilitychange", onVisibility);
+  return () => {
+    active = false;
+    window.removeEventListener("focus", onFocus);
+    document.removeEventListener("visibilitychange", onVisibility);
+  };
+}, []);
 
 useEffect(() => {
   setWaTemplateDraft(waMessageTemplate);
@@ -3627,6 +3680,14 @@ useEffect(() => {
     setLoginErr(""); setLoginLoading(true);
     setAction("login", "loading");
 
+    if (appUpdate.available) {
+      setLoginErr("עדכון זמין. יש לעדכן את האפליקציה לפני כניסה.");
+      setLoginLoading(false);
+      setAction("login", "error", 2200);
+      haptic("medium");
+      return;
+    }
+
     const inputUser = loginUser.toLowerCase().trim();
     const inputPass = loginPass.trim();
 
@@ -4518,10 +4579,17 @@ useEffect(() => {
         </div>
         <div style={{background:"rgba(226,237,250,0.78)",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)",borderRadius:28,padding:24,boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.86) inset",border:"1px solid rgba(148,163,184,0.24)"}}>
           <h2 style={{fontSize:20,fontWeight:900,color:C.text,margin:"0 0 20px",textAlign:"center"}}>כניסה למערכת</h2>
+          {appUpdate.available&&(
+            <div style={{background:"#fff8e1",border:"1px solid #ffe082",borderRadius:18,padding:14,marginBottom:16,boxShadow:"0 10px 26px rgba(245,158,11,0.12)"}}>
+              <div style={{fontSize:15,fontWeight:900,color:C.orange,textAlign:"center",marginBottom:6}}>עדכון זמין</div>
+              <div style={{fontSize:12,fontWeight:800,color:"#7c5a00",textAlign:"center",lineHeight:1.5,marginBottom:12}}>יש לעדכן את האפליקציה לפני כניסה למערכת.</div>
+              <Press onClick={hardRefreshApp} style={{padding:13,borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 12px 26px rgba(37,99,235,0.22)"}}>עדכן אפליקציה</Press>
+            </div>
+          )}
           <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>שם משתמש</label><input value={loginUser} onChange={e=>setLoginUser(e.target.value)} placeholder="הכנס שם משתמש" style={inp} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
           <div style={{marginBottom:loginErr?12:20}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>סיסמה</label><input type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} placeholder="הכנס סיסמה" style={inp} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
           {loginErr&&<div style={{background:"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:16,color:C.red,fontSize:13,fontWeight:700,textAlign:"center"}}>⚠️ {loginErr}</div>}
-          <Press onClick={handleLogin} style={{padding:16,borderRadius:18,background:loginLoading?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:loginLoading?"none":"0 16px 36px rgba(79,70,229,0.24)"}}>
+          <Press onClick={handleLogin} disabled={appUpdate.available} style={{padding:16,borderRadius:18,background:appUpdate.available?"#cbd5e1":loginLoading?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:(loginLoading||appUpdate.available)?"none":"0 16px 36px rgba(79,70,229,0.24)",opacity:appUpdate.available?0.82:1}}>
             {actionLabel("login",{idle:"כניסה →",loading:"⏳ מתחבר...",success:"✅ התחברת",error:"⚠️ נסה שוב"})}
           </Press>
           <Press onClick={async()=>{ setAction("push","loading"); const res = await connectPushUser(loginUser, true); if(res?.success){ markPushEnabledForLogin(); setAction("push","success"); } else setAction("push","error",2200); showToast(res?.success ? "✅ ההתראות הופעלו" : "⚠️ לא ניתן להפעיל התראות"); }} style={{marginTop:10,padding:13,borderRadius:18,background:"rgba(30,64,175,0.12)",border:"1px solid rgba(37,99,235,0.18)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center"}}>
