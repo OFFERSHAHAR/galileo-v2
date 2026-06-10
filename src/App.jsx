@@ -1879,6 +1879,23 @@ const getPendingReportPayload = (item) => item?.report ? item.report : item;
 const getPendingSupplyUpdate = (item) => item?.report ? item.supplyUpdate : undefined;
 const isPendingReportSavedToSheet = (item) => !!(item?.report && item.savedToSheet);
 const getPendingUpdateOriginal = (item) => item?.report ? item.updateOriginal : undefined;
+const NO_TREATMENT_NOTE = "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc";
+const isNoTreatmentReport = (report = {}) =>
+  report?.missedTreatment === true || String(report?.notes || "").includes(NO_TREATMENT_NOTE);
+const isCompletedTreatmentReport = (report = {}) =>
+  !isNoTreatmentReport(report) &&
+  String(report?.chlorine ?? "").trim() !== "" &&
+  String(report?.ph ?? "").trim() !== "" &&
+  String(report?.flow ?? "").trim() !== "";
+const shouldSendEditedReportToCustomer = (original, report) =>
+  !!original?.sendWhatsAppOnSave || (isNoTreatmentReport(original) && isCompletedTreatmentReport(report));
+const shouldSendPendingReportWhatsApp = (item, report) => {
+  if (!item?.report) return true;
+  if (item.sendWhatsAppOnSave === false) return false;
+  if (item.sendWhatsAppOnSave === true) return true;
+  if (item.updateOriginal) return shouldSendEditedReportToCustomer(item.updateOriginal, report) || item.sendWhatsAppOnSave !== false;
+  return true;
+};
 const samePendingReport = (a, b) => {
   const left = getPendingReportPayload(a) || {};
   const right = getPendingReportPayload(b) || {};
@@ -2135,6 +2152,7 @@ useEffect(() => {
   const toastTimer = useRef();
   const operatorIssueSendingRef = useRef(false);
   const pendingSyncRef = useRef(false);
+  const immediateReportIdsRef = useRef(new Set());
   const operatorRefreshRef = useRef(false);
   const internalNoteClientRef = useRef("");
 
@@ -2460,11 +2478,20 @@ useEffect(() => {
       phLowConfirmed: isLowPhValue(source.ph),
       lowSaltLight: isLowSaltReportValue(source.salt)
     });
-    setEditingReport({date:source.reportDate || dailyDate, client:source.client || task.client, operator:source.operator || opName, localId:existing?.id || task?.reportId || ""});
+    const sendWhatsAppOnSave = isNoTreatmentReport(source);
+    setEditingReport({
+      date: source.reportDate || dailyDate,
+      client: source.client || task.client,
+      operator: source.operator || opName,
+      localId: existing?.id || task?.reportId || "",
+      notes: source.notes || "",
+      missedTreatment: !!source.missedTreatment,
+      sendWhatsAppOnSave
+    });
     setOpenDoneTasks(x=>({...x,[`${dailyDate}:${task.id || task.client}`]:true}));
     setScreen("form");
     haptic("medium");
-    showToast("✏️ עריכת דוח — ללא שליחת WhatsApp");
+    showToast(sendWhatsAppOnSave ? "✏️ עריכת דוח — תישלח הודעה אחרי שמירה" : "✏️ עריכת דוח — ללא שליחת WhatsApp");
   };
   const DAY_NAMES = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
   const dateDayName = (dateStr) => { if(!dateStr) return ""; return DAY_NAMES[new Date(dateStr+"T12:00:00").getDay()]; };
@@ -4264,6 +4291,7 @@ useEffect(() => {
   notes,
   photosCount:0
 };
+    const sendEditedReportToCustomer = isEditingExistingReport && shouldSendEditedReportToCustomer(editingReport, report);
     if (!isEditingExistingReport && isSubOperatorRole(user?.role) && !approvalEditId) {
       const adminEmail = getCompany().adminEmail || "";
       try {
@@ -4349,52 +4377,57 @@ useEffect(() => {
       }
       setEditingReport(null);
       setScreen("done");
+      immediateReportIdsRef.current.add(String(report.id || ""));
       void (async()=>{
-        let savedInBackground = false;
-        let saveResponse = null;
-        if (sheetId) {
-          saveResponse = await sheetCall("saveReport", {
-            report,
-            photos: photosBase64,
-            adminEmail:getCompany().adminEmail||"",
-            clientAddress: clientAddress(client),
-            clientPhone: clientPhone(client),
-            supplyUpdate: supplyUpdate || undefined,
-          }).catch(() => null);
-          savedInBackground = saveResponse?.success === true;
-        }
-        if (savedInBackground) {
-          const savedReport = reportWithServerId(report, saveResponse);
-          if (nextSupplyDB) setSupplyDB(nextSupplyDB);
-          setReports(prev => upsertReportByIdentity(prev, savedReport));
-          setSheetReports(prev => upsertReportByIdentity(prev, savedReport));
-          if (!saveResponse?.duplicate && user?.role !== "admin") {
-            void sendNotificationToAdmins(
-              `✅ דוח בוצע: ${client}`,
-              `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
-            ).catch(e => console.warn("Admin report notification failed", e));
+        try {
+          let savedInBackground = false;
+          let saveResponse = null;
+          if (sheetId) {
+            saveResponse = await sheetCall("saveReport", {
+              report,
+              photos: photosBase64,
+              adminEmail:getCompany().adminEmail||"",
+              clientAddress: clientAddress(client),
+              clientPhone: clientPhone(client),
+              supplyUpdate: supplyUpdate || undefined,
+            }).catch(() => null);
+            savedInBackground = saveResponse?.success === true;
           }
-          void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
-          const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
-            console.warn("WhatsApp send failed", e);
-            return false;
-          });
-          if (whatsAppSent) {
-            removePendingReport(makePendingReportItem(report, supplyUpdate));
-            setAction("submitReport", "success", 1200);
+          if (savedInBackground) {
+            const savedReport = reportWithServerId(report, saveResponse);
+            if (nextSupplyDB) setSupplyDB(nextSupplyDB);
+            setReports(prev => upsertReportByIdentity(prev, savedReport));
+            setSheetReports(prev => upsertReportByIdentity(prev, savedReport));
+            if (!saveResponse?.duplicate && user?.role !== "admin") {
+              void sendNotificationToAdmins(
+                `✅ דוח בוצע: ${client}`,
+                `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
+              ).catch(e => console.warn("Admin report notification failed", e));
+            }
+            void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
+            const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+              console.warn("WhatsApp send failed", e);
+              return false;
+            });
+            if (whatsAppSent) {
+              removePendingReport(makePendingReportItem(report, supplyUpdate));
+              setAction("submitReport", "success", 1200);
+            } else {
+              addPendingReport(savedReport, supplyUpdate, { savedToSheet: true });
+              setDismissed(false);
+              setPendingBackgroundSync(true);
+              setAction("submitReport", "local", 2200);
+            }
+            void autoShareOrderAfterReport(savedReport);
           } else {
-            addPendingReport(savedReport, supplyUpdate, { savedToSheet: true });
+            addPendingReport(report, supplyUpdate);
             setDismissed(false);
             setPendingBackgroundSync(true);
             setAction("submitReport", "local", 2200);
+            showToast("⚠️ הדוח נשמר מקומית וממתין לסנכרון");
           }
-          void autoShareOrderAfterReport(savedReport);
-        } else {
-          addPendingReport(report, supplyUpdate);
-          setDismissed(false);
-          setPendingBackgroundSync(true);
-          setAction("submitReport", "local", 2200);
-          showToast("⚠️ הדוח נשמר מקומית וממתין לסנכרון");
+        } finally {
+          immediateReportIdsRef.current.delete(String(report.id || ""));
         }
       })();
       return;
@@ -4446,14 +4479,14 @@ useEffect(() => {
       setAction("submitReport", "local", 2200);
       showToast("⚠️ הדוח נשמר מקומית");
     } else if (!saved && isEditingExistingReport) {
-      addPendingReport(report, supplyUpdate, { updateOriginal: editingReport });
+      addPendingReport(report, supplyUpdate, { updateOriginal: editingReport, sendWhatsAppOnSave: sendEditedReportToCustomer });
       setDismissed(false);
       setPendingBackgroundSync(true);
       setAction("submitReport", "error", 2200);
       showToast("⚠️ העריכה נשמרה מקומית, לא עודכנה בשיטס");
     } else {
       setAction("submitReport", "success", 1200);
-      showToast(isEditingExistingReport ? "✅ הדוח עודכן" : "✅ הדוח נשלח");
+      showToast(sendEditedReportToCustomer ? "✅ הדוח עודכן ונשלח ברקע" : isEditingExistingReport ? "✅ הדוח עודכן" : "✅ הדוח נשלח");
     }
 
     setSyncing(false);
@@ -4463,7 +4496,21 @@ useEffect(() => {
     }
     setEditingReport(null);
     setScreen("done");
-    if (!isEditingExistingReport) {
+    if (sendEditedReportToCustomer && saved) {
+      void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
+      void (async () => {
+        const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+          console.warn("WhatsApp send failed", e);
+          return false;
+        });
+        if (!whatsAppSent) {
+          addPendingReport(savedReport, supplyUpdate, { savedToSheet: saved, updateOriginal: editingReport, sendWhatsAppOnSave: true });
+          setDismissed(false);
+          setPendingBackgroundSync(true);
+        }
+      })();
+      void autoShareOrderAfterReport(savedReport);
+    } else if (!isEditingExistingReport) {
       void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
       void (async () => {
         const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
@@ -4489,9 +4536,16 @@ useEffect(() => {
     const itemsToSync = Number.isFinite(maxItems) ? pending.slice(0, Math.max(1, maxItems)) : pending;
     const failed = Number.isFinite(maxItems) ? pending.slice(itemsToSync.length) : [];
     let nextSupplyDBFromSync = null;
+    let skippedImmediateCount = 0;
     try {
       for (const item of itemsToSync) {
         const r = getPendingReportPayload(item);
+        const immediateId = String(r?.id || "");
+        if (immediateId && immediateReportIdsRef.current.has(immediateId)) {
+          skippedImmediateCount += 1;
+          failed.push(item);
+          continue;
+        }
         const rebuiltSupply = buildSupplyUpdateForReport(r);
         const supplyUpdate = rebuiltSupply?.row || getPendingSupplyUpdate(item);
         const updateOriginal = getPendingUpdateOriginal(item);
@@ -4514,15 +4568,21 @@ useEffect(() => {
           continue;
         }
 
+        const sendWhatsAppOnSave = shouldSendPendingReportWhatsApp(item, savedReport);
+        if (!sendWhatsAppOnSave) {
+          sent.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal, sendWhatsAppOnSave }));
+          continue;
+        }
+
         const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
           console.warn("Pending WhatsApp send failed", e);
           return false;
         });
 
         if (whatsAppSent) {
-          sent.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal }));
+          sent.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal, sendWhatsAppOnSave }));
         } else {
-          failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal }));
+          failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal, sendWhatsAppOnSave }));
         }
       }
 
@@ -4537,8 +4597,13 @@ useEffect(() => {
 
       setPending(failed);
       setPendingBackgroundSync(!!failed.length);
-      setAction("syncPending", failed.length ? "error" : "success", failed.length ? 2200 : 1600);
-      showToast(failed.length ? `⚠️ ${failed.length} דוחות עדיין ממתינים לשליחה ללקוח` : "✅ כל הדוחות נשלחו ללקוחות!");
+      const onlySkippedImmediate = failed.length > 0 && failed.length === skippedImmediateCount && sent.length === 0;
+      if (onlySkippedImmediate) {
+        setAction("syncPending", "idle");
+      } else {
+        setAction("syncPending", failed.length ? "error" : "success", failed.length ? 2200 : 1600);
+        showToast(failed.length ? `⚠️ ${failed.length} דוחות עדיין ממתינים לשליחה ללקוח` : "✅ כל הדוחות נשלחו ללקוחות!");
+      }
     } finally {
       pendingSyncRef.current = false;
     }
@@ -4607,25 +4672,27 @@ useEffect(() => {
     if (!pendingBackgroundSync) return;
     if (!pending.length) return;
 
-    const retryPending = () => {
+    const retryPending = (maxItems = Infinity) => {
       if (isActionLoading("syncPending")) return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void syncPendingReports(1);
+      void syncPendingReports(maxItems);
     };
+    const retryAllPending = () => retryPending();
+    const retryOnePending = () => retryPending(1);
 
-    const retryTimer = window.setTimeout(retryPending, 1200);
-    const retryInterval = window.setInterval(retryPending, 15000);
-    window.addEventListener("online", retryPending);
-    window.addEventListener("focus", retryPending);
-    document.addEventListener("visibilitychange", retryPending);
+    const retryTimer = window.setTimeout(retryAllPending, 250);
+    const retryInterval = window.setInterval(retryOnePending, 15000);
+    window.addEventListener("online", retryAllPending);
+    window.addEventListener("focus", retryAllPending);
+    document.addEventListener("visibilitychange", retryAllPending);
 
     return () => {
       window.clearTimeout(retryTimer);
       window.clearInterval(retryInterval);
-      window.removeEventListener("online", retryPending);
-      window.removeEventListener("focus", retryPending);
-      document.removeEventListener("visibilitychange", retryPending);
+      window.removeEventListener("online", retryAllPending);
+      window.removeEventListener("focus", retryAllPending);
+      document.removeEventListener("visibilitychange", retryAllPending);
     };
   }, [pending.length, pendingBackgroundSync]);
 
