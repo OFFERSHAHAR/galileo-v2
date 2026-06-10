@@ -2134,6 +2134,7 @@ useEffect(() => {
   const toastTimer = useRef();
   const operatorIssueSendingRef = useRef(false);
   const pendingSyncRef = useRef(false);
+  const operatorRefreshRef = useRef(false);
   const internalNoteClientRef = useRef("");
 
   const setAction = (key, status, resetMs = 0) => {
@@ -2778,38 +2779,56 @@ useEffect(() => {
     if(!user) return;
     setGreeting(getDailyGreeting(user.username || ""));
     const refresh = async() => {
-      const [tR, uR, oR, shR, apR, prR, lrR, setR] = await Promise.all([sheetCall("getTasks"), sheetCall("getUsers"), sheetCall("getAdminOrders"), sheetCall("getSubOperatorShares"), sheetCall("getSubOperatorApprovals"), sheetCall("getPendingSubReports"), sheetCall("getLastReadings"), sheetCall("getClientSettings")]);
-      if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
-      if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
-      if(Array.isArray(shR?.sharedSubOrders)) setSharedSubOrders(shR.sharedSubOrders);
-      if(Array.isArray(apR?.approvals)) setSubOperatorApprovals(apR.approvals);
-      if(Array.isArray(prR?.pendingSubReports)) setPendingSubReports(prR.pendingSubReports);
-      if(lrR?.lastReadings) setLastReadings(lrR.lastReadings);
-      if(setR?.settings?.waMessageTemplate) setWaMessageTemplate(normalizeWaMessageTemplate(setR.settings.waMessageTemplate));
-      if(setR?.settings?.waPollMessage) setWaPollMessage(normalizeWaPollMessage(setR.settings.waPollMessage));
-      if(setR?.settings?.waPollOptions) setWaPollOptions(normalizeWaPollOptions(setR.settings.waPollOptions));
-      if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
+      if (operatorRefreshRef.current) return;
+      operatorRefreshRef.current = true;
       try {
-        const cached = localStorage.getItem("galileo_cache");
-        const c = cached ? JSON.parse(cached) : {};
-        localStorage.setItem("galileo_cache", JSON.stringify({
-          ...c,
-          tasks:Array.isArray(tR?.tasks) ? tR.tasks : c.tasks,
-          adminOrders:Array.isArray(oR?.adminOrders) ? oR.adminOrders : c.adminOrders,
-          sharedSubOrders:Array.isArray(shR?.sharedSubOrders) ? shR.sharedSubOrders : c.sharedSubOrders,
-          subOperatorApprovals:Array.isArray(apR?.approvals) ? apR.approvals : c.subOperatorApprovals,
-          pendingSubReports:Array.isArray(prR?.pendingSubReports) ? prR.pendingSubReports : c.pendingSubReports,
-          waMessageTemplate:setR?.settings?.waMessageTemplate || c.waMessageTemplate,
-          lastReadings:lrR?.lastReadings || c.lastReadings,
-          users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
-          cachedAt:Date.now()
-        }));
-      } catch {}
+        const [tR, uR, oR, shR, apR, prR, lrR, setR, repR] = await Promise.all([
+          sheetCall("getTasks"),
+          sheetCall("getUsers"),
+          sheetCall("getAdminOrders"),
+          sheetCall("getSubOperatorShares"),
+          sheetCall("getSubOperatorApprovals"),
+          sheetCall("getPendingSubReports"),
+          sheetCall("getLastReadings"),
+          sheetCall("getClientSettings"),
+          sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300})
+        ]);
+        if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
+        if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
+        if(Array.isArray(shR?.sharedSubOrders)) setSharedSubOrders(shR.sharedSubOrders);
+        if(Array.isArray(apR?.approvals)) setSubOperatorApprovals(apR.approvals);
+        if(Array.isArray(prR?.pendingSubReports)) setPendingSubReports(prR.pendingSubReports);
+        if(lrR?.lastReadings) setLastReadings(lrR.lastReadings);
+        if(setR?.settings?.waMessageTemplate) setWaMessageTemplate(normalizeWaMessageTemplate(setR.settings.waMessageTemplate));
+        if(setR?.settings?.waPollMessage) setWaPollMessage(normalizeWaPollMessage(setR.settings.waPollMessage));
+        if(setR?.settings?.waPollOptions) setWaPollOptions(normalizeWaPollOptions(setR.settings.waPollOptions));
+        if(Array.isArray(repR?.reports)) setSheetReports(repR.reports);
+        if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
+        try {
+          const cached = localStorage.getItem("galileo_cache");
+          const c = cached ? JSON.parse(cached) : {};
+          localStorage.setItem("galileo_cache", JSON.stringify({
+            ...c,
+            tasks:Array.isArray(tR?.tasks) ? tR.tasks : c.tasks,
+            adminOrders:Array.isArray(oR?.adminOrders) ? oR.adminOrders : c.adminOrders,
+            sharedSubOrders:Array.isArray(shR?.sharedSubOrders) ? shR.sharedSubOrders : c.sharedSubOrders,
+            subOperatorApprovals:Array.isArray(apR?.approvals) ? apR.approvals : c.subOperatorApprovals,
+            pendingSubReports:Array.isArray(prR?.pendingSubReports) ? prR.pendingSubReports : c.pendingSubReports,
+            waMessageTemplate:setR?.settings?.waMessageTemplate || c.waMessageTemplate,
+            lastReadings:lrR?.lastReadings || c.lastReadings,
+            sheetReports:Array.isArray(repR?.reports) ? repR.reports : c.sheetReports,
+            users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
+            cachedAt:Date.now()
+          }));
+        } catch {}
+      } finally {
+        operatorRefreshRef.current = false;
+      }
     };
     const interval = setInterval(refresh, 10000);
     window.addEventListener("focus", refresh);
     return ()=>{ clearInterval(interval); window.removeEventListener("focus", refresh); };
-  },[user]);
+  },[user, dailyDate]);
 
   useEffect(()=>{
     if(!user) return;
@@ -3499,7 +3518,7 @@ useEffect(() => {
 
   useEffect(()=>{
     applyTenantBranding(getCompany());
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); setSheetId("connected"); } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); setSheetId("connected"); } } catch {}
     const checkLicense = async () => {
       const lic = getLicense(); if(!lic.key) return;
       try { const res = await mgmtCall("validateLicense",{key:lic.key}); if(res?.valid){ const company = companyFromLicenseResponse(res); saveLicense({...lic, company:company.name, sheetId:res.sheetId, plan:res.plan, status:res.status, expiry:res.expiry, logoUrl:res.logoUrl||"", appName:company.appName, shortName:company.shortName, icon192Url:company.icon192Url, icon512Url:company.icon512Url, appleIconUrl:company.appleIconUrl, themeColor:company.themeColor, backgroundColor:company.backgroundColor}); saveCompany(company); setCompanyName(company.name || DEFAULT_APP_NAME); setClientPlan({plan:res.plan, status:res.status}); if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId); } else { localStorage.removeItem("galileo_user"); localStorage.removeItem("galileo_license"); setUser(null); setShowSetup(true); } } catch {}
@@ -3593,7 +3612,7 @@ useEffect(() => {
   },[screen, adminTab, dailyDate, taskDate, sheetId, reportDateFilter, reportDateToFilter, reportFilter]);
 
   const connectSheets = async (bg=false) => {
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,waMessageTemplate:wt}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(wt) setWaMessageTemplate(normalizeWaMessageTemplate(wt)); setSheetId("connected"); if(!bg) return; } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,waMessageTemplate:wt,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); if(wt) setWaMessageTemplate(normalizeWaMessageTemplate(wt)); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
       let boot = await sheetCall("getBootstrapData");
       let u=boot?.users?.length?boot.users:null;
@@ -3616,7 +3635,7 @@ useEffect(() => {
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
       if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(wp)setWaPollMessage(normalizeWaPollMessage(wp)); if(wo)setWaPollOptions(normalizeWaPollOptions(wo));
-      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,waMessageTemplate:wt||waMessageTemplate,cachedAt:Date.now()}));
+      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,sheetReports:sheetReports||[],waMessageTemplate:wt||waMessageTemplate,cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
     } catch {}
@@ -3628,6 +3647,10 @@ useEffect(() => {
     try {
       await connectSheets(true);
       if (screen === "daily" || screen === "admin") await loadOperatorIssues(true);
+      if (screen === "daily") {
+        const rep = await sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300}).catch(()=>null);
+        if (Array.isArray(rep?.reports)) setSheetReports(rep.reports);
+      }
       if (screen === "admin" && adminTab === "treatments") await loadTreatmentCounts();
       if (screen === "admin" && ["daily","progress","reports"].includes(adminTab)) {
         const refreshReportDate = adminTab === "daily" ? taskDate : adminTab === "progress" ? dailyDate : reportDateFilter;
