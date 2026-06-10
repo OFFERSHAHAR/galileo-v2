@@ -2366,7 +2366,12 @@ useEffect(() => {
   const isClientReportedDone = (date, clientName) => {
     const opName = dailyOwnerName(date) || user?.name || "";
     const last = lastReadingForClient(clientName);
-    return reports.some(r=>r.reportDate===date&&r.operator===opName&&r.client===clientName) ||
+    const allReports = [...sheetReports, ...reports];
+    return allReports.some(r =>
+        normalizeDate(r.reportDate) === date &&
+        normalizeName(r.operator) === normalizeName(opName) &&
+        normalizeName(r.client) === normalizeName(clientName)
+      ) ||
       completedReports.includes(completedReportKey(date, clientName, opName)) ||
       normalizeDate(last?.date) === date;
   };
@@ -4448,16 +4453,17 @@ useEffect(() => {
     }
   };
 
-  const syncPendingReports = async () => {
+  const syncPendingReports = async (maxItems = Infinity) => {
     if (!pending.length || pendingSyncRef.current || isActionLoading("syncPending")) return;
     pendingSyncRef.current = true;
     setAction("syncPending", "loading");
 
     const sent = [];
-    const failed = [];
+    const itemsToSync = Number.isFinite(maxItems) ? pending.slice(0, Math.max(1, maxItems)) : pending;
+    const failed = Number.isFinite(maxItems) ? pending.slice(itemsToSync.length) : [];
     let nextSupplyDBFromSync = null;
     try {
-      for (const item of pending) {
+      for (const item of itemsToSync) {
         const r = getPendingReportPayload(item);
         const rebuiltSupply = buildSupplyUpdateForReport(r);
         const supplyUpdate = rebuiltSupply?.row || getPendingSupplyUpdate(item);
@@ -4575,7 +4581,7 @@ useEffect(() => {
       if (isActionLoading("syncPending")) return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void syncPendingReports();
+      void syncPendingReports(1);
     };
 
     const retryTimer = window.setTimeout(retryPending, 1200);
