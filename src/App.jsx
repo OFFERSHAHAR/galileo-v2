@@ -1878,6 +1878,7 @@ useEffect(() => {
 const getPendingReportPayload = (item) => item?.report ? item.report : item;
 const getPendingSupplyUpdate = (item) => item?.report ? item.supplyUpdate : undefined;
 const isPendingReportSavedToSheet = (item) => !!(item?.report && item.savedToSheet);
+const getPendingUpdateOriginal = (item) => item?.report ? item.updateOriginal : undefined;
 const samePendingReport = (a, b) => {
   const left = getPendingReportPayload(a) || {};
   const right = getPendingReportPayload(b) || {};
@@ -4445,6 +4446,9 @@ useEffect(() => {
       setAction("submitReport", "local", 2200);
       showToast("⚠️ הדוח נשמר מקומית");
     } else if (!saved && isEditingExistingReport) {
+      addPendingReport(report, supplyUpdate, { updateOriginal: editingReport });
+      setDismissed(false);
+      setPendingBackgroundSync(true);
       setAction("submitReport", "error", 2200);
       showToast("⚠️ העריכה נשמרה מקומית, לא עודכנה בשיטס");
     } else {
@@ -4490,11 +4494,14 @@ useEffect(() => {
         const r = getPendingReportPayload(item);
         const rebuiltSupply = buildSupplyUpdateForReport(r);
         const supplyUpdate = rebuiltSupply?.row || getPendingSupplyUpdate(item);
+        const updateOriginal = getPendingUpdateOriginal(item);
         let savedReport = r;
         let saveSucceeded = isPendingReportSavedToSheet(item);
 
         if (!saveSucceeded) {
-          const res = await sheetCall("saveReport", { report: r, supplyUpdate }).catch(() => null);
+          const res = updateOriginal
+            ? await sheetCall("updateReport", { report: r, original: updateOriginal, supplyUpdate }).catch(() => null)
+            : await sheetCall("saveReport", { report: r, supplyUpdate }).catch(() => null);
           saveSucceeded = res?.success === true;
           if (saveSucceeded) {
             savedReport = reportWithServerId(r, res);
@@ -4513,9 +4520,9 @@ useEffect(() => {
         });
 
         if (whatsAppSent) {
-          sent.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true }));
+          sent.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal }));
         } else {
-          failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true }));
+          failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal }));
         }
       }
 
