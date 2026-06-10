@@ -367,7 +367,7 @@ async function sheetCall(action, payload={}) {
     const company = getCompany();
     const sheetId = company.sheetId || localStorage.getItem("galileo_sheet_id") || "";
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
+    const timer = setTimeout(() => controller.abort(), 45000);
     const r = await fetch(getScriptUrl(),{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action, sheetId, ...payload}),signal:controller.signal});
     clearTimeout(timer);
     return await r.json();
@@ -1877,6 +1877,7 @@ useEffect(() => {
 
 const getPendingReportPayload = (item) => item?.report ? item.report : item;
 const getPendingSupplyUpdate = (item) => item?.report ? item.supplyUpdate : undefined;
+const isPendingReportSavedToSheet = (item) => !!(item?.report && item.savedToSheet);
 const samePendingReport = (a, b) => {
   const left = getPendingReportPayload(a) || {};
   const right = getPendingReportPayload(b) || {};
@@ -1887,9 +1888,12 @@ const samePendingReport = (a, b) => {
     normalizeName(left.client) === normalizeName(right.client)
   );
 };
-const makePendingReportItem = (report, supplyUpdate) => supplyUpdate ? { report, supplyUpdate } : report;
-const addPendingReport = (report, supplyUpdate) => {
-  const item = makePendingReportItem(report, supplyUpdate);
+const makePendingReportItem = (report, supplyUpdate, meta = {}) => {
+  const shouldWrap = supplyUpdate || Object.keys(meta || {}).length > 0;
+  return shouldWrap ? { report, supplyUpdate, ...meta } : report;
+};
+const addPendingReport = (report, supplyUpdate, meta = {}) => {
+  const item = makePendingReportItem(report, supplyUpdate, meta);
   setPending(prev => {
     const idx = prev.findIndex(x => samePendingReport(x, item));
     if (idx < 0) return [...prev, item];
@@ -2129,6 +2133,7 @@ useEffect(() => {
   const fileRef = useRef();
   const toastTimer = useRef();
   const operatorIssueSendingRef = useRef(false);
+  const pendingSyncRef = useRef(false);
   const internalNoteClientRef = useRef("");
 
   const setAction = (key, status, resetMs = 0) => {
@@ -4064,6 +4069,7 @@ useEffect(() => {
     setSyncing(true);
 
     let saved = false;
+    let savedReport = report;
     if (sheetId) {
       const res = await sheetCall("saveReport", {
         report,
@@ -4074,6 +4080,7 @@ useEffect(() => {
         supplyUpdate: supplyUpdateForApproval?.row || undefined,
       }).catch(() => null);
       saved = res?.success === true;
+      if (saved) savedReport = reportWithServerId(report, res);
       if (saved && supplyUpdateForApproval?.db) setSupplyDB(supplyUpdateForApproval.db);
       if (saved && !res?.duplicate) {
         void sendNotificationToAdmins(
@@ -4084,8 +4091,8 @@ useEffect(() => {
     }
 
     if (saved) {
-      setReports(prev => [...prev, report]);
-      rememberCompletedReport(report);
+      setReports(prev => upsertReportByIdentity(prev, savedReport));
+      rememberCompletedReport(savedReport);
       setLastReadings(prev => ({
         ...prev,
         [report.client]: {
@@ -4105,9 +4112,19 @@ useEffect(() => {
       await removePendingSubReport(item.id);
       setAction(`approveSubReport:${item.id}`, "success", 1400);
       showToast("✅ הדוח אושר ונשלח");
-      void reportCriticalFlowIssue(report).catch(e => console.warn("Critical flow issue failed", e));
-      void sendReportWhatsApp(report).catch(e => console.warn("WhatsApp send failed", e));
-      void autoShareOrderAfterReport(report);
+      void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
+      void (async () => {
+        const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+          console.warn("WhatsApp send failed", e);
+          return false;
+        });
+        if (!whatsAppSent) {
+          addPendingReport(savedReport, supplyUpdateForApproval?.row, { savedToSheet: true });
+          setDismissed(false);
+          setPendingBackgroundSync(true);
+        }
+      })();
+      void autoShareOrderAfterReport(savedReport);
       trackUsageEvent("approve_sub_report", {screen:"daily", target:"pending_sub_report"});
     } else {
       addPendingReport(report);
@@ -4319,7 +4336,6 @@ useEffect(() => {
         }
         if (savedInBackground) {
           const savedReport = reportWithServerId(report, saveResponse);
-          removePendingReport(makePendingReportItem(report, supplyUpdate));
           if (nextSupplyDB) setSupplyDB(nextSupplyDB);
           setReports(prev => upsertReportByIdentity(prev, savedReport));
           setSheetReports(prev => upsertReportByIdentity(prev, savedReport));
@@ -4330,9 +4346,20 @@ useEffect(() => {
             ).catch(e => console.warn("Admin report notification failed", e));
           }
           void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
-          void sendReportWhatsApp(savedReport).catch(e => console.warn("WhatsApp send failed", e));
+          const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+            console.warn("WhatsApp send failed", e);
+            return false;
+          });
+          if (whatsAppSent) {
+            removePendingReport(makePendingReportItem(report, supplyUpdate));
+            setAction("submitReport", "success", 1200);
+          } else {
+            addPendingReport(savedReport, supplyUpdate, { savedToSheet: true });
+            setDismissed(false);
+            setPendingBackgroundSync(true);
+            setAction("submitReport", "local", 2200);
+          }
           void autoShareOrderAfterReport(savedReport);
-          setAction("submitReport", "success", 1200);
         } else {
           addPendingReport(report, supplyUpdate);
           setDismissed(false);
@@ -4406,54 +4433,88 @@ useEffect(() => {
     setScreen("done");
     if (!isEditingExistingReport) {
       void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
-      void sendReportWhatsApp(savedReport).catch(e => console.warn("WhatsApp send failed", e));
+      void (async () => {
+        const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+          console.warn("WhatsApp send failed", e);
+          return false;
+        });
+        if (!whatsAppSent) {
+          addPendingReport(savedReport, supplyUpdate, { savedToSheet: saved });
+          setDismissed(false);
+          setPendingBackgroundSync(true);
+        }
+      })();
       void autoShareOrderAfterReport(savedReport);
     }
   };
 
   const syncPendingReports = async () => {
-    if (!pending.length || isActionLoading("syncPending")) return;
+    if (!pending.length || pendingSyncRef.current || isActionLoading("syncPending")) return;
+    pendingSyncRef.current = true;
     setAction("syncPending", "loading");
 
     const sent = [];
     const failed = [];
     let nextSupplyDBFromSync = null;
-    for (const item of pending) {
-      const r = getPendingReportPayload(item);
-      const rebuiltSupply = buildSupplyUpdateForReport(r);
-      const supplyUpdate = rebuiltSupply?.row || getPendingSupplyUpdate(item);
-      const res = await sheetCall("saveReport",{report:r, supplyUpdate}).catch(()=>null);
-      if(res?.success) {
-        if (rebuiltSupply?.db) nextSupplyDBFromSync = rebuiltSupply.db;
-        sent.push(makePendingReportItem(reportWithServerId(r, res), supplyUpdate));
-      }
-      else failed.push(item);
-    }
-
-    if(sent.length){
-      if (nextSupplyDBFromSync) setSupplyDB(nextSupplyDBFromSync);
-      setReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
-      setSheetReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
-      sent.forEach(item => {
+    try {
+      for (const item of pending) {
         const r = getPendingReportPayload(item);
-        void sendReportWhatsApp(r).catch(e => console.warn("Pending WhatsApp send failed", e));
-        void autoShareOrderAfterReport(r);
-      });
+        const rebuiltSupply = buildSupplyUpdateForReport(r);
+        const supplyUpdate = rebuiltSupply?.row || getPendingSupplyUpdate(item);
+        let savedReport = r;
+        let saveSucceeded = isPendingReportSavedToSheet(item);
+
+        if (!saveSucceeded) {
+          const res = await sheetCall("saveReport", { report: r, supplyUpdate }).catch(() => null);
+          saveSucceeded = res?.success === true;
+          if (saveSucceeded) {
+            savedReport = reportWithServerId(r, res);
+            if (rebuiltSupply?.db) nextSupplyDBFromSync = rebuiltSupply.db;
+          }
+        }
+
+        if (!saveSucceeded) {
+          failed.push(item);
+          continue;
+        }
+
+        const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+          console.warn("Pending WhatsApp send failed", e);
+          return false;
+        });
+
+        if (whatsAppSent) {
+          sent.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true }));
+        } else {
+          failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true }));
+        }
+      }
+
+      if (sent.length) {
+        if (nextSupplyDBFromSync) setSupplyDB(nextSupplyDBFromSync);
+        setReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
+        setSheetReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
+        sent.forEach(item => {
+          void autoShareOrderAfterReport(getPendingReportPayload(item));
+        });
+      }
+
       setPending(failed);
       setPendingBackgroundSync(!!failed.length);
       setAction("syncPending", failed.length ? "error" : "success", failed.length ? 2200 : 1600);
-      showToast(failed.length ? `⚠️ ${failed.length} דוחות עדיין ממתינים` : "✅ כל הדוחות נשלחו!");
-    } else {
-      setPendingBackgroundSync(true);
-      setAction("syncPending", "error", 2200);
-      showToast("⚠️ חלק מהדוחות עדיין ממתינים");
+      showToast(failed.length ? `⚠️ ${failed.length} דוחות עדיין ממתינים לשליחה ללקוח` : "✅ כל הדוחות נשלחו ללקוחות!");
+    } finally {
+      pendingSyncRef.current = false;
     }
 
   };
-
   const togglePendingBackgroundSync = (e) => {
     e?.stopPropagation?.();
     setPendingBackgroundSync(active => {
+      if (active && pending.length) {
+        showToast("שליחה ברקע נשארת פעילה עד שכל הלקוחות יקבלו הודעה");
+        return true;
+      }
       const next = !active;
       showToast(next ? "שליחת דוחות ברקע הופעלה" : "שליחת דוחות ברקע נעצרה");
       return next;
