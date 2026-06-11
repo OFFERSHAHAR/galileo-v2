@@ -828,7 +828,7 @@
   function setupTriggers() {
     // מחק triggers ישנים
     ScriptApp.getProjectTriggers().forEach(t => {
-      if(["checkNotifications","syncDailyMaterialApprovals"].includes(t.getHandlerFunction())) {
+      if(["checkNotifications","syncDailyMaterialApprovals","cleanupSuperMessagesHourly"].includes(t.getHandlerFunction())) {
         ScriptApp.deleteTrigger(t);
       }
     });
@@ -846,7 +846,12 @@
       .nearMinute(0)
       .create();
 
-    Logger.log("✅ Triggers נוצרו — checkNotifications כל 5 דקות, syncDailyMaterialApprovals כל יום ב-05:00");
+    ScriptApp.newTrigger("cleanupSuperMessagesHourly")
+      .timeBased()
+      .everyHours(1)
+      .create();
+
+    Logger.log("✅ Triggers נוצרו — checkNotifications כל 5 דקות, syncDailyMaterialApprovals כל יום ב-05:00, cleanupSuperMessagesHourly כל שעה");
   }
 
   function checkNotifications() {
@@ -3521,15 +3526,70 @@ function getUnassignedClients_(ss) {
   }));
 }
 
+function superMessageHeaders_() {
+  return ["id","createdAt","from","to","toName","message","reply","replyAt","status","imageUrl","imageFileId","imageName","imageMime"];
+}
+
+function ensureSuperMessageColumns_(sheet) {
+  const headers = superMessageHeaders_();
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  const existing = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || ""));
+  headers.forEach(header => {
+    if (!existing.includes(header)) {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+    }
+  });
+}
+
+function superMessageHeaderMap_(sheet) {
+  const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0].map(h => String(h || ""));
+  return headers.reduce((acc, header, index) => {
+    acc[header] = index;
+    return acc;
+  }, {});
+}
+
+function deleteSuperMessageImage_(fileId) {
+  const id = String(fileId || "").trim();
+  if (!id) return;
+  try {
+    DriveApp.getFileById(id).setTrashed(true);
+  } catch (e) {
+    Logger.log("Could not delete super message image: " + e);
+  }
+}
+
+function saveSuperMessageImage_(image) {
+  if (!image) return {};
+  const rawData = String(image.data || image.base64 || "").trim().replace(/^data:[^,]+,/, "");
+  if (!rawData) return {};
+  const mimeType = String(image.mimeType || "image/jpeg").trim();
+  if (!/^image\//i.test(mimeType)) throw new Error("invalid image type");
+  const safeName = String(image.name || "super-message-image.jpg").replace(/[\\/:*?"<>|]/g, "_").slice(0, 90) || "super-message-image.jpg";
+  const bytes = Utilities.base64Decode(rawData);
+  const blob = Utilities.newBlob(bytes, mimeType, safeName);
+  const file = DriveApp.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  const fileId = file.getId();
+  return {
+    imageUrl: "https://drive.google.com/thumbnail?id=" + encodeURIComponent(fileId) + "&sz=w1200",
+    imageFileUrl: "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/view",
+    imageFileId: fileId,
+    imageName: safeName,
+    imageMime: mimeType
+  };
+}
+
 function getSuperMessagesSheet_(ss) {
   let sheet = ss.getSheetByName("הודעות");
   if (!sheet) {
     sheet = ss.insertSheet("הודעות");
-    sheet.appendRow(["id","createdAt","from","to","toName","message","reply","replyAt","status"]);
+    sheet.appendRow(superMessageHeaders_());
   }
   if (sheet.getLastRow() < 1) {
-    sheet.appendRow(["id","createdAt","from","to","toName","message","reply","replyAt","status"]);
+    sheet.appendRow(superMessageHeaders_());
   }
+  ensureSuperMessageColumns_(sheet);
   return sheet;
 }
 
@@ -3537,11 +3597,16 @@ function cleanupSuperMessages_(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return;
   const rows = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  const map = superMessageHeaderMap_(sheet);
+  const imageFileIdIndex = map.imageFileId;
   const expireAt = Date.now() - 60 * 60 * 1000;
   for (let i = rows.length - 1; i >= 0; i--) {
     const createdAt = rows[i][1];
     const createdTime = createdAt instanceof Date ? createdAt.getTime() : new Date(String(createdAt || "")).getTime();
-    if (createdTime && createdTime < expireAt) sheet.deleteRow(i + 2);
+    if (createdTime && createdTime < expireAt) {
+      if (imageFileIdIndex !== undefined) deleteSuperMessageImage_(rows[i][imageFileIdIndex]);
+      sheet.deleteRow(i + 2);
+    }
   }
 }
 
@@ -3550,18 +3615,27 @@ function getSuperMessages_(ss, data) {
   cleanupSuperMessages_(sheet);
   const target = String(data.to || "").trim().toLowerCase();
   const rows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues() : [];
+  const map = superMessageHeaderMap_(sheet);
+  const value = (row, header) => {
+    const index = map[header];
+    return index === undefined ? "" : row[index];
+  };
   const messages = rows
-    .filter(r => r[0] && (!target || String(r[3] || "").trim().toLowerCase() === target))
+    .filter(r => value(r, "id") && (!target || String(value(r, "to") || "").trim().toLowerCase() === target))
     .map(r => ({
-      id: String(r[0] || ""),
-      createdAt: r[1] instanceof Date ? Utilities.formatDate(r[1], "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss") : String(r[1] || ""),
-      from: String(r[2] || ""),
-      to: String(r[3] || ""),
-      toName: String(r[4] || ""),
-      message: String(r[5] || ""),
-      reply: String(r[6] || ""),
-      replyAt: r[7] instanceof Date ? Utilities.formatDate(r[7], "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss") : String(r[7] || ""),
-      status: String(r[8] || "open")
+      id: String(value(r, "id") || ""),
+      createdAt: value(r, "createdAt") instanceof Date ? Utilities.formatDate(value(r, "createdAt"), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss") : String(value(r, "createdAt") || ""),
+      from: String(value(r, "from") || ""),
+      to: String(value(r, "to") || ""),
+      toName: String(value(r, "toName") || ""),
+      message: String(value(r, "message") || ""),
+      reply: String(value(r, "reply") || ""),
+      replyAt: value(r, "replyAt") instanceof Date ? Utilities.formatDate(value(r, "replyAt"), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss") : String(value(r, "replyAt") || ""),
+      status: String(value(r, "status") || "open"),
+      imageUrl: String(value(r, "imageUrl") || ""),
+      imageFileUrl: value(r, "imageFileId") ? "https://drive.google.com/file/d/" + encodeURIComponent(String(value(r, "imageFileId"))) + "/view" : "",
+      imageName: String(value(r, "imageName") || ""),
+      imageMime: String(value(r, "imageMime") || "")
     }))
     .reverse();
   return { success:true, messages };
@@ -3569,23 +3643,32 @@ function getSuperMessages_(ss, data) {
 
 function sendSuperMessage_(ss, data) {
   const message = String(data.message || "").trim();
-  if (!message) return { success:false, error:"empty message" };
+  let imageMeta = {};
+  try {
+    imageMeta = saveSuperMessageImage_(data.image);
+  } catch (e) {
+    return { success:false, error:"image upload failed", detail:String(e) };
+  }
+  if (!message && !imageMeta.imageUrl) return { success:false, error:"empty message" };
   const sheet = getSuperMessagesSheet_(ss);
   cleanupSuperMessages_(sheet);
   const now = new Date();
   const id = Utilities.getUuid();
-  sheet.appendRow([
-    id,
-    now,
-    String(data.from || "סופר אדמין"),
-    String(data.to || "or"),
-    String(data.toName || "אור מוסה"),
-    message,
-    "",
-    "",
-    "open"
-  ]);
-  return { success:true, id };
+  const headers = superMessageHeaders_();
+  const row = headers.map(header => {
+    if (header === "id") return id;
+    if (header === "createdAt") return now;
+    if (header === "from") return String(data.from || "סופר אדמין");
+    if (header === "to") return String(data.to || "or");
+    if (header === "toName") return String(data.toName || "אור מוסה");
+    if (header === "message") return message;
+    if (header === "reply") return "";
+    if (header === "replyAt") return "";
+    if (header === "status") return "open";
+    return imageMeta[header] || "";
+  });
+  sheet.appendRow(row);
+  return { success:true, id, ...imageMeta };
 }
 
 function replySuperMessage_(ss, data) {

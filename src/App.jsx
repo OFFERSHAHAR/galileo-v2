@@ -1328,10 +1328,65 @@ function LicensesTab({C2, inp2, showMsg}) {
   );
 }
 
+const SUPER_MESSAGE_IMAGE_MAX_SIDE = 1280;
+const SUPER_MESSAGE_IMAGE_QUALITY = 0.78;
+
+function superMessageImageSrc(msg = {}) {
+  if (msg.imageUrl) return msg.imageUrl;
+  if (msg.imageData) return `data:${msg.imageMime || "image/jpeg"};base64,${msg.imageData}`;
+  return "";
+}
+
+function prepareSuperMessageImage(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+    if (!String(file.type || "").startsWith("image/")) {
+      reject(new Error("not image"));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, SUPER_MESSAGE_IMAGE_MAX_SIDE / Math.max(img.width, img.height));
+        const width = Math.max(1, Math.round(img.width * scale));
+        const height = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", SUPER_MESSAGE_IMAGE_QUALITY);
+        URL.revokeObjectURL(url);
+        const name = `${String(file.name || "super-message-image").replace(/\.[^.]+$/, "")}.jpg`;
+        resolve({
+          name,
+          mimeType: "image/jpeg",
+          data: dataUrl.split(",")[1] || "",
+          previewUrl: dataUrl
+        });
+      } catch (e) {
+        URL.revokeObjectURL(url);
+        reject(e);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("image load failed"));
+    };
+    img.src = url;
+  });
+}
+
 function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
+  const [imageDraft, setImageDraft] = useState(null);
   const [loading, setLoading] = useState(false);
+  const imageInputRef = useRef(null);
 
   const loadMessages = async () => {
     setLoading(true);
@@ -1342,10 +1397,25 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
 
   useEffect(() => { loadMessages(); }, []);
 
+  const chooseImage = async (file) => {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const image = await prepareSuperMessageImage(file);
+      setImageDraft(image);
+      showMsg("תמונה צורפה");
+    } catch (e) {
+      showMsg("בחירת התמונה נכשלה");
+    } finally {
+      setLoading(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  };
+
   const sendMessage = async () => {
     const message = draft.trim();
-    if (!message) {
-      showMsg("כתוב הודעה לפני שליחה");
+    if (!message && !imageDraft) {
+      showMsg("כתוב הודעה או צרף תמונה לפני שליחה");
       return;
     }
     setLoading(true);
@@ -1353,11 +1423,16 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
       from: "סופר אדמין",
       to: SUPER_MESSAGE_TARGET.username,
       toName: SUPER_MESSAGE_TARGET.name,
-      message
+      message,
+      image: imageDraft ? {
+        name: imageDraft.name,
+        mimeType: imageDraft.mimeType,
+        data: imageDraft.data
+      } : undefined
     });
     let saved = res?.success;
     let fallbackMessage = null;
-    if (!saved && res?.error === "unknown action") {
+    if (!saved && !imageDraft && res?.error === "unknown action") {
       const now = new Date();
       fallbackMessage = {
         id: `local-${now.getTime()}`,
@@ -1388,6 +1463,7 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
     }
     if (saved) {
       setDraft("");
+      setImageDraft(null);
       showMsg("ההודעה נשמרה ונשלחה לאור");
       if (fallbackMessage) setMessages(prev => [fallbackMessage, ...prev]);
       else await loadMessages();
@@ -1403,10 +1479,21 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
         <div style={{fontSize:16,fontWeight:900,color:C2.text,marginBottom:4}}>הודעה לאור מוסה</div>
         <div style={{fontSize:12,fontWeight:800,color:C2.muted,marginBottom:12}}>השורה נשמרת בגליון הסופר־אדמין ונמחקת אוטומטית אחרי שעה</div>
         <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={4} placeholder="כתוב הודעה..." style={{...inp2,resize:"vertical",marginBottom:12}}/>
+        <input ref={imageInputRef} type="file" accept="image/*" onChange={e=>chooseImage(e.target.files?.[0])} style={{display:"none"}}/>
+        {imageDraft&&(
+          <div style={{marginBottom:12,border:`1px solid ${C2.border}`,borderRadius:14,overflow:"hidden",background:"#f5f9ff"}}>
+            <img src={imageDraft.previewUrl} alt="" style={{width:"100%",maxHeight:220,objectFit:"cover",display:"block"}}/>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"8px 10px"}}>
+              <div style={{fontSize:11,fontWeight:900,color:C2.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{imageDraft.name}</div>
+              <Press onClick={()=>setImageDraft(null)} style={{padding:"6px 10px",borderRadius:10,background:"#ffebee",color:C2.red,fontWeight:900,fontSize:11}}>הסר</Press>
+            </div>
+          </div>
+        )}
         <div style={{display:"flex",gap:8}}>
           <Press onClick={sendMessage} style={{flex:1,padding:"13px",borderRadius:14,background:`linear-gradient(135deg,${C2.blue},#42a5f5)`,color:"#fff",fontWeight:900,fontSize:14,textAlign:"center"}}>
             {loading ? "שומר..." : "שלח הודעה"}
           </Press>
+          <Press onClick={()=>imageInputRef.current?.click()} style={{padding:"13px 16px",borderRadius:14,background:"#e3f2fd",color:C2.blue,fontWeight:900,fontSize:14}}>תמונה</Press>
           <Press onClick={loadMessages} style={{padding:"13px 16px",borderRadius:14,background:"#f0f4f8",color:C2.blue,fontWeight:900,fontSize:14}}>רענן</Press>
         </div>
       </div>
@@ -1419,6 +1506,11 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
             <div style={{fontSize:11,fontWeight:800,color:C2.muted}}>{msg.createdAt}</div>
           </div>
           <div style={{fontSize:14,fontWeight:800,color:C2.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{msg.message}</div>
+          {superMessageImageSrc(msg)&&(
+            <a href={msg.imageFileUrl || superMessageImageSrc(msg)} target="_blank" rel="noreferrer" style={{display:"block",marginTop:10,borderRadius:14,overflow:"hidden",border:`1px solid ${C2.border}`,background:"#f5f9ff"}}>
+              <img src={superMessageImageSrc(msg)} alt="" style={{width:"100%",maxHeight:220,objectFit:"cover",display:"block"}}/>
+            </a>
+          )}
           {msg.reply ? (
             <div style={{marginTop:10,background:"#e8f5e9",borderRadius:12,padding:10,color:C2.green,fontSize:13,fontWeight:800,lineHeight:1.5}}>
               תשובת אור: {msg.reply}
@@ -1522,6 +1614,11 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
         {active.map(msg=>(
           <div key={msg.id} style={{padding:12,borderRadius:14,background:"#f5f9ff",border:"1px solid #d7e6f7",marginBottom:10}}>
             <div style={{fontSize:13,fontWeight:900,color:C.text,lineHeight:1.55,whiteSpace:"pre-wrap",marginBottom:10}}>{msg.message}</div>
+            {superMessageImageSrc(msg)&&(
+              <a href={msg.imageFileUrl || superMessageImageSrc(msg)} target="_blank" rel="noreferrer" style={{display:"block",marginBottom:10,borderRadius:14,overflow:"hidden",border:"1px solid #d7e6f7",background:"#fff"}}>
+                <img src={superMessageImageSrc(msg)} alt="" style={{width:"100%",maxHeight:260,objectFit:"cover",display:"block"}}/>
+              </a>
+            )}
             <textarea value={drafts[msg.id]||""} onChange={e=>setDrafts(x=>({...x,[msg.id]:e.target.value}))} placeholder="כתוב תשובה..." rows={2} style={{width:"100%",border:"1px solid #d7e6f7",borderRadius:12,padding:10,fontSize:13,fontFamily:"inherit",resize:"none",marginBottom:8}}/>
             <Press onClick={()=>reply(msg)} style={{padding:"10px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center"}}>שלח תשובה</Press>
           </div>
