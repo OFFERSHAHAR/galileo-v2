@@ -1,4 +1,5 @@
 import { Fragment, useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 
 const DEMO_USERS = [];
 const DEMO_CLIENTS = [];
@@ -1636,7 +1637,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
         חיבור הודעות לא זמין בסקריפט הפרוס
       </div>
     )}
-    {showPanel&&<div style={{position:"fixed",inset:0,zIndex:1200,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 12px calc(92px + env(safe-area-inset-bottom, 0px))",pointerEvents:"none"}}>
+    {showPanel&&typeof document !== "undefined"&&createPortal(<div style={{position:"fixed",inset:0,zIndex:1200,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 12px calc(92px + env(safe-area-inset-bottom, 0px))",pointerEvents:"none"}}>
       <div style={{width:"100%",maxWidth:430,maxHeight:"min(72vh, 560px)",background:"rgba(255,255,255,0.97)",border:`2px solid ${C.blue}`,borderRadius:22,boxShadow:"0 24px 80px rgba(15,23,42,0.24)",overflow:"hidden",pointerEvents:"auto",touchAction:"pan-y"}}>
       <div style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#e3f2fd"}}>
         <div style={{fontWeight:900,fontSize:14,color:C.text}}>הודעות מסופר־אדמין</div>
@@ -1649,7 +1650,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
         {activeMessageRows}
       </div>}
       </div>
-    </div>}
+    </div>, document.body)}
     </>
   );
 }
