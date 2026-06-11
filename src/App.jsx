@@ -289,7 +289,7 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
-const APP_BUILD_ID = "20260612-login-update-nonblocking-1";
+const APP_BUILD_ID = "20260612-bulk-whatsapp-toggle-1";
 const APP_VERSION_URL = "/version.json";
 const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
 const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
@@ -2563,6 +2563,17 @@ useEffect(() => {
       return [...next];
     });
     showToast(wasDisabled ? "שליחת ווצאפ הופעלה ללקוח" : "שליחת ווצאפ בוטלה ללקוח");
+    haptic("medium");
+  };
+  const setWhatsAppForClients = (values = [], disabled = true) => {
+    const keys = [...new Set((values || []).flatMap(value => whatsAppClientKeys(value)))];
+    if (!keys.length) return;
+    setWaDisabledClients(prev => {
+      const next = new Set(prev);
+      keys.forEach(key => disabled ? next.add(key) : next.delete(key));
+      return [...next];
+    });
+    showToast(disabled ? "שליחת ווצאפ בוטלה לכל הלקוחות המשויכים" : "שליחת ווצאפ הופעלה לכל הלקוחות המשויכים");
     haptic("medium");
   };
   const WhatsAppClientToggle = ({client: clientValue, compact=false}) => {
@@ -5165,6 +5176,9 @@ useEffect(() => {
         .map((task, sourceIndex)=>({task, sourceIndex, done:isDailyTaskDone(task)}))
         .sort((a,b)=>Number(a.done)-Number(b.done) || a.sourceIndex-b.sourceIndex)
         .map(x=>x.task);
+    const dailyWhatsAppClients = displayDayTasks.map(t=>t.client).filter(Boolean);
+    const allDailyWhatsAppDisabled = dailyWhatsAppClients.length > 0 && dailyWhatsAppClients.every(clientName => isWhatsAppDisabledForClient(clientName));
+    const toggleDailyWhatsAppClients = () => setWhatsAppForClients(dailyWhatsAppClients, !allDailyWhatsAppDisabled);
     const dailySupplyTasks = orderedDayTasks.filter(t=>explicitSupplyClients.has(normalizeName(t.client)) && isSupplyDueForDate(t.client, dailyDate));
     const hasTaskChanges = orderedDayTasks.some(t => {
       const lastLog = t.changeLog?.[t.changeLog.length - 1];
@@ -5583,9 +5597,12 @@ useEffect(() => {
             <div><div style={{fontWeight:800,fontSize:15,color:C.blue}}>{isActionLoading("openManualReport")?"⏳ פותח דוח...":"+ פתח דוח חדש"}</div><div style={{fontSize:12,color:C.muted}}>דוח ידני — לקוח מכל הרשימה</div></div>
           </Press>}
           {canSubOperatorReport&&hasSharedOrderForSub&&dayTasks.length>0&&(
-            <div style={{display:"flex",justifyContent:"flex-start",alignItems:"center",margin:"-4px 0 14px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,margin:"-4px 0 14px"}}>
               <Press onClick={()=>{setAllDailyCardsCollapsed(v=>!v);haptic("medium");}} style={{padding:"9px 15px",borderRadius:12,background:allDailyCardsCollapsed?"#fff8e1":"#e3f2fd",color:allDailyCardsCollapsed?C.orange:C.blue,fontWeight:900,fontSize:12,border:`2px solid ${allDailyCardsCollapsed?"#ffe082":C.lightBlue}`,boxShadow:"0 8px 18px rgba(37,99,235,0.08)"}}>
                 {allDailyCardsCollapsed?"בטל":"כווץ"}
+              </Press>
+              <Press onClick={toggleDailyWhatsAppClients} style={{padding:"9px 13px",borderRadius:12,background:allDailyWhatsAppDisabled?"#ffebee":"#e8f5e9",color:allDailyWhatsAppDisabled?C.red:C.green,fontWeight:900,fontSize:12,border:`2px solid ${allDailyWhatsAppDisabled?"rgba(185,28,28,0.18)":"#c8e6c9"}`,boxShadow:"0 8px 18px rgba(21,128,61,0.08)",whiteSpace:"nowrap"}}>
+                {allDailyWhatsAppDisabled?"ווצאפ כבוי לכולם":"ווצאפ פעיל לכולם"}
               </Press>
             </div>
           )}
