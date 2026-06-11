@@ -1564,7 +1564,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
     if (res?.messages) {
       const nextMessages = res.messages.filter(isSuperMessageForTarget);
       setMessages(nextMessages);
-      if (nextMessages.some(m => !m.reply)) setPanelVisible(true);
+      if (!nextMessages.some(m => !m.reply)) setPanelVisible(false);
     } else if (res?.error) {
       setFetchError(String(res.error));
     }
@@ -1624,8 +1624,8 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
         חיבור הודעות לא זמין בסקריפט הפרוס
       </div>
     )}
-    {showPanel&&<div style={{position:"fixed",inset:0,zIndex:1200,background:"rgba(15,23,42,0.38)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)"}}>
-      <div style={{width:"100%",maxWidth:430,background:"rgba(255,255,255,0.96)",border:`2px solid ${C.blue}`,borderRadius:22,boxShadow:"0 24px 80px rgba(15,23,42,0.26)",overflow:"hidden"}}>
+    {showPanel&&<div style={{position:"fixed",inset:0,zIndex:1200,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 12px calc(92px + env(safe-area-inset-bottom, 0px))",pointerEvents:"none"}}>
+      <div style={{width:"100%",maxWidth:430,maxHeight:"min(72vh, 560px)",background:"rgba(255,255,255,0.97)",border:`2px solid ${C.blue}`,borderRadius:22,boxShadow:"0 24px 80px rgba(15,23,42,0.24)",overflow:"hidden",pointerEvents:"auto",touchAction:"pan-y"}}>
       <div style={{padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#e3f2fd"}}>
         <div style={{fontWeight:900,fontSize:14,color:C.text}}>הודעות מסופר־אדמין</div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -1633,7 +1633,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
           <Press onClick={()=>setPanelVisible(false)} style={{width:30,height:30,borderRadius:99,background:"rgba(255,255,255,0.82)",border:`1px solid ${C.border}`,color:C.muted,fontSize:18,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
         </div>
       </div>
-      {open&&<div style={{padding:12,maxHeight:"58vh",overflowY:"auto"}}>
+      {open&&<div style={{padding:12,maxHeight:"calc(min(72vh, 560px) - 55px)",overflowY:"auto",WebkitOverflowScrolling:"touch",overscrollBehavior:"contain",touchAction:"pan-y"}}>
         {active.map(msg=>(
           <div key={msg.id} style={{padding:12,borderRadius:14,background:"#f5f9ff",border:"1px solid #d7e6f7",marginBottom:10}}>
             <div style={{fontSize:13,fontWeight:900,color:C.text,lineHeight:1.55,whiteSpace:"pre-wrap",marginBottom:10}}>{msg.message}</div>
