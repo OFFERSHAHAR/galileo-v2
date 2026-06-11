@@ -5628,27 +5628,31 @@ useEffect(() => {
                   onPointerUp={()=>stopClientLongPress(t.client)}
                   onPointerLeave={()=>stopClientLongPress(t.client)}
                   onClick={()=>canSubOperatorReport&&!operatorEditOrder&&openDoneReportEditor(t)}
-                  style={{...card({marginBottom:8,opacity:0.82,border:"2px solid #c8e6c9",padding:"10px 12px",display:"flex",alignItems:"center",gap:10,background:operatorEditOrder?"#fffde7":"#fff"})}}
+                  style={{...card({marginBottom:8,opacity:0.82,border:"2px solid #c8e6c9",padding:"10px 12px",display:"grid",gridTemplateColumns:"34px minmax(0,1fr) 34px",gridTemplateAreas:'"expand body status" "actions actions actions"',alignItems:"center",columnGap:10,rowGap:8,background:operatorEditOrder?"#fffde7":"#fff",direction:"ltr"})}}
                 >
-                  <div style={{width:30,height:30,borderRadius:"50%",background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",color:C.green,fontWeight:900,flexShrink:0}}>✓</div>
-                  <div style={{flex:1,minWidth:0,textAlign:"right"}}>
+                  <div style={{gridArea:"status",width:30,height:30,borderRadius:"50%",background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",color:C.green,fontWeight:900,justifySelf:"end",direction:"rtl"}}>✓</div>
+                  <div style={{gridArea:"body",minWidth:0,textAlign:"right",direction:"rtl"}}>
                     <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start"}}>
-                      <div style={{fontWeight:900,fontSize:14,color:C.text,textDecoration:"line-through",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.client.split(" - ")[0]}</div>
+                      <div style={{fontWeight:900,fontSize:14,color:C.text,textDecoration:"line-through",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",minWidth:0,maxWidth:"100%"}}>{t.client.split(" - ")[0]}</div>
                       <WhatsAppClientToggle client={t.client} compact/>
                     </div>
                     {hasFreeClientTasks&&<div style={{fontWeight:900,fontSize:15,color:C.blue,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>משימה חופשית</div>}
                     {clientAddress(t.client)&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{clientAddress(t.client)}</div>}
                   </div>
-                  <Badge label="בוצע" col={C.green}/>
-                  {canSubOperatorReport&&<Press onClick={(e)=>{e.stopPropagation();openDoneReportEditor(t);}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12}}>ערוך</Press>}
-                  <Press onClick={(e)=>{e.stopPropagation();forgetCompletedReport(dailyDate,t.client);setOpenDoneTasks(x=>({...x,[doneKey]:true}));showToast("הכיווץ בוטל");haptic("medium");}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#ffebee",color:C.red,fontWeight:900,fontSize:12}}>בטל כיווץ</Press>
-                  {!isSubOperator&&operatorEditOrder&&(
-                    <div style={{display:"flex",gap:4}}>
-                      <Press onClick={()=>moveDraftItem(i, Math.max(0, i-1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↑</Press>
-                      <Press onClick={()=>moveDraftItem(i, Math.min(dayTasks.length-1, i+1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↓</Press>
+                  <div style={{gridArea:"actions",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap",minWidth:0,direction:"rtl"}}>
+                    <Badge label="בוצע" col={C.green}/>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start",direction:"rtl"}}>
+                      {canSubOperatorReport&&<Press onClick={(e)=>{e.stopPropagation();openDoneReportEditor(t);}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12}}>ערוך</Press>}
+                      <Press onClick={(e)=>{e.stopPropagation();forgetCompletedReport(dailyDate,t.client);setOpenDoneTasks(x=>({...x,[doneKey]:true}));showToast("הכיווץ בוטל");haptic("medium");}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#ffebee",color:C.red,fontWeight:900,fontSize:12}}>בטל כיווץ</Press>
+                      {!isSubOperator&&operatorEditOrder&&(
+                        <div style={{display:"flex",gap:4}}>
+                          <Press onClick={()=>moveDraftItem(i, Math.max(0, i-1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↑</Press>
+                          <Press onClick={()=>moveDraftItem(i, Math.min(dayTasks.length-1, i+1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↓</Press>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <Press onClick={(e)=>{e.stopPropagation();setOpenDoneTasks(x=>({...x,[doneKey]:true}));haptic();}} style={{width:34,height:34,borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  </div>
+                  <Press onClick={(e)=>{e.stopPropagation();setOpenDoneTasks(x=>({...x,[doneKey]:true}));haptic();}} style={{gridArea:"expand",width:34,height:34,borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",justifySelf:"start"}}>
                     ▾
                   </Press>
                 </div>
