@@ -1610,6 +1610,41 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
   if (!isTarget) return null;
   const active = messages.filter(m=>!m.reply);
   const showPanel = showHomeCue && panelVisible && active.length > 0;
+  const activeMessageRows = active.map(msg=>(
+    <div key={msg.id} style={{padding:12,borderRadius:14,background:"#f5f9ff",border:"1px solid #d7e6f7",marginBottom:10}}>
+      <div style={{fontSize:13,fontWeight:900,color:C.text,lineHeight:1.55,whiteSpace:"pre-wrap",marginBottom:10}}>{msg.message}</div>
+      {superMessageImageSrc(msg)&&(
+        <a href={msg.imageFileUrl || superMessageImageSrc(msg)} target="_blank" rel="noreferrer" style={{display:"block",marginBottom:10,borderRadius:14,overflow:"hidden",border:"1px solid #d7e6f7",background:"#fff"}}>
+          <img src={superMessageImageSrc(msg)} alt="" style={{width:"100%",maxHeight:300,objectFit:"contain",display:"block",background:"#fff"}}/>
+        </a>
+      )}
+      <textarea value={drafts[msg.id]||""} onChange={e=>setDrafts(x=>({...x,[msg.id]:e.target.value}))} placeholder="כתוב תשובה..." rows={2} style={{width:"100%",border:"1px solid #d7e6f7",borderRadius:12,padding:10,fontSize:13,fontFamily:"inherit",resize:"none",marginBottom:8}}/>
+      <Press onClick={()=>reply(msg)} style={{padding:"10px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center"}}>שלח תשובה</Press>
+    </div>
+  ));
+
+  if (inline && showHomeCue) {
+    return (
+      <>
+        {active.length>0&&(
+          <div style={{flexBasis:"100%",width:"100%",marginTop:12,background:"rgba(255,255,255,0.92)",border:`2px solid ${C.blue}`,borderRadius:18,boxShadow:"0 14px 34px rgba(15,23,42,0.14)",overflow:"hidden"}}>
+            <div style={{padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"#e3f2fd"}}>
+              <div style={{fontWeight:900,fontSize:13,color:C.text}}>הודעות מסופר־אדמין</div>
+              <div style={{background:C.red,color:"#fff",borderRadius:99,padding:"3px 9px",fontSize:11,fontWeight:900}}>{active.length}</div>
+            </div>
+            <div style={{padding:10}}>
+              {activeMessageRows}
+            </div>
+          </div>
+        )}
+        {fetchError&&(
+          <div style={{flexBasis:"100%",width:"100%",marginTop:10,padding:"7px 10px",borderRadius:12,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontSize:11,fontWeight:900}}>
+            חיבור הודעות לא זמין בסקריפט הפרוס
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <>
@@ -1634,18 +1669,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
         </div>
       </div>
       {open&&<div style={{padding:12,maxHeight:"calc(min(72vh, 560px) - 55px)",overflowY:"auto",WebkitOverflowScrolling:"touch",overscrollBehavior:"contain",touchAction:"pan-y"}}>
-        {active.map(msg=>(
-          <div key={msg.id} style={{padding:12,borderRadius:14,background:"#f5f9ff",border:"1px solid #d7e6f7",marginBottom:10}}>
-            <div style={{fontSize:13,fontWeight:900,color:C.text,lineHeight:1.55,whiteSpace:"pre-wrap",marginBottom:10}}>{msg.message}</div>
-            {superMessageImageSrc(msg)&&(
-              <a href={msg.imageFileUrl || superMessageImageSrc(msg)} target="_blank" rel="noreferrer" style={{display:"block",marginBottom:10,borderRadius:14,overflow:"hidden",border:"1px solid #d7e6f7",background:"#fff"}}>
-                <img src={superMessageImageSrc(msg)} alt="" style={{width:"100%",maxHeight:300,objectFit:"contain",display:"block",background:"#fff"}}/>
-              </a>
-            )}
-            <textarea value={drafts[msg.id]||""} onChange={e=>setDrafts(x=>({...x,[msg.id]:e.target.value}))} placeholder="כתוב תשובה..." rows={2} style={{width:"100%",border:"1px solid #d7e6f7",borderRadius:12,padding:10,fontSize:13,fontFamily:"inherit",resize:"none",marginBottom:8}}/>
-            <Press onClick={()=>reply(msg)} style={{padding:"10px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center"}}>שלח תשובה</Press>
-          </div>
-        ))}
+        {activeMessageRows}
       </div>}
       </div>
     </div>}
