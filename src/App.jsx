@@ -1623,29 +1623,6 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
     </div>
   ));
 
-  if (inline && showHomeCue) {
-    return (
-      <>
-        {active.length>0&&(
-          <div style={{flexBasis:"100%",width:"100%",marginTop:12,background:"rgba(255,255,255,0.92)",border:`2px solid ${C.blue}`,borderRadius:18,boxShadow:"0 14px 34px rgba(15,23,42,0.14)",overflow:"hidden"}}>
-            <div style={{padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"#e3f2fd"}}>
-              <div style={{fontWeight:900,fontSize:13,color:C.text}}>הודעות מסופר־אדמין</div>
-              <div style={{background:C.red,color:"#fff",borderRadius:99,padding:"3px 9px",fontSize:11,fontWeight:900}}>{active.length}</div>
-            </div>
-            <div style={{padding:10}}>
-              {activeMessageRows}
-            </div>
-          </div>
-        )}
-        {fetchError&&(
-          <div style={{flexBasis:"100%",width:"100%",marginTop:10,padding:"7px 10px",borderRadius:12,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontSize:11,fontWeight:900}}>
-            חיבור הודעות לא זמין בסקריפט הפרוס
-          </div>
-        )}
-      </>
-    );
-  }
-
   return (
     <>
     {showHomeCue&&(
