@@ -3527,7 +3527,7 @@ function getUnassignedClients_(ss) {
 }
 
 function superMessageHeaders_() {
-  return ["id","createdAt","from","to","toName","message","reply","replyAt","status","imageUrl","imageFileId","imageName","imageMime","imageData"];
+  return ["id","createdAt","from","to","toName","message","reply","replyAt","status","imageUrl","imageFileId","imageName","imageMime","imageData","replyImageUrl","replyImageFileId","replyImageName","replyImageMime","replyImageData"];
 }
 
 function ensureSuperMessageColumns_(sheet) {
@@ -3599,12 +3599,14 @@ function cleanupSuperMessages_(sheet) {
   const rows = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
   const map = superMessageHeaderMap_(sheet);
   const imageFileIdIndex = map.imageFileId;
+  const replyImageFileIdIndex = map.replyImageFileId;
   const expireAt = Date.now() - 60 * 60 * 1000;
   for (let i = rows.length - 1; i >= 0; i--) {
     const createdAt = rows[i][1];
     const createdTime = createdAt instanceof Date ? createdAt.getTime() : new Date(String(createdAt || "")).getTime();
     if (createdTime && createdTime < expireAt) {
       if (imageFileIdIndex !== undefined) deleteSuperMessageImage_(rows[i][imageFileIdIndex]);
+      if (replyImageFileIdIndex !== undefined) deleteSuperMessageImage_(rows[i][replyImageFileIdIndex]);
       sheet.deleteRow(i + 2);
     }
   }
@@ -3636,7 +3638,12 @@ function getSuperMessages_(ss, data) {
       imageFileUrl: value(r, "imageFileId") ? "https://drive.google.com/file/d/" + encodeURIComponent(String(value(r, "imageFileId"))) + "/view" : "",
       imageName: String(value(r, "imageName") || ""),
       imageMime: String(value(r, "imageMime") || ""),
-      imageData: String(value(r, "imageData") || "")
+      imageData: String(value(r, "imageData") || ""),
+      replyImageUrl: String(value(r, "replyImageUrl") || ""),
+      replyImageFileUrl: value(r, "replyImageFileId") ? "https://drive.google.com/file/d/" + encodeURIComponent(String(value(r, "replyImageFileId"))) + "/view" : "",
+      replyImageName: String(value(r, "replyImageName") || ""),
+      replyImageMime: String(value(r, "replyImageMime") || ""),
+      replyImageData: String(value(r, "replyImageData") || "")
     }))
     .reverse();
   return { success:true, messages };
@@ -3685,15 +3692,42 @@ function sendSuperMessage_(ss, data) {
 function replySuperMessage_(ss, data) {
   const id = String(data.id || "").trim();
   const reply = String(data.reply || "").trim();
-  if (!id || !reply) return { success:false, error:"missing data" };
+  let replyImageMeta = {};
+  try {
+    replyImageMeta = saveSuperMessageImage_(data.replyImage);
+  } catch (e) {
+    const image = data.replyImage || {};
+    const fallbackData = String(image.fallbackData || image.data || image.base64 || "").trim().replace(/^data:[^,]+,/, "");
+    if (fallbackData) {
+      replyImageMeta = {
+        imageData: fallbackData,
+        imageName: String(image.name || "or-reply-image.jpg").replace(/[\\/:*?"<>|]/g, "_").slice(0, 90),
+        imageMime: String(image.mimeType || "image/jpeg").trim()
+      };
+    } else {
+      return { success:false, error:"reply image upload failed", detail:String(e) };
+    }
+  }
+  if (!id || (!reply && !replyImageMeta.imageUrl && !replyImageMeta.imageData)) return { success:false, error:"missing data" };
   const sheet = getSuperMessagesSheet_(ss);
   cleanupSuperMessages_(sheet);
   const rows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues() : [];
+  const map = superMessageHeaderMap_(sheet);
+  const setByHeader = (rowNumber, header, value) => {
+    const index = map[header];
+    if (index !== undefined) sheet.getRange(rowNumber, index + 1).setValue(value);
+  };
   for (let i = 0; i < rows.length; i++) {
     if (String(rows[i][0] || "") === id) {
-      sheet.getRange(i + 2, 7).setValue(reply);
-      sheet.getRange(i + 2, 8).setValue(new Date());
-      sheet.getRange(i + 2, 9).setValue("replied");
+      const rowNumber = i + 2;
+      setByHeader(rowNumber, "reply", reply || (replyImageMeta.imageUrl || replyImageMeta.imageData ? "תמונה" : ""));
+      setByHeader(rowNumber, "replyAt", new Date());
+      setByHeader(rowNumber, "status", "replied");
+      setByHeader(rowNumber, "replyImageUrl", replyImageMeta.imageUrl || "");
+      setByHeader(rowNumber, "replyImageFileId", replyImageMeta.imageFileId || "");
+      setByHeader(rowNumber, "replyImageName", replyImageMeta.imageName || "");
+      setByHeader(rowNumber, "replyImageMime", replyImageMeta.imageMime || "");
+      setByHeader(rowNumber, "replyImageData", replyImageMeta.imageData || "");
       return { success:true };
     }
   }

@@ -1340,6 +1340,12 @@ function superMessageImageSrc(msg = {}) {
   return "";
 }
 
+function superMessageReplyImageSrc(msg = {}) {
+  if (msg.replyImageUrl) return msg.replyImageUrl;
+  if (msg.replyImageData) return `data:${msg.replyImageMime || "image/jpeg"};base64,${msg.replyImageData}`;
+  return "";
+}
+
 function prepareSuperMessageImage(file) {
   return new Promise((resolve, reject) => {
     if (!file) {
@@ -1538,6 +1544,11 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
           {msg.reply ? (
             <div style={{marginTop:10,background:"#e8f5e9",borderRadius:12,padding:10,color:C2.green,fontSize:13,fontWeight:800,lineHeight:1.5}}>
               תשובת אור: {msg.reply}
+              {superMessageReplyImageSrc(msg)&&(
+                <a href={msg.replyImageFileUrl || superMessageReplyImageSrc(msg)} target="_blank" rel="noreferrer" style={{display:"block",marginTop:8,borderRadius:12,overflow:"hidden",border:"1px solid #c8e6c9",background:"#fff"}}>
+                  <img src={superMessageReplyImageSrc(msg)} alt="" style={{width:"100%",maxHeight:240,objectFit:"contain",display:"block",background:"#fff"}}/>
+                </a>
+              )}
               {msg.replyAt&&<div style={{fontSize:10,color:C2.muted,marginTop:4}}>{msg.replyAt}</div>}
             </div>
           ) : (
@@ -1552,6 +1563,7 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
 function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false }) {
   const [messages, setMessages] = useState([]);
   const [drafts, setDrafts] = useState({});
+  const [replyImages, setReplyImages] = useState({});
   const [open, setOpen] = useState(true);
   const [panelVisible, setPanelVisible] = useState(false);
   const [fetchError, setFetchError] = useState("");
@@ -1578,17 +1590,42 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
     return () => clearInterval(timer);
   }, [isTarget]);
 
+  const chooseReplyImage = async (msgId, file, input) => {
+    if (!file) return;
+    try {
+      const image = await prepareSuperMessageImage(file);
+      setReplyImages(x => ({...x, [msgId]: image}));
+      showToast?.("תמונה צורפה");
+    } catch (e) {
+      showToast?.("בחירת התמונה נכשלה");
+    } finally {
+      if (input) input.value = "";
+    }
+  };
+
   const reply = async (msg) => {
     const text = String(drafts[msg.id] || "").trim();
-    if (!text) {
-      showToast?.("כתוב תשובה לפני שליחה");
+    const image = replyImages[msg.id] || null;
+    if (!text && !image) {
+      showToast?.("כתוב תשובה או צרף תמונה לפני שליחה");
       return;
     }
     setPanelVisible(false);
     setDrafts(x=>({...x,[msg.id]:""}));
+    setReplyImages(x=>({...x,[msg.id]:null}));
     setMessages(x=>x.filter(m=>m.id!==msg.id));
     showToast?.("התשובה נשלחת ברקע");
-    mgmtCall("replySuperMessage", { id: msg.id, to: msg.to || SUPER_MESSAGE_TARGET.username, reply: text })
+    mgmtCall("replySuperMessage", {
+      id: msg.id,
+      to: msg.to || SUPER_MESSAGE_TARGET.username,
+      reply: text || (image ? "תמונה" : ""),
+      replyImage: image ? {
+        name: image.name,
+        mimeType: image.mimeType,
+        data: image.data,
+        fallbackData: image.fallbackData
+      } : undefined
+    })
       .then(res => {
         if (res?.success) {
           showToast?.("התשובה נשמרה");
@@ -1597,6 +1634,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
           setMessages(x=>[msg, ...x.filter(m=>m.id!==msg.id)]);
           setPanelVisible(true);
           setDrafts(x=>({...x,[msg.id]:text}));
+          setReplyImages(x=>({...x,[msg.id]:image}));
           showToast?.("שמירת התשובה נכשלה");
         }
       })
@@ -1604,6 +1642,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
         setMessages(x=>[msg, ...x.filter(m=>m.id!==msg.id)]);
         setPanelVisible(true);
         setDrafts(x=>({...x,[msg.id]:text}));
+        setReplyImages(x=>({...x,[msg.id]:image}));
         showToast?.("שמירת התשובה נכשלה");
       });
   };
@@ -1620,7 +1659,26 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
         </a>
       )}
       <textarea value={drafts[msg.id]||""} onChange={e=>setDrafts(x=>({...x,[msg.id]:e.target.value}))} placeholder="כתוב תשובה..." rows={2} style={{width:"100%",border:"1px solid #d7e6f7",borderRadius:12,padding:10,fontSize:13,fontFamily:"inherit",resize:"none",marginBottom:8}}/>
-      <Press onClick={()=>reply(msg)} style={{padding:"10px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center"}}>שלח תשובה</Press>
+      {replyImages[msg.id]?.previewUrl&&(
+        <div style={{marginBottom:8,border:"1px solid #d7e6f7",borderRadius:12,overflow:"hidden",background:"#fff"}}>
+          <img src={replyImages[msg.id].previewUrl} alt="" style={{width:"100%",maxHeight:210,objectFit:"contain",display:"block",background:"#fff"}}/>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"7px 9px"}}>
+            <div style={{fontSize:11,fontWeight:900,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{replyImages[msg.id].name}</div>
+            <Press onClick={()=>setReplyImages(x=>({...x,[msg.id]:null}))} style={{padding:"5px 9px",borderRadius:9,background:"#ffebee",color:C.red,fontSize:11,fontWeight:900}}>הסר</Press>
+          </div>
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1.4fr",gap:8}}>
+        <label style={{padding:"10px",borderRadius:12,background:"#e3f2fd",color:C.blue,fontWeight:900,fontSize:12,textAlign:"center",cursor:"pointer"}}>
+          תמונה
+          <input type="file" accept="image/*" onChange={e=>chooseReplyImage(msg.id, e.target.files?.[0], e.target)} style={{display:"none"}}/>
+        </label>
+        <label style={{padding:"10px",borderRadius:12,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12,textAlign:"center",cursor:"pointer"}}>
+          צלם
+          <input type="file" accept="image/*" capture="environment" onChange={e=>chooseReplyImage(msg.id, e.target.files?.[0], e.target)} style={{display:"none"}}/>
+        </label>
+        <Press onClick={()=>reply(msg)} style={{padding:"10px",borderRadius:12,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center"}}>שלח תשובה</Press>
+      </div>
     </div>
   ));
 
