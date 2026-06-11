@@ -3527,7 +3527,7 @@ function getUnassignedClients_(ss) {
 }
 
 function superMessageHeaders_() {
-  return ["id","createdAt","from","to","toName","message","reply","replyAt","status","imageUrl","imageFileId","imageName","imageMime"];
+  return ["id","createdAt","from","to","toName","message","reply","replyAt","status","imageUrl","imageFileId","imageName","imageMime","imageData"];
 }
 
 function ensureSuperMessageColumns_(sheet) {
@@ -3635,7 +3635,8 @@ function getSuperMessages_(ss, data) {
       imageUrl: String(value(r, "imageUrl") || ""),
       imageFileUrl: value(r, "imageFileId") ? "https://drive.google.com/file/d/" + encodeURIComponent(String(value(r, "imageFileId"))) + "/view" : "",
       imageName: String(value(r, "imageName") || ""),
-      imageMime: String(value(r, "imageMime") || "")
+      imageMime: String(value(r, "imageMime") || ""),
+      imageData: String(value(r, "imageData") || "")
     }))
     .reverse();
   return { success:true, messages };
@@ -3647,9 +3648,19 @@ function sendSuperMessage_(ss, data) {
   try {
     imageMeta = saveSuperMessageImage_(data.image);
   } catch (e) {
-    return { success:false, error:"image upload failed", detail:String(e) };
+    const image = data.image || {};
+    const fallbackData = String(image.fallbackData || image.data || image.base64 || "").trim().replace(/^data:[^,]+,/, "");
+    if (fallbackData) {
+      imageMeta = {
+        imageData: fallbackData,
+        imageName: String(image.name || "super-message-image.jpg").replace(/[\\/:*?"<>|]/g, "_").slice(0, 90),
+        imageMime: String(image.mimeType || "image/jpeg").trim()
+      };
+    } else {
+      return { success:false, error:"image upload failed", detail:String(e) };
+    }
   }
-  if (!message && !imageMeta.imageUrl) return { success:false, error:"empty message" };
+  if (!message && !imageMeta.imageUrl && !imageMeta.imageData) return { success:false, error:"empty message" };
   const sheet = getSuperMessagesSheet_(ss);
   cleanupSuperMessages_(sheet);
   const now = new Date();

@@ -1330,6 +1330,8 @@ function LicensesTab({C2, inp2, showMsg}) {
 
 const SUPER_MESSAGE_IMAGE_MAX_SIDE = 1280;
 const SUPER_MESSAGE_IMAGE_QUALITY = 0.78;
+const SUPER_MESSAGE_IMAGE_FALLBACK_MAX_SIDE = 560;
+const SUPER_MESSAGE_IMAGE_FALLBACK_QUALITY = 0.62;
 
 function superMessageImageSrc(msg = {}) {
   if (msg.imageUrl) return msg.imageUrl;
@@ -1351,21 +1353,32 @@ function prepareSuperMessageImage(file) {
     const img = new Image();
     img.onload = () => {
       try {
-        const scale = Math.min(1, SUPER_MESSAGE_IMAGE_MAX_SIDE / Math.max(img.width, img.height));
-        const width = Math.max(1, Math.round(img.width * scale));
-        const height = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/jpeg", SUPER_MESSAGE_IMAGE_QUALITY);
+        const renderDataUrl = (maxSide, quality) => {
+          const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+          const width = Math.max(1, Math.round(img.width * scale));
+          const height = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          return canvas.toDataURL("image/jpeg", quality);
+        };
+        const dataUrl = renderDataUrl(SUPER_MESSAGE_IMAGE_MAX_SIDE, SUPER_MESSAGE_IMAGE_QUALITY);
+        let fallbackUrl = dataUrl;
+        if (fallbackUrl.length > 45000) {
+          fallbackUrl = renderDataUrl(SUPER_MESSAGE_IMAGE_FALLBACK_MAX_SIDE, SUPER_MESSAGE_IMAGE_FALLBACK_QUALITY);
+        }
+        if (fallbackUrl.length > 45000) {
+          fallbackUrl = renderDataUrl(420, 0.52);
+        }
         URL.revokeObjectURL(url);
         const name = `${String(file.name || "super-message-image").replace(/\.[^.]+$/, "")}.jpg`;
         resolve({
           name,
           mimeType: "image/jpeg",
           data: dataUrl.split(",")[1] || "",
+          fallbackData: fallbackUrl.split(",")[1] || "",
           previewUrl: dataUrl
         });
       } catch (e) {
@@ -1427,12 +1440,14 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
       image: imageDraft ? {
         name: imageDraft.name,
         mimeType: imageDraft.mimeType,
-        data: imageDraft.data
+        data: imageDraft.data,
+        fallbackData: imageDraft.fallbackData
       } : undefined
     });
     let saved = res?.success;
     let fallbackMessage = null;
-    if (!saved && !imageDraft && res?.error === "unknown action") {
+    const needsImageFallback = !!imageDraft && (!saved || (saved && !res?.imageUrl && !res?.imageFileId && !res?.imageData));
+    if ((!saved && !imageDraft && res?.error === "unknown action") || needsImageFallback) {
       const now = new Date();
       fallbackMessage = {
         id: `local-${now.getTime()}`,
@@ -1440,10 +1455,13 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
         from: "סופר אדמין",
         to: SUPER_MESSAGE_TARGET.username,
         toName: SUPER_MESSAGE_TARGET.name,
-        message,
+        message: message || "תמונה",
         reply: "",
         replyAt: "",
-        status: "open"
+        status: "open",
+        imageData: imageDraft?.fallbackData || "",
+        imageName: imageDraft?.name || "",
+        imageMime: imageDraft?.mimeType || ""
       };
       const fallback = await mgmtCall("appendMgmtRow", {
         sheet: "הודעות",
@@ -1456,7 +1474,12 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
           fallbackMessage.message,
           "",
           "",
-          "open"
+          "open",
+          "",
+          "",
+          fallbackMessage.imageName,
+          fallbackMessage.imageMime,
+          fallbackMessage.imageData
         ]
       });
       saved = fallback?.success;
@@ -1482,7 +1505,7 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
         <input ref={imageInputRef} type="file" accept="image/*" onChange={e=>chooseImage(e.target.files?.[0])} style={{display:"none"}}/>
         {imageDraft&&(
           <div style={{marginBottom:12,border:`1px solid ${C2.border}`,borderRadius:14,overflow:"hidden",background:"#f5f9ff"}}>
-            <img src={imageDraft.previewUrl} alt="" style={{width:"100%",maxHeight:220,objectFit:"cover",display:"block"}}/>
+            <img src={imageDraft.previewUrl} alt="" style={{width:"100%",maxHeight:260,objectFit:"contain",display:"block",background:"#fff"}}/>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:900,color:C2.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{imageDraft.name}</div>
               <Press onClick={()=>setImageDraft(null)} style={{padding:"6px 10px",borderRadius:10,background:"#ffebee",color:C2.red,fontWeight:900,fontSize:11}}>הסר</Press>
@@ -1508,7 +1531,7 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
           <div style={{fontSize:14,fontWeight:800,color:C2.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{msg.message}</div>
           {superMessageImageSrc(msg)&&(
             <a href={msg.imageFileUrl || superMessageImageSrc(msg)} target="_blank" rel="noreferrer" style={{display:"block",marginTop:10,borderRadius:14,overflow:"hidden",border:`1px solid ${C2.border}`,background:"#f5f9ff"}}>
-              <img src={superMessageImageSrc(msg)} alt="" style={{width:"100%",maxHeight:220,objectFit:"cover",display:"block"}}/>
+              <img src={superMessageImageSrc(msg)} alt="" style={{width:"100%",maxHeight:260,objectFit:"contain",display:"block",background:"#fff"}}/>
             </a>
           )}
           {msg.reply ? (
@@ -1616,7 +1639,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
             <div style={{fontSize:13,fontWeight:900,color:C.text,lineHeight:1.55,whiteSpace:"pre-wrap",marginBottom:10}}>{msg.message}</div>
             {superMessageImageSrc(msg)&&(
               <a href={msg.imageFileUrl || superMessageImageSrc(msg)} target="_blank" rel="noreferrer" style={{display:"block",marginBottom:10,borderRadius:14,overflow:"hidden",border:"1px solid #d7e6f7",background:"#fff"}}>
-                <img src={superMessageImageSrc(msg)} alt="" style={{width:"100%",maxHeight:260,objectFit:"cover",display:"block"}}/>
+                <img src={superMessageImageSrc(msg)} alt="" style={{width:"100%",maxHeight:300,objectFit:"contain",display:"block",background:"#fff"}}/>
               </a>
             )}
             <textarea value={drafts[msg.id]||""} onChange={e=>setDrafts(x=>({...x,[msg.id]:e.target.value}))} placeholder="כתוב תשובה..." rows={2} style={{width:"100%",border:"1px solid #d7e6f7",borderRadius:12,padding:10,fontSize:13,fontFamily:"inherit",resize:"none",marginBottom:8}}/>
