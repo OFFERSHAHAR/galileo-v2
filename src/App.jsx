@@ -6,6 +6,7 @@ const DEMO_CLIENTS = [];
 const WA_TEMPLATE_STORAGE_KEY = "galileo_whatsapp_template";
 const WA_POLL_MESSAGE_STORAGE_KEY = "galileo_whatsapp_poll_message";
 const WA_POLL_OPTIONS_STORAGE_KEY = "galileo_whatsapp_poll_options";
+const WA_DISABLED_CLIENTS_STORAGE_KEY = "galileo_whatsapp_disabled_clients";
 const DEFAULT_WA_MESSAGE_TEMPLATE = `*טיפול בריכה הושלם!*
 
 שלום {clientName},
@@ -867,7 +868,7 @@ const sel = {...inp,background:"rgba(226,237,250,0.78)"};
 const card = (extra={}) => ({background:C.card,backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderRadius:22,padding:16,boxShadow:"0 18px 45px rgba(30,64,175,0.12), 0 1px 0 rgba(255,255,255,0.75) inset",border:"1px solid "+C.border,...extra});
 
 function Badge({label,col="#1565c0",bg}) {
-  return <span style={{background:bg||col+"18",color:col,border:`1px solid ${col}33`,borderRadius:99,padding:"3px 11px",fontSize:11,fontWeight:800}}>{label}</span>;
+  return <span style={{minWidth:52,minHeight:24,display:"inline-flex",alignItems:"center",justifyContent:"center",background:bg||col+"18",color:col,border:`1px solid ${col}33`,borderRadius:99,padding:"0 11px",fontSize:11,fontWeight:800,lineHeight:1,whiteSpace:"nowrap"}}>{label}</span>;
 }
 
 function Sec({icon,title,children}) {
@@ -2011,6 +2012,14 @@ export default function App() {
   const [waPollOptionsDraft,setWaPollOptionsDraft] = useState(() => {
     try { return normalizeWaPollOptions(localStorage.getItem(WA_POLL_OPTIONS_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_OPTIONS; }
   });
+  const [waDisabledClients,setWaDisabledClients] = useState(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(WA_DISABLED_CLIENTS_STORAGE_KEY) || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch {
+      return [];
+    }
+  });
   const [clientPlan,setClientPlan] = useState({plan:"",status:""});
   const [allUsers,setAllUsers] = useState(DEMO_USERS);
   const [clients,setClients] = useState(DEMO_CLIENTS);
@@ -2062,6 +2071,12 @@ useEffect(() => {
     JSON.stringify(pending)
   );
 }, [pending]);
+
+useEffect(() => {
+  try {
+    localStorage.setItem(WA_DISABLED_CLIENTS_STORAGE_KEY, JSON.stringify([...new Set(waDisabledClients)]));
+  } catch {}
+}, [waDisabledClients]);
 
 const getPendingReportPayload = (item) => item?.report ? item.report : item;
 const getPendingSupplyUpdate = (item) => item?.report ? item.supplyUpdate : undefined;
@@ -2491,6 +2506,71 @@ useEffect(() => {
   const clientId = (c) => String(c?.clientId || c?.id || c?.["לקוח_ID"] || c?.["מזהה_לקוח"] || "").trim() || stableClientId(c);
   const clientByName = (name) => clients.find(c => normalizeName(c.name) === normalizeName(name));
   const clientIdByName = (name) => clientId(clientByName(name) || {name});
+  const clientRecordFor = (value) => {
+    const raw = typeof value === "object" && value !== null ? value : {name:value};
+    const name = String(raw?.name || raw?.client || value || "").trim();
+    return {...(clientByName(name) || {}), ...raw, name:name || raw?.name || ""};
+  };
+  const whatsAppClientKeys = (value) => {
+    const source = clientRecordFor(value);
+    const name = String(source?.name || source?.client || value || "").trim();
+    const id = String(source?.clientId || source?.id || source?.["לקוח_ID"] || source?.["מזהה_לקוח"] || (name ? clientIdByName(name) : "") || "").trim();
+    return [
+      id && `id:${id}`,
+      name && `name:${normalizeName(name)}`
+    ].filter(Boolean);
+  };
+  const isWhatsAppDisabledForClient = (value) => {
+    const disabled = new Set(waDisabledClients);
+    return whatsAppClientKeys(value).some(key => disabled.has(key));
+  };
+  const toggleWhatsAppForClient = (value) => {
+    const keys = whatsAppClientKeys(value);
+    if (!keys.length) return;
+    const wasDisabled = isWhatsAppDisabledForClient(value);
+    setWaDisabledClients(prev => {
+      const next = new Set(prev);
+      if (wasDisabled) keys.forEach(key => next.delete(key));
+      else keys.forEach(key => next.add(key));
+      return [...next];
+    });
+    showToast(wasDisabled ? "שליחת ווצאפ הופעלה ללקוח" : "שליחת ווצאפ בוטלה ללקוח");
+    haptic("medium");
+  };
+  const WhatsAppClientToggle = ({client: clientValue, compact=false}) => {
+    const disabled = isWhatsAppDisabledForClient(clientValue);
+    return (
+      <span
+        onPointerDown={e=>e.stopPropagation()}
+        onPointerUp={e=>e.stopPropagation()}
+        onClick={e=>e.stopPropagation()}
+        style={{display:"inline-flex",alignItems:"center",height:24,flexShrink:0}}
+        title={disabled ? "שליחת ווצאפ כבויה ללקוח זה" : "שליחת ווצאפ פעילה ללקוח זה"}
+      >
+        <Press
+          onClick={e=>{e.stopPropagation();toggleWhatsAppForClient(clientValue);}}
+          style={{
+            minHeight:compact ? 22 : 24,
+            height:compact ? 22 : 24,
+            display:"inline-flex",
+            alignItems:"center",
+            justifyContent:"center",
+            padding:compact ? "0 8px" : "0 10px",
+            borderRadius:99,
+            border:`1px solid ${disabled ? "rgba(185,28,28,0.22)" : "rgba(21,128,61,0.22)"}`,
+            background:disabled ? "#ffebee" : "#e8f5e9",
+            color:disabled ? C.red : C.green,
+            fontSize:compact ? 10 : 11,
+            fontWeight:900,
+            lineHeight:1,
+            whiteSpace:"nowrap"
+          }}
+        >
+          {disabled ? "ווצאפ כבוי" : "ווצאפ פעיל"}
+        </Press>
+      </span>
+    );
+  };
   const lastReadingForClient = (clientName, id = "") => {
     const wantedId = String(id || clientIdByName(clientName) || "").trim();
     const entries = Object.entries(lastReadings || {});
@@ -4218,6 +4298,10 @@ useEffect(() => {
   };
 
   const sendReportWhatsApp = async (report) => {
+    if (isWhatsAppDisabledForClient(report)) {
+      showToast("ווצאפ כבוי ללקוח - הדוח נשמר ללא הודעה");
+      return true;
+    }
     const phone = normalizeWhatsAppPhone(clientPhone(report.client));
     const message = buildWA(report);
     if (!phone) {
@@ -5547,14 +5631,17 @@ useEffect(() => {
                   style={{...card({marginBottom:8,opacity:0.82,border:"2px solid #c8e6c9",padding:"10px 12px",display:"flex",alignItems:"center",gap:10,background:operatorEditOrder?"#fffde7":"#fff"})}}
                 >
                   <div style={{width:30,height:30,borderRadius:"50%",background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",color:C.green,fontWeight:900,flexShrink:0}}>✓</div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontWeight:900,fontSize:14,color:C.text,textDecoration:"line-through",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.client.split(" - ")[0]}</div>
+                  <div style={{flex:1,minWidth:0,textAlign:"right"}}>
+                    <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start"}}>
+                      <div style={{fontWeight:900,fontSize:14,color:C.text,textDecoration:"line-through",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.client.split(" - ")[0]}</div>
+                      <WhatsAppClientToggle client={t.client} compact/>
+                    </div>
                     {hasFreeClientTasks&&<div style={{fontWeight:900,fontSize:15,color:C.blue,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>משימה חופשית</div>}
                     {clientAddress(t.client)&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{clientAddress(t.client)}</div>}
                   </div>
                   <Badge label="בוצע" col={C.green}/>
-                  {canSubOperatorReport&&<Press onClick={(e)=>{e.stopPropagation();openDoneReportEditor(t);}} style={{padding:"6px 10px",borderRadius:10,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12}}>ערוך</Press>}
-                  <Press onClick={(e)=>{e.stopPropagation();forgetCompletedReport(dailyDate,t.client);setOpenDoneTasks(x=>({...x,[doneKey]:true}));showToast("הכיווץ בוטל");haptic("medium");}} style={{padding:"6px 10px",borderRadius:10,background:"#ffebee",color:C.red,fontWeight:900,fontSize:12}}>בטל כיווץ</Press>
+                  {canSubOperatorReport&&<Press onClick={(e)=>{e.stopPropagation();openDoneReportEditor(t);}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12}}>ערוך</Press>}
+                  <Press onClick={(e)=>{e.stopPropagation();forgetCompletedReport(dailyDate,t.client);setOpenDoneTasks(x=>({...x,[doneKey]:true}));showToast("הכיווץ בוטל");haptic("medium");}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#ffebee",color:C.red,fontWeight:900,fontSize:12}}>בטל כיווץ</Press>
                   {!isSubOperator&&operatorEditOrder&&(
                     <div style={{display:"flex",gap:4}}>
                       <Press onClick={()=>moveDraftItem(i, Math.max(0, i-1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↑</Press>
@@ -5582,23 +5669,26 @@ useEffect(() => {
                 onPointerLeave={()=>stopClientLongPress(t.client)}
                 style={{...card({marginBottom:12,opacity:isDone?0.65:1,border:`2px solid ${operatorEditOrder?"#ffe082":needsAck?"#ff9800":isDone?"#c8e6c9":C.border}`,transition:"all 0.3s",background:operatorEditOrder?"#fffde7":"#fff"})}}
               >
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-                  <div style={{flex:1}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:10}}>
+                  <div style={{flex:1,minWidth:0,textAlign:"right"}}>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:4}}>
                       <div style={{width:40,height:40,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{poolIcon}</div>
-                      <div>
-                        <div style={{fontWeight:900,fontSize:16,color:C.text,textDecoration:isDone?"line-through":"none"}}>{t.client.split(" - ")[0]}</div>
-                        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginTop:2}}>
-                          <span style={{fontSize:10,fontWeight:700,background:primaryPoolType(poolType)==="כלור"?"#e3f2fd":secondaryPoolType(poolType)==="גלישה"?"#e0f7fa":secondaryPoolType(poolType)==="סקימר"?"#e8eaf6":"#e8f5e9",color:primaryPoolType(poolType)==="כלור"?C.blue:secondaryPoolType(poolType)==="גלישה"?"#006064":secondaryPoolType(poolType)==="סקימר"?"#3949ab":C.green,borderRadius:99,padding:"2px 8px"}}>{poolLabel}</span>
-                          {clientAddress(t.client)&&<span style={{fontSize:11,color:C.muted}}>📍 {clientAddress(t.client)}</span>}
+                      <div style={{minWidth:0,textAlign:"right",display:"grid",gap:4,justifyItems:"start"}}>
+                        <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start"}}>
+                          <div style={{fontWeight:900,fontSize:16,color:C.text,textDecoration:isDone?"line-through":"none"}}>{t.client.split(" - ")[0]}</div>
+                          <WhatsAppClientToggle client={t.client} compact/>
+                        </div>
+                        <div style={{minHeight:24,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-start"}}>
+                          <span style={{minHeight:22,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,background:primaryPoolType(poolType)==="כלור"?"#e3f2fd":secondaryPoolType(poolType)==="גלישה"?"#e0f7fa":secondaryPoolType(poolType)==="סקימר"?"#e8eaf6":"#e8f5e9",color:primaryPoolType(poolType)==="כלור"?C.blue:secondaryPoolType(poolType)==="גלישה"?"#006064":secondaryPoolType(poolType)==="סקימר"?"#3949ab":C.green,borderRadius:99,padding:"0 8px",lineHeight:1}}>{poolLabel}</span>
+                          {clientAddress(t.client)&&<span style={{minHeight:22,display:"inline-flex",alignItems:"center",fontSize:11,color:C.muted}}>📍 {clientAddress(t.client)}</span>}
                         </div>
                       </div>
                     </div>
                   </div>
-                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+                  <div style={{width:84,display:"flex",flexDirection:"column",alignItems:"stretch",gap:6,flexShrink:0}}>
                     <Badge label={isDone?"✓ בוצע":"⏳ ממתין"} col={isDone?C.green:C.orange}/>
                     {isDone&&<Press onClick={()=>{setOpenDoneTasks(x=>({...x,[doneKey]:false}));haptic();}} style={{padding:"6px 10px",borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:12}}>סגור</Press>}
-                    {!isDone&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 דוח</Press>}
+                    {!isDone&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}} style={{height:32,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 12px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 דוח</Press>}
                   </div>
                 </div>
                 {!forceCollapsed&&<>
@@ -5723,8 +5813,11 @@ useEffect(() => {
               {lockedDayTasks.map(t=>(
                 <div key={`locked-${t.id || t.client}`} onPointerDown={()=>startClientLongPress(t.client, true)} onPointerUp={()=>stopClientLongPress(t.client)} onPointerLeave={()=>stopClientLongPress(t.client)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderTop:`1px solid ${C.border}`}}>
                   <div style={{width:28,height:28,borderRadius:"50%",background:"#fff8e1",color:C.orange,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,flexShrink:0}}>⏸</div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.client.split(" - ")[0]}</div>
+                  <div style={{flex:1,minWidth:0,textAlign:"right"}}>
+                    <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start"}}>
+                      <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.client.split(" - ")[0]}</div>
+                      <WhatsAppClientToggle client={t.client} compact/>
+                    </div>
                     <div style={{fontSize:10,color:C.muted}}>לחיצה ארוכה לשחרור</div>
                   </div>
                 </div>
@@ -5755,8 +5848,11 @@ useEffect(() => {
               if(todayTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות להיום</div></div>;
               return todayTasks.map(t=>(
                 <div key={t.id} style={{...card({marginBottom:10})}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                    <div style={{fontWeight:800,fontSize:15,color:C.text}}>{t.client.split(" - ")[0]}</div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
+                    <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start",textAlign:"right"}}>
+                      <div style={{fontWeight:800,fontSize:15,color:C.text}}>{t.client.split(" - ")[0]}</div>
+                      <WhatsAppClientToggle client={t.client} compact/>
+                    </div>
                     <Badge label={t.status==="done"?"✓ בוצע":"⏳ ממתין"} col={t.status==="done"?C.green:C.orange}/>
                   </div>
                   {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
@@ -6051,6 +6147,7 @@ useEffect(() => {
 
   if(screen==="done") {
     const last = reports[reports.length-1];
+    const lastWaDisabled = last ? isWhatsAppDisabledForClient(last) : false;
     return (
       <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px))",textAlign:"center",color:C.text}}>
         <IPhoneComfortLayer/>
@@ -6058,7 +6155,7 @@ useEffect(() => {
         <div style={{position:"absolute",top:14,left:14}}><RefreshTopButton compact/></div>
         <div style={{width:104,height:104,borderRadius:32,background:"rgba(232,241,253,0.82)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(37,99,235,0.12), 0 1px 0 rgba(232,241,253,0.82) inset",display:"flex",alignItems:"center",justifyContent:"center",fontSize:58,marginBottom:18,animation:"pop 0.5s cubic-bezier(0.34,1.56,0.64,1)"}}>✅</div>
         <h1 style={{fontSize:26,fontWeight:900,color:C.text,margin:"0 0 8px"}}>הדוח נשלח!</h1>
-        <p style={{color:C.muted,fontSize:15,margin:"0 0 28px",fontWeight:700}}>הלקוח יקבל הודעת WhatsApp עכשיו 💬</p>
+        <p style={{color:C.muted,fontSize:15,margin:"0 0 28px",fontWeight:700}}>{lastWaDisabled ? "שליחת ווצאפ כבויה ללקוח זה - הדוח נשמר ללא הודעה" : "הלקוח יקבל הודעת ווצאפ עכשיו"}</p>
         {last&&(
           <div style={{...card({width:"100%",maxWidth:340,marginBottom:20,textAlign:"right"})}}>
             <div style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>סיכום הדוח</div>
@@ -6717,7 +6814,7 @@ useEffect(() => {
           {adminTab==="qr"&&(
             <div>
               <div style={{...card({marginBottom:16,background:"#e3f2fd",border:`1px solid #90caf9`}),padding:"12px 16px",display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:20}}>ℹ️</span><div style={{fontSize:12,color:C.blue,fontWeight:600,lineHeight:1.6}}>לכל לקוח יש QR ייחודי. המפעיל סורק אותו → הדוח נפתח אוטומטית. הדפס את ה-QR ושים אצל הלקוח.</div></div>
-              {clients.map(c=>(<div key={c.name} style={{...card({marginBottom:10}),display:"flex",alignItems:"center",gap:14}}><div style={{flex:1}}><div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:2}}>{c.name.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>📍 {c.address||c.name.split(" - ")[1]||""}</div></div><Press onClick={()=>setShowQRCode(showQRCode===c.name?null:c.name)} style={{padding:"8px 14px",borderRadius:10,background:showQRCode===c.name?"#e3f2fd":C.border,color:showQRCode===c.name?C.blue:C.muted,fontWeight:700,fontSize:12}}>{showQRCode===c.name?"סגור":"📷 QR"}</Press></div>))}
+              {clients.map(c=>(<div key={c.name} style={{...card({marginBottom:10}),display:"flex",alignItems:"center",gap:14,textAlign:"right"}}><div style={{flex:1,minWidth:0}}><div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start",marginBottom:2}}><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.name.split(" - ")[0]}</div><WhatsAppClientToggle client={c} compact/></div><div style={{fontSize:12,color:C.muted}}>📍 {c.address||c.name.split(" - ")[1]||""}</div></div><Press onClick={()=>setShowQRCode(showQRCode===c.name?null:c.name)} style={{height:32,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 14px",borderRadius:10,background:showQRCode===c.name?"#e3f2fd":C.border,color:showQRCode===c.name?C.blue:C.muted,fontWeight:700,fontSize:12}}>{showQRCode===c.name?"סגור":"📷 QR"}</Press></div>))}
               {showQRCode&&(()=>{ const encoded = encodeURIComponent(showQRCode.split(" - ")[0]); const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encoded}&bgcolor=ffffff&color=1565c0&margin=10`; return (<div style={{...card({border:`2px solid ${C.lightBlue}`,textAlign:"center"}),padding:20,marginBottom:16}}><div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:12}}>{showQRCode.split(" - ")[0]}</div><img src={qrUrl} alt="QR" style={{width:180,height:180,borderRadius:12,marginBottom:12}}/><div style={{fontSize:11,color:C.muted,marginBottom:12}}>סרוק עם האפליקציה לפתיחת דוח</div><a href={qrUrl} download={`qr-${showQRCode.split(" - ")[0]}.png`} target="_blank" rel="noreferrer"><Press style={{padding:"10px 20px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:700,fontSize:13,display:"inline-block"}}>⬇️ הורד QR</Press></a></div>); })()}
             </div>
           )}
@@ -6756,12 +6853,13 @@ useEffect(() => {
               {(clientListSearch.trim().length>=2?filterClientOptions(clients, clientListSearch):sortByClientName(clients)).map((c,i)=>{ const missing=adminClientMissingFields(c); const isEditing=editingAdminClient?.originalName===c.name; const draft=isEditing?editingAdminClient.draft:null; return (
                 <div key={c.name+"-"+i} style={{...card({marginBottom:10,border:missing.length?"1px solid rgba(194,65,12,0.28)":"1px solid "+C.border})}}>
                   {!isEditing&&<>
-                    <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:12,textAlign:"right"}}>
                       <div style={{width:42,height:42,borderRadius:14,background:"rgba(219,234,254,0.86)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{poolIconForType(c.poolType)}</div>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+                        <div style={{minHeight:24,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-start",marginBottom:6}}>
                           <div style={{fontWeight:900,fontSize:15,color:C.text}}>{clientDisplayName(c)}</div>
-                          {missing.length>0&&<span style={{background:"rgba(255,247,237,0.9)",border:"1px solid rgba(194,65,12,0.24)",color:C.orange,borderRadius:99,padding:"3px 9px",fontSize:10,fontWeight:900}}>פרטים חסרים</span>}
+                          <WhatsAppClientToggle client={c} compact/>
+                          {missing.length>0&&<span style={{minHeight:22,display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(255,247,237,0.9)",border:"1px solid rgba(194,65,12,0.24)",color:C.orange,borderRadius:99,padding:"0 9px",fontSize:10,fontWeight:900,lineHeight:1}}>פרטים חסרים</span>}
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:4}}>
                           {[["טלפון",c.phone],["כתובת",c.address],["קוד שער",c.gateCode],["יום קבוע",c.regularDays],["מפעיל קבוע",c.regularOperator],["סוג בריכה",formatPoolType(c.poolType)]].map(([label,value])=>(
