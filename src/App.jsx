@@ -1549,6 +1549,11 @@ function SuperAdminMessagesTab({ C2, inp2, showMsg }) {
                   <img src={superMessageReplyImageSrc(msg)} alt="" style={{width:"100%",maxHeight:240,objectFit:"contain",display:"block",background:"#fff"}}/>
                 </a>
               )}
+              {!superMessageReplyImageSrc(msg)&&String(msg.reply || "").trim()==="תמונה"&&(
+                <div style={{marginTop:8,background:"#fff8e1",border:"1px solid #ffe082",borderRadius:10,padding:"7px 9px",color:C2.orange,fontSize:11,fontWeight:900}}>
+                  תמונה לא נשמרה - צריך לפרוס את הסקריפט המעודכן
+                </div>
+              )}
               {msg.replyAt&&<div style={{fontSize:10,color:C2.muted,marginTop:4}}>{msg.replyAt}</div>}
             </div>
           ) : (
@@ -1618,7 +1623,9 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
     mgmtCall("replySuperMessage", {
       id: msg.id,
       to: msg.to || SUPER_MESSAGE_TARGET.username,
-      reply: text || (image ? "תמונה" : ""),
+      reply: image ? "" : text,
+      replyText: image ? text : "",
+      requiresReplyImage: !!image,
       replyImage: image ? {
         name: image.name,
         mimeType: image.mimeType,
@@ -1627,7 +1634,8 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
       } : undefined
     })
       .then(res => {
-        if (res?.success) {
+        const imageSaved = !image || !!(res?.replyImageStored || res?.replyImageUrl || res?.replyImageFileId || res?.replyImageData);
+        if (res?.success && imageSaved) {
           showToast?.("התשובה נשמרה");
           loadMessages();
         } else {
@@ -1635,7 +1643,7 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
           setPanelVisible(true);
           setDrafts(x=>({...x,[msg.id]:text}));
           setReplyImages(x=>({...x,[msg.id]:image}));
-          showToast?.("שמירת התשובה נכשלה");
+          showToast?.(image ? "שמירת תמונת התשובה נכשלה" : "שמירת התשובה נכשלה");
         }
       })
       .catch(() => {

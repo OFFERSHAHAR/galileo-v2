@@ -3691,7 +3691,7 @@ function sendSuperMessage_(ss, data) {
 
 function replySuperMessage_(ss, data) {
   const id = String(data.id || "").trim();
-  const reply = String(data.reply || "").trim();
+  const reply = String(data.replyText !== undefined ? data.replyText : data.reply || "").trim();
   let replyImageMeta = {};
   try {
     replyImageMeta = saveSuperMessageImage_(data.replyImage);
@@ -3728,7 +3728,7 @@ function replySuperMessage_(ss, data) {
       setByHeader(rowNumber, "replyImageName", replyImageMeta.imageName || "");
       setByHeader(rowNumber, "replyImageMime", replyImageMeta.imageMime || "");
       setByHeader(rowNumber, "replyImageData", replyImageMeta.imageData || "");
-      return { success:true };
+      return { success:true, replyImageStored: !!(replyImageMeta.imageUrl || replyImageMeta.imageData), ...replyImageMeta };
     }
   }
   return { success:false, error:"message not found" };
