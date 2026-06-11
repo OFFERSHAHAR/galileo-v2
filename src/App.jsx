@@ -2147,6 +2147,34 @@ const upsertReportByIdentity = (list, report) => {
   }
   return [...list, report];
 };
+const reportFoundInSheet = (sheetReport = {}, report = {}) => {
+  const wantedId = String(report?.id || "").trim();
+  const sheetId = String(sheetReport?.id || "").trim();
+  if (wantedId && sheetId && wantedId === sheetId) return true;
+  return (
+    normalizeDate(sheetReport.reportDate) === normalizeDate(report.reportDate) &&
+    normalizeName(sheetReport.operator) === normalizeName(report.operator) &&
+    normalizeName(sheetReport.client) === normalizeName(report.client)
+  );
+};
+const confirmReportSavedToSheet = async (report) => {
+  if (!sheetId || !report?.client || !report?.reportDate) return false;
+  const res = await sheetCall("getReports", {
+    fromDate: report.reportDate,
+    toDate: report.reportDate,
+    query: report.client,
+    limit: 500
+  }).catch(() => null);
+  const reportsFromSheet = Array.isArray(res?.reports) ? res.reports : [];
+  const found = reportsFromSheet.some(r => reportFoundInSheet(r, report));
+  if (!found) console.warn("Report save was not confirmed in Sheets", {
+    id: report?.id,
+    reportDate: report?.reportDate,
+    operator: report?.operator,
+    client: report?.client
+  });
+  return found;
+};
 
 useEffect(() => {
   localStorage.setItem("galileo_sub_operator_pending_reports", JSON.stringify(pendingSubReports));
@@ -4346,6 +4374,15 @@ useEffect(() => {
     showToast(`⚠️ WhatsApp לא נשלח${res?.status ? ` (${res.status})` : ""}${greenState}${greenError}`);
     return false;
   };
+  const sendReportWhatsAppAfterSheetConfirm = async (report) => {
+    const sheetConfirmed = await confirmReportSavedToSheet(report);
+    if (!sheetConfirmed) {
+      showToast("⚠️ הדוח עדיין לא אומת בשיטס - הודעת לקוח לא נשלחה");
+      return { sent:false, sheetConfirmed:false };
+    }
+    const sent = await sendReportWhatsApp(report);
+    return { sent, sheetConfirmed:true };
+  };
 
   const queueSubOperatorReportForApproval = async (report, photosBase64, adminEmail) => {
     const item = {
@@ -4442,12 +4479,12 @@ useEffect(() => {
       showToast("✅ הדוח אושר ונשלח");
       void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
       void (async () => {
-        const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport).catch(e => {
           console.warn("WhatsApp send failed", e);
-          return false;
+          return { sent:false, sheetConfirmed:false };
         });
-        if (!whatsAppSent) {
-          addPendingReport(savedReport, supplyUpdateForApproval?.row, { savedToSheet: true });
+        if (!whatsAppResult.sent) {
+          addPendingReport(savedReport, supplyUpdateForApproval?.row, { savedToSheet: whatsAppResult.sheetConfirmed });
           setDismissed(false);
           setPendingBackgroundSync(true);
         }
@@ -4641,7 +4678,7 @@ useEffect(() => {
 
     if (!isEditingExistingReport) {
       setAction("submitReport", "success", 1200);
-      showToast("✅ הדוח נשמר ונשלח ברקע");
+      showToast("✅ הדוח נקלט - שומר לשיטס ואז שולח ללקוח");
       setSyncing(false);
       if (approvalEditId) {
         void removePendingSubReport(approvalEditId).catch(e => console.warn("Pending approval cleanup failed", e));
@@ -4677,15 +4714,15 @@ useEffect(() => {
               ).catch(e => console.warn("Admin report notification failed", e));
             }
             void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
-            const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+            const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport).catch(e => {
               console.warn("WhatsApp send failed", e);
-              return false;
+              return { sent:false, sheetConfirmed:false };
             });
-            if (whatsAppSent) {
+            if (whatsAppResult.sent) {
               removePendingReport(makePendingReportItem(report, supplyUpdate));
               setAction("submitReport", "success", 1200);
             } else {
-              addPendingReport(savedReport, supplyUpdate, { savedToSheet: true });
+              addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed });
               setDismissed(false);
               setPendingBackgroundSync(true);
               setAction("submitReport", "local", 2200);
@@ -4758,7 +4795,7 @@ useEffect(() => {
       showToast("⚠️ העריכה נשמרה מקומית, לא עודכנה בשיטס");
     } else {
       setAction("submitReport", "success", 1200);
-      showToast(sendEditedReportToCustomer ? "✅ הדוח עודכן ונשלח ברקע" : isEditingExistingReport ? "✅ הדוח עודכן" : "✅ הדוח נשלח");
+      showToast(sendEditedReportToCustomer ? "✅ הדוח עודכן - בודק שיטס ושולח ברקע" : isEditingExistingReport ? "✅ הדוח עודכן" : "✅ הדוח נשמר");
     }
 
     setSyncing(false);
@@ -4771,12 +4808,12 @@ useEffect(() => {
     if (sendEditedReportToCustomer && saved) {
       void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
       void (async () => {
-        const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport).catch(e => {
           console.warn("WhatsApp send failed", e);
-          return false;
+          return { sent:false, sheetConfirmed:false };
         });
-        if (!whatsAppSent) {
-          addPendingReport(savedReport, supplyUpdate, { savedToSheet: saved, updateOriginal: editingReport, sendWhatsAppOnSave: true });
+        if (!whatsAppResult.sent) {
+          addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed, updateOriginal: editingReport, sendWhatsAppOnSave: true });
           setDismissed(false);
           setPendingBackgroundSync(true);
         }
@@ -4785,12 +4822,12 @@ useEffect(() => {
     } else if (!isEditingExistingReport) {
       void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
       void (async () => {
-        const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport).catch(e => {
           console.warn("WhatsApp send failed", e);
-          return false;
+          return { sent:false, sheetConfirmed:false };
         });
-        if (!whatsAppSent) {
-          addPendingReport(savedReport, supplyUpdate, { savedToSheet: saved });
+        if (!whatsAppResult.sent) {
+          addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed });
           setDismissed(false);
           setPendingBackgroundSync(true);
         }
@@ -4837,6 +4874,12 @@ useEffect(() => {
 
         if (!saveSucceeded) {
           failed.push(item);
+          continue;
+        }
+
+        const sheetConfirmed = await confirmReportSavedToSheet(savedReport);
+        if (!sheetConfirmed) {
+          failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet:false, updateOriginal, sendWhatsAppOnSave:shouldSendPendingReportWhatsApp(item, savedReport) }));
           continue;
         }
 

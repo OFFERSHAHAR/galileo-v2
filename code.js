@@ -366,8 +366,8 @@
 
       if (action === "saveReport") {
         const sheet = ss.getSheetByName("דוחות");
-        ensureColumns(sheet, ["ציוד_שסופק"]);
         ensureReportsSheetReportId_(sheet);
+        ensureColumns(sheet, ["ציוד_שסופק"]);
         const r = data.report;
         const lock = LockService.getScriptLock();
         try {
@@ -449,8 +449,8 @@
 
       if (action === "updateReport") {
         const sheet = ss.getSheetByName("דוחות");
-        ensureColumns(sheet, ["ציוד_שסופק"]);
         ensureReportsSheetReportId_(sheet);
+        ensureColumns(sheet, ["ציוד_שסופק"]);
         const r = data.report;
         if (data.supplyUpdate) {
           const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
@@ -2375,6 +2375,10 @@
     return String(value || "").trim().toLowerCase();
   }
 
+  function reportHeaders_() {
+    return ["reportId","תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק","clientId"];
+  }
+
   function reportRowValues_(r) {
     return [r.id || Utilities.getUuid(), r.reportDate, r.operator, r.client, r.chlorine, r.ph, r.salt,
       r.waterLevel, r.clarity, r.fat, r.flow, r.elModel, r.elSerial,
@@ -2401,7 +2405,7 @@
     const lastRow = Math.max(sheet.getLastRow(), 1);
     const lastCol = Math.max(sheet.getLastColumn(), 1);
     const rows = sheet.getRange(1, 1, Math.min(lastRow, 10), lastCol).getValues();
-    let headerRow = rows.findIndex(r => String(r[0] || "").trim() === "reportId" || r.some(c => String(c || "").includes("׳×׳׳¨׳™׳")));
+    let headerRow = rows.findIndex(r => String(r[0] || "").trim() === "reportId" || r.some(c => String(c || "").includes("תאריך")));
     if (headerRow < 0) headerRow = 0;
     const headerRowNumber = headerRow + 1;
     const firstHeader = String(sheet.getRange(headerRowNumber, 1).getValue() || "").trim();
@@ -2409,6 +2413,8 @@
       sheet.insertColumnBefore(1);
       sheet.getRange(headerRowNumber, 1).setValue("reportId");
     }
+    const headers = reportHeaders_();
+    sheet.getRange(headerRowNumber, 1, 1, headers.length).setValues([headers]);
     const headerValues = sheet.getRange(headerRowNumber, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0].map(String);
     if (headerValues.indexOf("clientId") < 0) {
       sheet.getRange(headerRowNumber, sheet.getLastColumn() + 1).setValue("clientId");

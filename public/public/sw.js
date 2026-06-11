@@ -1,4 +1,4 @@
-const CACHE = "galileo-v2-cache-v9";
+const CACHE = "galileo-v2-cache-v10";
 const STATIC = [
   "/",
   "/index.html",
