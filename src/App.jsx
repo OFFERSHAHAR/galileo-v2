@@ -289,7 +289,7 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
-const APP_BUILD_ID = "20260609-login-update-gate-3";
+const APP_BUILD_ID = "20260612-login-update-nonblocking-1";
 const APP_VERSION_URL = "/version.json";
 const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
 const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
@@ -4059,11 +4059,7 @@ useEffect(() => {
     setAction("login", "loading");
 
     if (appUpdate.available) {
-      setLoginErr("עדכון זמין. יש לעדכן את האפליקציה לפני כניסה.");
-      setLoginLoading(false);
-      setAction("login", "error", 2200);
-      haptic("medium");
-      return;
+      showToast("עדכון זמין - ניתן להיכנס, לעדכן אחר כך");
     }
 
     const inputUser = loginUser.toLowerCase().trim();
@@ -5082,14 +5078,14 @@ useEffect(() => {
           {appUpdate.available&&(
             <div style={{background:"#fff8e1",border:"1px solid #ffe082",borderRadius:18,padding:14,marginBottom:16,boxShadow:"0 10px 26px rgba(245,158,11,0.12)"}}>
               <div style={{fontSize:15,fontWeight:900,color:C.orange,textAlign:"center",marginBottom:6}}>עדכון זמין</div>
-              <div style={{fontSize:12,fontWeight:800,color:"#7c5a00",textAlign:"center",lineHeight:1.5,marginBottom:12}}>יש לעדכן את האפליקציה לפני כניסה למערכת.</div>
+              <div style={{fontSize:12,fontWeight:800,color:"#7c5a00",textAlign:"center",lineHeight:1.5,marginBottom:12}}>מומלץ לעדכן, אבל אפשר להיכנס גם בלי עדכון.</div>
               <Press onClick={hardRefreshApp} style={{padding:13,borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 12px 26px rgba(37,99,235,0.22)"}}>עדכן אפליקציה</Press>
             </div>
           )}
           <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>שם משתמש</label><input value={loginUser} onChange={e=>setLoginUser(e.target.value)} placeholder="הכנס שם משתמש" style={inp} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
           <div style={{marginBottom:loginErr?12:20}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>סיסמה</label><input type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} placeholder="הכנס סיסמה" style={inp} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/></div>
           {loginErr&&<div style={{background:"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:16,color:C.red,fontSize:13,fontWeight:700,textAlign:"center"}}>⚠️ {loginErr}</div>}
-          <Press onClick={handleLogin} disabled={appUpdate.available} style={{padding:16,borderRadius:18,background:appUpdate.available?"#cbd5e1":loginLoading?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:(loginLoading||appUpdate.available)?"none":"0 16px 36px rgba(79,70,229,0.24)",opacity:appUpdate.available?0.82:1}}>
+          <Press onClick={handleLogin} disabled={false} style={{padding:16,borderRadius:18,background:loginLoading?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:16,textAlign:"center",boxShadow:loginLoading?"none":"0 16px 36px rgba(79,70,229,0.24)",opacity:1}}>
             {actionLabel("login",{idle:"כניסה →",loading:"⏳ מתחבר...",success:"✅ התחברת",error:"⚠️ נסה שוב"})}
           </Press>
           {!appUpdate.available&&(
