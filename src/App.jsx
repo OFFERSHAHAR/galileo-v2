@@ -7,9 +7,11 @@ const WA_TEMPLATE_STORAGE_KEY = "galileo_whatsapp_template";
 const WA_POLL_MESSAGE_STORAGE_KEY = "galileo_whatsapp_poll_message";
 const WA_POLL_OPTIONS_STORAGE_KEY = "galileo_whatsapp_poll_options";
 const WA_TABLET_REMINDER_STORAGE_KEY = "galileo_whatsapp_tablet_reminder_message";
+const WA_WATER_LEVEL_NOTICE_STORAGE_KEY = "galileo_whatsapp_water_level_notice_message";
 const WA_DISABLED_CLIENTS_STORAGE_KEY = "galileo_whatsapp_disabled_clients";
 const CHLORINE_TABLET_REMINDER_DAYS = 3;
 const DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE = "יש להוסיף טבלית כלור :)";
+const DEFAULT_WATER_LEVEL_NOTICE_MESSAGE = "⚠️ לתשומת ליבך - יש למלא מים עד לגובה הרצוי";
 const DEFAULT_WA_MESSAGE_TEMPLATE = `*טיפול בריכה הושלם!*
 
 שלום {clientName},
@@ -26,6 +28,7 @@ const DEFAULT_WA_POLL_MESSAGE = "האם מאושר לספק חומרים לאי�
 const normalizeWaPollMessage = (value) => String(value || "").trim() || DEFAULT_WA_POLL_MESSAGE;
 const DEFAULT_WA_POLL_OPTIONS = ["מאשר אספקה", "לא מאשר"];
 const normalizeChlorineReminderMessage = (value) => String(value || "").trim() || DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE;
+const normalizeWaterLevelNoticeMessage = (value) => String(value || "").trim() || DEFAULT_WATER_LEVEL_NOTICE_MESSAGE;
 const normalizeWaPollOptions = (value) => {
   let source = value;
   if (typeof source === "string") {
@@ -2041,6 +2044,12 @@ export default function App() {
   const [chlorineReminderMessageDraft,setChlorineReminderMessageDraft] = useState(() => {
     try { return normalizeChlorineReminderMessage(localStorage.getItem(WA_TABLET_REMINDER_STORAGE_KEY)); } catch { return DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE; }
   });
+  const [waterLevelNoticeMessage,setWaterLevelNoticeMessage] = useState(() => {
+    try { return normalizeWaterLevelNoticeMessage(localStorage.getItem(WA_WATER_LEVEL_NOTICE_STORAGE_KEY)); } catch { return DEFAULT_WATER_LEVEL_NOTICE_MESSAGE; }
+  });
+  const [waterLevelNoticeMessageDraft,setWaterLevelNoticeMessageDraft] = useState(() => {
+    try { return normalizeWaterLevelNoticeMessage(localStorage.getItem(WA_WATER_LEVEL_NOTICE_STORAGE_KEY)); } catch { return DEFAULT_WATER_LEVEL_NOTICE_MESSAGE; }
+  });
   const [waDisabledClients,setWaDisabledClients] = useState(() => {
     try {
       const value = JSON.parse(localStorage.getItem(WA_DISABLED_CLIENTS_STORAGE_KEY) || "[]");
@@ -2263,6 +2272,11 @@ useEffect(() => {
   setChlorineReminderMessageDraft(chlorineReminderMessage);
   try { localStorage.setItem(WA_TABLET_REMINDER_STORAGE_KEY, chlorineReminderMessage); } catch {}
 }, [chlorineReminderMessage]);
+
+useEffect(() => {
+  setWaterLevelNoticeMessageDraft(waterLevelNoticeMessage);
+  try { localStorage.setItem(WA_WATER_LEVEL_NOTICE_STORAGE_KEY, waterLevelNoticeMessage); } catch {}
+}, [waterLevelNoticeMessage]);
 
 
 
@@ -3200,6 +3214,7 @@ useEffect(() => {
         if(setR?.settings?.waPollMessage) setWaPollMessage(normalizeWaPollMessage(setR.settings.waPollMessage));
         if(setR?.settings?.waPollOptions) setWaPollOptions(normalizeWaPollOptions(setR.settings.waPollOptions));
         if(setR?.settings?.chlorineReminderMessage) setChlorineReminderMessage(normalizeChlorineReminderMessage(setR.settings.chlorineReminderMessage));
+        if(setR?.settings?.waterLevelNoticeMessage) setWaterLevelNoticeMessage(normalizeWaterLevelNoticeMessage(setR.settings.waterLevelNoticeMessage));
         if(Array.isArray(repR?.reports)) setSheetReports(repR.reports);
         if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
         try {
@@ -3214,6 +3229,7 @@ useEffect(() => {
             pendingSubReports:Array.isArray(prR?.pendingSubReports) ? prR.pendingSubReports : c.pendingSubReports,
             waMessageTemplate:setR?.settings?.waMessageTemplate || c.waMessageTemplate,
             chlorineReminderMessage:setR?.settings?.chlorineReminderMessage || c.chlorineReminderMessage,
+            waterLevelNoticeMessage:setR?.settings?.waterLevelNoticeMessage || c.waterLevelNoticeMessage,
             lastReadings:lrR?.lastReadings || c.lastReadings,
             sheetReports:Array.isArray(repR?.reports) ? repR.reports : c.sheetReports,
             users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
@@ -4011,7 +4027,7 @@ useEffect(() => {
   },[screen, adminTab, dailyDate, taskDate, sheetId, reportDateFilter, reportDateToFilter, reportFilter]);
 
   const connectSheets = async (bg=false) => {
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,waMessageTemplate:wt,chlorineReminderMessage:crm,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); if(wt) setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(crm) setChlorineReminderMessage(normalizeChlorineReminderMessage(crm)); setSheetId("connected"); if(!bg) return; } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,waMessageTemplate:wt,chlorineReminderMessage:crm,waterLevelNoticeMessage:wlm,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); if(wt) setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(crm) setChlorineReminderMessage(normalizeChlorineReminderMessage(crm)); if(wlm) setWaterLevelNoticeMessage(normalizeWaterLevelNoticeMessage(wlm)); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
       let boot = await sheetCall("getBootstrapData");
       let u=boot?.users?.length?boot.users:null;
@@ -4029,13 +4045,14 @@ useEffect(() => {
       let wp=boot?.settings?.waPollMessage || boot?.waPollMessage || null;
       let wo=boot?.settings?.waPollOptions || boot?.waPollOptions || null;
       let crm=boot?.settings?.chlorineReminderMessage || boot?.chlorineReminderMessage || null;
+      let wlm=boot?.settings?.waterLevelNoticeMessage || boot?.waterLevelNoticeMessage || null;
       if(!u && !c && !t && !ord && !s && !lr){
         const [uR,cR,tR,oR,sR,rR,ucR,shR,apR,prR,maR,setR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals"),sheetCall("getPendingSubReports"),sheetCall("getMaterialApprovals"),sheetCall("getClientSettings")]);
-        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt; wp=setR?.settings?.waPollMessage || setR?.waPollMessage || wp; wo=setR?.settings?.waPollOptions || setR?.waPollOptions || wo; crm=setR?.settings?.chlorineReminderMessage || setR?.chlorineReminderMessage || crm;
+        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt; wp=setR?.settings?.waPollMessage || setR?.waPollMessage || wp; wo=setR?.settings?.waPollOptions || setR?.waPollOptions || wo; crm=setR?.settings?.chlorineReminderMessage || setR?.chlorineReminderMessage || crm; wlm=setR?.settings?.waterLevelNoticeMessage || setR?.waterLevelNoticeMessage || wlm;
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
-      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(wp)setWaPollMessage(normalizeWaPollMessage(wp)); if(wo)setWaPollOptions(normalizeWaPollOptions(wo)); if(crm)setChlorineReminderMessage(normalizeChlorineReminderMessage(crm));
-      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,sheetReports:sheetReports||[],waMessageTemplate:wt||waMessageTemplate,chlorineReminderMessage:crm||chlorineReminderMessage,cachedAt:Date.now()}));
+      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(wp)setWaPollMessage(normalizeWaPollMessage(wp)); if(wo)setWaPollOptions(normalizeWaPollOptions(wo)); if(crm)setChlorineReminderMessage(normalizeChlorineReminderMessage(crm)); if(wlm)setWaterLevelNoticeMessage(normalizeWaterLevelNoticeMessage(wlm));
+      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,sheetReports:sheetReports||[],waMessageTemplate:wt||waMessageTemplate,chlorineReminderMessage:crm||chlorineReminderMessage,waterLevelNoticeMessage:wlm||waterLevelNoticeMessage,cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
     } catch {}
@@ -4357,7 +4374,7 @@ useEffect(() => {
   const buildWA = (r) => {
     const name=r.client?.split(" - ")[0]||"לקוח יקר"; const company = getCompany().name || "POOLMANG";
     const statusLine=r.poolStatus==="אחר"?`⚠️ *נדרשת תשומת לב:*\n${r.customStatusText}${r.restrictedUntil?`\nהבריכה לא זמינה עד ${fmtDate(r.restrictedUntil)}`:""}` :"✅ הבריכה מאוזנת ומוכנה לשימוש מלא";
-    const waterLevelNotice = r.waterLevel==="לא תקין" ? `\n\n⚠️ לתשומת ליבך - יש למלא מים עד לגובה הרצוי` : "";
+    const waterLevelNotice = r.waterLevel==="לא תקין" ? `\n\n${normalizeWaterLevelNoticeMessage(waterLevelNoticeMessage)}` : "";
     const supplyApprovalNotice = r.supplyLabel ? `\n\nלתשומת לבך יש צורך לספק חומרים לאיזון המים - נדרש אישור לאספקה` : "";
     const reportDetails = `${statusLine}${waterLevelNotice}${supplyApprovalNotice}${r.notes?`\n\n📝 ${r.notes}`:""}`.trim();
     return renderWaMessageTemplate(waMessageTemplate, {
@@ -4374,16 +4391,19 @@ useEffect(() => {
     const cleanPollMessage = normalizeWaPollMessage(waPollMessageDraft);
     const cleanPollOptions = normalizeWaPollOptions(waPollOptionsDraft);
     const cleanChlorineReminderMessage = normalizeChlorineReminderMessage(chlorineReminderMessageDraft);
+    const cleanWaterLevelNoticeMessage = normalizeWaterLevelNoticeMessage(waterLevelNoticeMessageDraft);
     setAction("saveWaTemplate", "loading");
     setWaMessageTemplate(clean);
     setWaPollMessage(cleanPollMessage);
     setWaPollOptions(cleanPollOptions);
     setChlorineReminderMessage(cleanChlorineReminderMessage);
+    setWaterLevelNoticeMessage(cleanWaterLevelNoticeMessage);
     try { localStorage.setItem(WA_TEMPLATE_STORAGE_KEY, clean); } catch {}
     try { localStorage.setItem(WA_POLL_MESSAGE_STORAGE_KEY, cleanPollMessage); } catch {}
     try { localStorage.setItem(WA_POLL_OPTIONS_STORAGE_KEY, JSON.stringify(cleanPollOptions)); } catch {}
     try { localStorage.setItem(WA_TABLET_REMINDER_STORAGE_KEY, cleanChlorineReminderMessage); } catch {}
-    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean,waPollMessage:cleanPollMessage,waPollOptions:cleanPollOptions,chlorineReminderMessage:cleanChlorineReminderMessage}}).catch(()=>null) : null;
+    try { localStorage.setItem(WA_WATER_LEVEL_NOTICE_STORAGE_KEY, cleanWaterLevelNoticeMessage); } catch {}
+    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean,waPollMessage:cleanPollMessage,waPollOptions:cleanPollOptions,chlorineReminderMessage:cleanChlorineReminderMessage,waterLevelNoticeMessage:cleanWaterLevelNoticeMessage}}).catch(()=>null) : null;
     if (sheetId && !res?.success) {
       setAction("saveWaTemplate", "error", 1800);
       showToast("שמירת ההודעה לגיליון נכשלה");
@@ -4398,6 +4418,7 @@ useEffect(() => {
     setWaPollMessageDraft(DEFAULT_WA_POLL_MESSAGE);
     setWaPollOptionsDraft(DEFAULT_WA_POLL_OPTIONS);
     setChlorineReminderMessageDraft(DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE);
+    setWaterLevelNoticeMessageDraft(DEFAULT_WATER_LEVEL_NOTICE_MESSAGE);
     haptic("medium");
   };
 
@@ -6656,6 +6677,13 @@ useEffect(() => {
                 <textarea
                   value={chlorineReminderMessageDraft}
                   onChange={e=>setChlorineReminderMessageDraft(e.target.value)}
+                  rows={3}
+                  style={{...inp,resize:"vertical",minHeight:78,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:12}}
+                />
+                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>מלל גובה מים לא תקין</div>
+                <textarea
+                  value={waterLevelNoticeMessageDraft}
+                  onChange={e=>setWaterLevelNoticeMessageDraft(e.target.value)}
                   rows={3}
                   style={{...inp,resize:"vertical",minHeight:78,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:12}}
                 />
