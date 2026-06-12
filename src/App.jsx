@@ -2399,7 +2399,8 @@ useEffect(() => {
   const [supplySearch,setSupplySearch] = useState({date:"",dateTo:"",type:""});
   const [adminIssueSearch,setAdminIssueSearch] = useState({date:"",client:""});
   const [freeClients,setFreeClients] = useState([]);
-  const [newClient,setNewClient] = useState({name:"",phone:"",address:"",gateCode:"",regularDays:"",regularOperator:"",poolType:"מלח"});
+  const emptyAdminClient = {name:"",phone:"",address:"",gateCode:"",regularDays:"",regularOperator:"",poolType:"מלח",waterCheckDays:""};
+  const [newClient,setNewClient] = useState(emptyAdminClient);
   const [editingAdminClient,setEditingAdminClient] = useState(null);
   const [clientListSearch,setClientListSearch] = useState("");
   const [adminClientSearch,setAdminClientSearch] = useState("");
@@ -2726,6 +2727,7 @@ useEffect(() => {
     regularDays: String(c.regularDays || ""),
     regularOperator: String(c.regularOperator || ""),
     poolType: String(c.poolType || "מלח"),
+    waterCheckDays: normalizeWaterCheckDays(c.waterCheckDays),
   });
   const saveAdminClientDetails = async (originalName, draft) => {
     const next = {...adminClientDraft(draft), clientId:clientId(draft), originalName};
@@ -2875,6 +2877,72 @@ useEffect(() => {
   const DAY_NAMES = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
   const dateDayName = (dateStr) => { if(!dateStr) return ""; return DAY_NAMES[new Date(dateStr+"T12:00:00").getDay()]; };
   const normalizeDay = (d) => String(d||"").trim().replace(/^א$/,"ראשון").replace(/^ב$/,"שני").replace(/^ג$/,"שלישי").replace(/^ד$/,"רביעי").replace(/^ה$/,"חמישי").replace(/^ו$/,"שישי").replace(/^ש$/,"שבת").replace(/^1$/,"ראשון").replace(/^2$/,"שני").replace(/^3$/,"שלישי").replace(/^4$/,"רביעי").replace(/^5$/,"חמישי").replace(/^6$/,"שישי").replace(/^7$/,"שבת");
+  const WATER_CHECK_DAYS = ["ראשון","שני","שלישי","רביעי","חמישי"];
+  const normalizeWaterCheckDays = (value) => {
+    const rawDays = Array.isArray(value) ? value : String(value || "").split(",");
+    const selected = new Set(rawDays.map(d=>normalizeDay(d)).filter(d=>WATER_CHECK_DAYS.includes(d)));
+    return WATER_CHECK_DAYS.filter(day=>selected.has(day)).join(", ");
+  };
+  const waterCheckDayList = (value) => normalizeWaterCheckDays(value).split(",").map(d=>d.trim()).filter(Boolean);
+  const formatWaterCheckDays = (value) => waterCheckDayList(value).join(", ");
+  const clientWaterCheckAssigned = (clientObj, date, opName) => {
+    if (!clientObj || !opName) return false;
+    const dayName = dateDayName(date);
+    const opMatch = normalizeName(clientObj.regularOperator) === normalizeName(opName);
+    return opMatch && waterCheckDayList(clientObj.waterCheckDays).includes(dayName);
+  };
+  const waterCheckTasksForOperator = (date=dailyDate, opName=dailyOwnerName(date) || user?.name || "") => {
+    const targetDate = normalizeDate(date);
+    return sortByClientName(clients)
+      .filter(c => clientWaterCheckAssigned(c, targetDate, opName))
+      .map((c, i) => {
+        const id = clientId(c) || normalizeName(c.name);
+        return {
+          id:`water-check-${targetDate}-${id}`,
+          client:c.name,
+          clientId:clientId(c),
+          operators:[opName],
+          date:targetDate,
+          status:"pending",
+          changeLog:[],
+          orderIndex:9000 + i,
+          adminNote:"בדיקת מים",
+          note:"בדיקת מים",
+          createdByAdminOrder:true,
+          _waterCheck:true
+        };
+      });
+  };
+  const WaterCheckDaysEditor = ({value,onChange}) => {
+    const selectedDays = new Set(waterCheckDayList(value));
+    const toggleDay = (day) => {
+      const next = new Set(selectedDays);
+      next.has(day) ? next.delete(day) : next.add(day);
+      onChange(WATER_CHECK_DAYS.filter(d=>next.has(d)).join(", "));
+      haptic();
+    };
+    return (
+      <div style={{background:"rgba(241,247,255,0.72)",border:"1px solid "+C.border,borderRadius:12,padding:10,marginBottom:12}}>
+        <div style={{fontSize:11,fontWeight:800,color:C.muted,marginBottom:8}}>בדיקת מים</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(68px,1fr))",gap:6}}>
+          {WATER_CHECK_DAYS.map(day=>{
+            const active = selectedDays.has(day);
+            return (
+              <label key={day} style={{minHeight:34,display:"flex",alignItems:"center",justifyContent:"center",gap:6,borderRadius:10,border:"1px solid "+(active?C.blue:C.border),background:active?"#e3f2fd":"#fff",color:active?C.blue:C.text,fontSize:12,fontWeight:900,cursor:"pointer"}}>
+                <input
+                  type="checkbox"
+                  checked={active}
+                  onChange={()=>toggleDay(day)}
+                  style={{accentColor:C.blue,width:14,height:14}}
+                />
+                <span>{day}</span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   const clientAssignedToOperatorDate = (clientObj, date, opName) => {
     if (!clientObj || !opName) return false;
@@ -3702,13 +3770,14 @@ useEffect(() => {
       return sharedEntries.length ? entriesToDailyTasks(date, opName, sharedEntries, "shared") : [];
     }
     const adminEntries = getEffectiveAdminOrderEntries(date, opName);
+    const waterChecks = waterCheckTasksForOperator(date, opName);
     let list;
     if (adminEntries.length) {
       const ordered = entriesToDailyTasks(date, opName, adminEntries, "admin").map(t=>({...t, _adminLocalOrder:true}));
       const extra = myTasks(date).filter(t=>!ordered.some(x=>x.client===t.client));
-      list = [...ordered, ...extra];
+      list = [...ordered, ...extra, ...waterChecks];
     } else {
-      list = dayClientProfiles(date, opName);
+      list = [...dayClientProfiles(date, opName), ...waterChecks];
     }
     const operatorOrder = readLocalArray(operatorOrderKey(user?.username || user?.name, date));
     if (operatorOrder.length) {
@@ -7166,7 +7235,8 @@ useEffect(() => {
                 <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
                   {["סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={()=>setNewClient(c=>({...c,poolType:setPoolTypePart(c.poolType,pt)}))} style={{padding:"6px 12px",borderRadius:99,fontSize:12,fontWeight:800,background:secondaryPoolType(newClient.poolType)===pt?C.blue:"#f0f4f8",color:secondaryPoolType(newClient.poolType)===pt?"#fff":C.muted}}>{pt}</Press>))}
                 </div>
-                <Press onClick={async()=>{ if(!newClient.name.trim()){showToast("⚠️ נא להזין שם לקוח");return;} const clientToAdd={clientId:makeClientId(),name:newClient.name.trim(),phone:newClient.phone.trim(),address:newClient.address.trim(),gateCode:newClient.gateCode.trim(),qrUrl:"",poolType:newClient.poolType||"מלח",regularDays:newClient.regularDays.trim(),regularOperator:newClient.regularOperator||""}; const updated=ensureClientIds([...clients,clientToAdd]); setClients(updated); setNewClient({name:"",phone:"",address:"",gateCode:"",regularDays:"",regularOperator:"",poolType:"מלח"}); if(sheetId) await sheetCall("saveClients",{clients:updated}); showToast("✅ לקוח נוסף"); haptic("success"); }} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>➕ הוסף לקוח</Press>
+                <WaterCheckDaysEditor value={newClient.waterCheckDays} onChange={value=>setNewClient(c=>({...c,waterCheckDays:value}))}/>
+                <Press onClick={async()=>{ if(!newClient.name.trim()){showToast("⚠️ נא להזין שם לקוח");return;} const clientToAdd={clientId:makeClientId(),name:newClient.name.trim(),phone:newClient.phone.trim(),address:newClient.address.trim(),gateCode:newClient.gateCode.trim(),qrUrl:"",poolType:newClient.poolType||"מלח",regularDays:newClient.regularDays.trim(),regularOperator:newClient.regularOperator||"",waterCheckDays:normalizeWaterCheckDays(newClient.waterCheckDays)}; const updated=ensureClientIds([...clients,clientToAdd]); setClients(updated); setNewClient({...emptyAdminClient}); if(sheetId) await sheetCall("saveClients",{clients:updated}); showToast("✅ לקוח נוסף"); haptic("success"); }} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>➕ הוסף לקוח</Press>
               </div>
               <h3 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:"0 0 12px"}}>לקוחות קיימים — {clients.length}</h3>
               <div style={{position:"relative",marginBottom:12}}>
@@ -7184,7 +7254,7 @@ useEffect(() => {
                           {missing.length>0&&<span style={{minHeight:22,display:"inline-flex",alignItems:"center",justifyContent:"center",background:"rgba(255,247,237,0.9)",border:"1px solid rgba(194,65,12,0.24)",color:C.orange,borderRadius:99,padding:"0 9px",fontSize:10,fontWeight:900,lineHeight:1}}>פרטים חסרים</span>}
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:4}}>
-                          {[["טלפון",c.phone],["כתובת",c.address],["קוד שער",c.gateCode],["יום קבוע",c.regularDays],["מפעיל קבוע",c.regularOperator],["סוג בריכה",formatPoolType(c.poolType)]].map(([label,value])=>(
+                          {[["טלפון",c.phone],["כתובת",c.address],["קוד שער",c.gateCode],["יום קבוע",c.regularDays],["מפעיל קבוע",c.regularOperator],["סוג בריכה",formatPoolType(c.poolType)],["בדיקת מים",formatWaterCheckDays(c.waterCheckDays)||"לא מוגדר"]].map(([label,value])=>(
                             <div key={label} style={{background:"rgba(241,247,255,0.62)",border:"1px solid "+C.border,borderRadius:12,padding:"7px 8px",minWidth:0}}>
                               <div style={{fontSize:10,color:C.muted,fontWeight:800,marginBottom:2}}>{label}</div>
                               <div style={{fontSize:12,color:value?C.text:C.orange,fontWeight:900,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{value||"חסר"}</div>
@@ -7215,6 +7285,7 @@ useEffect(() => {
                       <div><label style={{fontSize:10,fontWeight:800,color:C.muted,display:"block",marginBottom:5}}>סוג בריכה *</label><select value={primaryPoolType(draft.poolType)} onChange={e=>setEditingAdminClient(x=>({...x,draft:{...x.draft,poolType:setPoolTypePart(x.draft.poolType,e.target.value)}}))} style={sel}><option>מלח</option><option>כלור</option></select></div>
                       <div style={{display:"flex",gap:6,alignItems:"end"}}>{["סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={()=>setEditingAdminClient(x=>({...x,draft:{...x.draft,poolType:setPoolTypePart(x.draft.poolType,pt)}}))} style={{flex:1,padding:"10px 6px",borderRadius:12,fontSize:11,fontWeight:900,background:secondaryPoolType(draft.poolType)===pt?C.blue:"#f0f4f8",color:secondaryPoolType(draft.poolType)===pt?"#fff":C.muted}}>{pt}</Press>))}</div>
                     </div>
+                    <WaterCheckDaysEditor value={draft.waterCheckDays} onChange={value=>setEditingAdminClient(x=>({...x,draft:{...x.draft,waterCheckDays:value}}))}/>
                     <div style={{display:"flex",gap:8}}>
                       <Press onClick={()=>saveAdminClientDetails(editingAdminClient.originalName,draft)} style={{flex:1,padding:"11px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontSize:13,fontWeight:900,textAlign:"center"}}>שמור</Press>
                       <Press onClick={()=>{setEditingAdminClient(null);haptic();}} style={{padding:"11px 14px",borderRadius:14,background:"rgba(241,247,255,0.72)",border:"1px solid "+C.border,color:C.muted,fontSize:13,fontWeight:900}}>ביטול</Press>

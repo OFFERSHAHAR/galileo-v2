@@ -696,9 +696,9 @@
     s = clientSS.getSheetByName("לקוחות");
     if(!s) {
       s = clientSS.insertSheet("לקוחות");
-    s.appendRow(["clientId","שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
+    s.appendRow(["clientId","שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","ימי_בדיקת_מים","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
   } else {
-    ensureColumns(s, ["clientId","שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
+    ensureColumns(s, ["clientId","שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","ימי_בדיקת_מים","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"]);
   }
     
     // ── דוחות ──
@@ -3020,6 +3020,7 @@ function getClientsByHeaders_(ss) {
   const poolTypeIdx = columnOf(["סוג_בריכה", "סוג בריכה", "poolType"], 5);
   const regularDaysIdx = columnOf(["ימים_קבועים", "ימים קבועים", "regularDays"], 6);
   const regularOperatorIdx = columnOf(["מפעיל_קבוע", "מפעיל קבוע", "regularOperator"], 7);
+  const waterCheckDaysIdx = columnOf(["ימי_בדיקת_מים", "ימי בדיקת מים", "waterCheckDays"], -1);
   const balanceIdx = columnOf(["יתרת_טיפולים_חודשית", "יתרת טיפולים חודשית", "monthlyTreatmentBalance"], 8);
   const countIdx = columnOf(["מונה_טיפולים_בפועל", "מונה טיפולים בפועל", "monthlyTreatmentCount"], 9);
   const quotaIdx = columnOf(["מכסת_טיפולים_חודשית", "מכסת טיפולים חודשית", "monthlyTreatmentQuota"], -1);
@@ -3035,6 +3036,7 @@ function getClientsByHeaders_(ss) {
     poolType: String(r[poolTypeIdx] || "מלח"),
     regularDays: String(r[regularDaysIdx] || ""),
     regularOperator: String(r[regularOperatorIdx] || ""),
+    waterCheckDays: String(waterCheckDaysIdx >= 0 ? r[waterCheckDaysIdx] || "" : ""),
     monthlyTreatmentBalance: Number(r[balanceIdx] || 0),
     monthlyTreatmentCount: Number(r[countIdx] || 0),
     monthlyTreatmentQuota: Number(quotaIdx >= 0 ? r[quotaIdx] || 0 : 0)
@@ -3150,6 +3152,7 @@ function saveClients_(sheet, clients) {
     "סוג_בריכה",
     "ימים_קבועים",
     "מפעיל_קבוע",
+    "ימי_בדיקת_מים",
     "יתרת_טיפולים_חודשית",
     "מונה_טיפולים_בפועל",
     "מכסת_טיפולים_חודשית",
@@ -3170,6 +3173,7 @@ function saveClients_(sheet, clients) {
     poolType: ["סוג_בריכה", "סוג בריכה"],
     regularDays: ["ימים_קבועים", "ימים קבועים"],
     regularOperator: ["מפעיל_קבוע", "מפעיל קבוע"],
+    waterCheckDays: ["ימי_בדיקת_מים", "ימי בדיקת מים"],
     monthlyTreatmentBalance: ["יתרת_טיפולים_חודשית"],
     monthlyTreatmentCount: ["מונה_טיפולים_בפועל"],
     monthlyTreatmentQuota: ["מכסת_טיפולים_חודשית"],
@@ -3205,6 +3209,7 @@ function saveClients_(sheet, clients) {
     "poolType",
     "regularDays",
     "regularOperator",
+    "waterCheckDays",
     "monthlyTreatmentBalance",
     "monthlyTreatmentCount",
     "monthlyTreatmentQuota",
@@ -3226,6 +3231,7 @@ function saveClients_(sheet, clients) {
       poolType: String(c.poolType || "מלח"),
       regularDays: String(c.regularDays || ""),
       regularOperator: String(c.regularOperator || ""),
+      waterCheckDays: String(c.waterCheckDays || ""),
       monthlyTreatmentBalance: numberOrZero(c.monthlyTreatmentBalance),
       monthlyTreatmentCount: numberOrZero(c.monthlyTreatmentCount),
       monthlyTreatmentQuota: numberOrZero(c.monthlyTreatmentQuota ?? c.monthlyTreatmentBalance),
@@ -4081,6 +4087,7 @@ function json(obj) {
         {name:"סוג_בריכה", col:6},
         {name:"ימים_קבועים", col:7},
         {name:"מפעיל_קבוע", col:8},
+        {name:"ימי_בדיקת_מים", col:13},
       {name:"יתרת_טיפולים_חודשית", col:9},
       {name:"מונה_טיפולים_בפועל", col:10},
       {name:"מכסת_טיפולים_חודשית", col:11},
@@ -4159,7 +4166,7 @@ function json(obj) {
     const ss = SpreadsheetApp.openById(sheetId || "1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no");
     const expected = {
       "Users": ["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"],
-      "לקוחות": ["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"],
+      "לקוחות": ["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","ימי_בדיקת_מים","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"],
       "דוחות": ["תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק"],
       "משימות": ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"],
       "חלוקת_עבודה": ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"],
