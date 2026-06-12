@@ -2905,7 +2905,24 @@ useEffect(() => {
     const nameMatch = isAdminPanelRole(user?.role) || (t.operators||[]).some(op => normalizeName(op)===normalizeName(ownerName) || subValues.includes(normalizeName(op)));
     return dateMatch && nameMatch;
   });
-  const clientMeasurementHistory = (clientName, id = "") => {
+  const measurementTabValue = (value) => {
+    const text = String(value ?? "").trim();
+    return text === "" ? "0" : text;
+  };
+  const measurementIdentity = (source = {}) => [
+    normalizeDate(source.reportDate || source.date),
+    source.chlorine ?? "",
+    source.ph ?? "",
+    measurementTabValue(source.chlora)
+  ].join("|");
+  const isSameMeasurementReading = (report = {}, reading = {}) => {
+    const sameDate = normalizeDate(report.reportDate || report.date) === normalizeDate(reading.reportDate || reading.date);
+    const sameChlorine = String(report.chlorine ?? "") === String(reading.chlorine ?? "");
+    const samePh = String(report.ph ?? "") === String(reading.ph ?? "");
+    const sameTab = measurementTabValue(report.chlora) === measurementTabValue(reading.chlora);
+    return sameDate && sameChlorine && samePh && sameTab;
+  };
+  const clientMeasurementHistory = (clientName, id = "", latestReading = null) => {
     const wantedId = String(id || clientIdByName(clientName) || "").trim();
     const wantedName = normalizeName(clientName);
     const seen = new Set();
@@ -2917,7 +2934,8 @@ useEffect(() => {
       })
       .sort((a,b)=>normalizeDate(b.reportDate).localeCompare(normalizeDate(a.reportDate)))
       .filter(r => {
-        const key = [normalizeDate(r.reportDate), r.chlorine ?? "", r.ph ?? "", r.salt ?? ""].join("|");
+        const key = measurementIdentity(r);
+        if (latestReading && isSameMeasurementReading(r, latestReading)) return false;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -5828,7 +5846,7 @@ useEffect(() => {
                 );
                   return (
                     <div style={{marginBottom:10}}>
-                      {(()=>{ const historyKey = t.clientId || t.client; const history = clientMeasurementHistory(t.client, t.clientId); const historyOpen = !!openMeasurementHistory[historyKey]; return (
+                      {(()=>{ const historyKey = t.clientId || t.client; const history = clientMeasurementHistory(t.client, t.clientId, lr); const historyOpen = !!openMeasurementHistory[historyKey]; return (
                         <>
                       <Press onClick={()=>{setOpenMeasurementHistory(x=>({...x,[historyKey]:!x[historyKey]}));haptic();}} style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",cursor:"pointer",width:"100%",border:historyOpen?`1px solid ${C.blue}`:"1px solid transparent"}}>
                         <span style={{fontSize:12,fontWeight:700,color:C.blue}}>📊 מדידה אחרונה:</span>
@@ -5848,7 +5866,7 @@ useEffect(() => {
                               <span style={{fontSize:11,fontWeight:800,color:C.muted,display:"flex",gap:8,flexWrap:"wrap"}}>
                                 <span style={{color:"#1565c0"}}>Cl: {r.chlorine ?? "-"}</span>
                                 <span style={{color:"#6a1b9a"}}>pH: {r.ph ?? "-"}</span>
-                                <span style={{color:C.green}}>מלח: {r.salt ?? "-"}</span>
+                                <span style={{color:C.green}}>TAB: {r.chlora ?? "-"}</span>
                               </span>
                             </div>
                           )) : <div style={{fontSize:11,fontWeight:800,color:C.muted,textAlign:"center"}}>אין מדידות קודמות</div>}
