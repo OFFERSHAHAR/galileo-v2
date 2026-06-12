@@ -2403,6 +2403,11 @@ useEffect(() => {
   const [editingAdminClient,setEditingAdminClient] = useState(null);
   const [clientListSearch,setClientListSearch] = useState("");
   const [adminClientSearch,setAdminClientSearch] = useState("");
+  const [manualWaClient,setManualWaClient] = useState("");
+  const [manualWaClientSearch,setManualWaClientSearch] = useState("");
+  const [manualWaMessage,setManualWaMessage] = useState("");
+  const [manualWaSendAll,setManualWaSendAll] = useState(false);
+  const [manualWaLastResult,setManualWaLastResult] = useState(null);
   const [selectedAdminOperator,setSelectedAdminOperator] = useState("");
   const [adminOrderDraft,setAdminOrderDraft] = useState([]);
   const [adminOrderClientSearch,setAdminOrderClientSearch] = useState("");
@@ -2634,6 +2639,15 @@ useEffect(() => {
     showToast(disabled ? "שליחת ווצאפ בוטלה לכל הלקוחות המשויכים" : "שליחת ווצאפ הופעלה לכל הלקוחות המשויכים");
     haptic("medium");
   };
+  const disabledWhatsAppClients = () => sortByClientName(clients.filter(c => isWhatsAppDisabledForClient(c.name)));
+  const manualWaBaseClients = () => {
+    if (manualWaSendAll) return sortByClientName(clients);
+    const selected = manualWaClient ? findClientByName(manualWaClient) : null;
+    return selected ? [selected] : [];
+  };
+  const manualWaRecipients = () => manualWaBaseClients()
+    .map(c => ({...c, phone: normalizeWhatsAppPhone(c.phone || clientPhone(c.name))}))
+    .filter(c => c.phone && !isWhatsAppDisabledForClient(c.name));
   const WhatsAppClientToggle = ({client: clientValue, compact=false}) => {
     const disabled = isWhatsAppDisabledForClient(clientValue);
     return (
@@ -3047,6 +3061,32 @@ useEffect(() => {
     if (materialNamesFromSupply(metaSupply).length) return metaSupply;
     return supplyFromReportLike(materialApprovalReport(approval));
   };
+  const materialApprovalDisplayStatus = (approval) => {
+    const status = String(approval?.status || "").trim().toLowerCase();
+    const answer = String(approval?.answer || "");
+    if (status === "rejected" || answer.includes("לא")) return {label:"לקוח לא אישר", col:C.red};
+    if (status === "pending") return {label:"ממתין לאישור לקוח", col:C.orange};
+    if (["approved","admin_added","auto_added","added"].includes(status) || (answer.includes("מאשר") && !answer.includes("לא"))) {
+      return {label:"לקוח אישר", col:C.green};
+    }
+    return null;
+  };
+  const materialApprovalStatusForSupply = (clientName, supply = {}, reportId = "") => {
+    const wantedNames = materialNamesFromSupply(supply).map(normalizeName).filter(Boolean);
+    if (!clientName || !wantedNames.length) return null;
+    return [...materialApprovals]
+      .filter(approval => {
+        if (normalizeName(approval?.client) !== normalizeName(clientName)) return false;
+        const approvalNames = materialNamesFromSupply(materialApprovalSupply(approval)).map(normalizeName).filter(Boolean);
+        if (!approvalNames.length) return false;
+        const reportMatch = reportId && String(approval?.reportId || "") === String(reportId);
+        const materialsMatch = wantedNames.every(name => approvalNames.includes(name));
+        return reportMatch || materialsMatch;
+      })
+      .sort((a,b)=>String(b.answeredAt || b.timestamp || "").localeCompare(String(a.answeredAt || a.timestamp || "")))
+      .map(materialApprovalDisplayStatus)
+      .find(Boolean) || null;
+  };
   const isMaterialApprovalAwaitingAdmin = (approval) => {
     const status = String(approval?.status || "").toLowerCase();
     const answer = String(approval?.answer || "");
@@ -3193,7 +3233,7 @@ useEffect(() => {
       if (operatorRefreshRef.current) return;
       operatorRefreshRef.current = true;
       try {
-        const [tR, uR, oR, shR, apR, prR, lrR, setR, repR] = await Promise.all([
+        const [tR, uR, oR, shR, apR, prR, lrR, setR, repR, maR] = await Promise.all([
           sheetCall("getTasks"),
           sheetCall("getUsers"),
           sheetCall("getAdminOrders"),
@@ -3202,7 +3242,8 @@ useEffect(() => {
           sheetCall("getPendingSubReports"),
           sheetCall("getLastReadings"),
           sheetCall("getClientSettings"),
-          sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300})
+          sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300}),
+          sheetCall("getMaterialApprovals")
         ]);
         if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
         if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
@@ -3216,6 +3257,7 @@ useEffect(() => {
         if(setR?.settings?.chlorineReminderMessage) setChlorineReminderMessage(normalizeChlorineReminderMessage(setR.settings.chlorineReminderMessage));
         if(setR?.settings?.waterLevelNoticeMessage) setWaterLevelNoticeMessage(normalizeWaterLevelNoticeMessage(setR.settings.waterLevelNoticeMessage));
         if(Array.isArray(repR?.reports)) setSheetReports(repR.reports);
+        if(Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
         if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
         try {
           const cached = localStorage.getItem("galileo_cache");
@@ -4065,8 +4107,12 @@ useEffect(() => {
       await connectSheets(true);
       if (screen === "daily" || screen === "admin") await loadOperatorIssues(true);
       if (screen === "daily") {
-        const rep = await sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300}).catch(()=>null);
+        const [rep, maR] = await Promise.all([
+          sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300}).catch(()=>null),
+          sheetCall("getMaterialApprovals").catch(()=>null)
+        ]);
         if (Array.isArray(rep?.reports)) setSheetReports(rep.reports);
+        if (Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
       }
       if (screen === "admin" && adminTab === "treatments") await loadTreatmentCounts();
       if (screen === "admin" && ["daily","progress","reports"].includes(adminTab)) {
@@ -4420,6 +4466,44 @@ useEffect(() => {
     setChlorineReminderMessageDraft(DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE);
     setWaterLevelNoticeMessageDraft(DEFAULT_WATER_LEVEL_NOTICE_MESSAGE);
     haptic("medium");
+  };
+
+  const sendManualWhatsApp = async () => {
+    if (isActionLoading("sendManualWa")) return;
+    const message = String(manualWaMessage || "").trim();
+    const recipients = manualWaRecipients();
+    if (!message) {
+      showToast("יש להזין מלל הודעה");
+      haptic("medium");
+      return;
+    }
+    if (!recipients.length) {
+      showToast(manualWaSendAll ? "אין לקוחות זמינים לשליחה" : "בחר לקוח עם טלפון ו-WhatsApp פעיל");
+      haptic("medium");
+      return;
+    }
+    setManualWaLastResult(null);
+    setAction("sendManualWa", "loading");
+    const results = [];
+    for (const recipient of recipients) {
+      const res = await sheetCall("sendGreenApiWhatsApp", {
+        phone: recipient.phone,
+        chatId: `${recipient.phone}@c.us`,
+        message,
+        client: recipient.name
+      }).catch(e => ({success:false,error:e?.message || "send_failed"}));
+      results.push({
+        client: recipient.name,
+        ok: !!(res?.success || res?.idMessage || res?.response?.idMessage),
+        error: res?.error || ""
+      });
+    }
+    const sent = results.filter(r => r.ok).length;
+    const failed = results.length - sent;
+    setManualWaLastResult({sent,failed,total:results.length});
+    setAction("sendManualWa", failed ? "error" : "success", failed ? 2600 : 1800);
+    showToast(failed ? `נשלחו ${sent}, נכשלו ${failed}` : `נשלחו ${sent} הודעות`);
+    haptic(failed ? "medium" : "success");
   };
 
   const sendReportWhatsApp = async (report) => {
@@ -5755,6 +5839,7 @@ useEffect(() => {
             const doneKey = `${dailyDate}:${t.id || t.client}`;
             const isDoneOpen = !!openDoneTasks[doneKey];
             const supply = clientSupply(t.client);
+            const supplyApprovalStatus = materialApprovalStatusForSupply(t.client, supply);
             const showTaskSupply = explicitSupplyClients.has(normalizeName(t.client)) && isSupplyDueForDate(t.client, dailyDate, supply);
             const lastLog = t.changeLog?.[t.changeLog.length-1];
             const needsAck = !isSubOperator && !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy||[]).includes(user?.name);
@@ -5934,7 +6019,10 @@ useEffect(() => {
                 })()}
                 {supply&&showTaskSupply&&!isDone&&(
                   <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:10}}>
-                    <div style={{fontSize:11,fontWeight:700,color:C.blue,marginBottom:4}}>📦 חומרים נדרשים:</div>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
+                      <div style={{fontSize:11,fontWeight:700,color:C.blue}}>📦 חומרים נדרשים:</div>
+                      {supplyApprovalStatus&&<Badge label={supplyApprovalStatus.label} col={supplyApprovalStatus.col}/>}
+                    </div>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                       {supply.acid&&<span style={{background:C.white,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,color:C.text,border:"1px solid "+C.border}}>🧪 חומצת מלח</span>}
                       {supply.phUpSupply&&<span style={{background:C.white,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,color:C.text,border:"1px solid "+C.border}}>📈 מעלה pH</span>}
@@ -6232,7 +6320,7 @@ useEffect(() => {
 
         <Sec icon="📦" title="חומרים לטיפול הבא">
           <div style={{...card()}}>
-            <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",gap:6,alignItems:"center"}}><span>🔒</span><span style={{fontSize:11,fontWeight:700,color:C.blue}}>נשלח ללקוח לאישור</span></div>
+            <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span>🔒</span><span style={{fontSize:11,fontWeight:700,color:C.blue}}>נשלח ללקוח לאישור</span>{(()=>{ const approvalStatus = materialApprovalStatusForSupply(client, {acid,phUpSupply,saltPkg,saltBags}, form.id || editingReport?.localId); return approvalStatus ? <Badge label={approvalStatus.label} col={approvalStatus.col}/> : null; })()}</div>
             {[["acid",acid,"🧪 חומצת מלח"],["phUpSupply",phUpSupply,"📈 מעלה pH"],["saltPkg",saltPkg,"🧂 שקי מלח"]].map(([k,v,lbl])=>(
               <Press key={k} onClick={()=>{sf(k,!v);haptic();}} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:`1px solid ${C.border}`}}>
                 <div style={{width:26,height:26,borderRadius:8,border:`2px solid ${v?C.blue:C.border}`,background:v?C.blue:C.white,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s",flexShrink:0}}>{v&&<span style={{color:"#fff",fontSize:14}}>✓</span>}</div>
@@ -6717,6 +6805,67 @@ useEffect(() => {
                   <Press onClick={resetWaMessageTemplate} style={{padding:"13px",borderRadius:14,background:"rgba(241,245,249,0.86)",color:C.muted,fontSize:13,fontWeight:900,textAlign:"center",border:`1px solid ${C.border}`}}>שחזר ברירת מחדל</Press>
                 </div>
               </div>
+              {(()=>{ const disabledClients = disabledWhatsAppClients(); const recipients = manualWaRecipients(); const baseClients = manualWaBaseClients(); const blockedSelected = baseClients.filter(c=>isWhatsAppDisabledForClient(c.name)); const missingPhoneSelected = baseClients.filter(c=>!isWhatsAppDisabledForClient(c.name) && !normalizeWhatsAppPhone(c.phone || clientPhone(c.name))); const canSendManual = String(manualWaMessage||"").trim() && recipients.length && !isActionLoading("sendManualWa"); return (
+              <div style={{...adminGlass({marginBottom:14})}}>
+                <div style={{fontSize:18,fontWeight:900,color:C.text,marginBottom:6}}>הודעת WhatsApp יזומה</div>
+                <div style={{fontSize:12,fontWeight:800,color:C.muted,marginBottom:10}}>שליחה חופשית בלבד, ללא דוח, סקר או תזכורת.</div>
+                <textarea
+                  value={manualWaMessage}
+                  onChange={e=>setManualWaMessage(e.target.value)}
+                  rows={4}
+                  placeholder="כתוב כאן הודעה יזומה ללקוח..."
+                  style={{...inp,resize:"vertical",minHeight:112,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:12}}
+                />
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                  <Press onClick={()=>{setManualWaSendAll(false);haptic();}} style={{padding:"11px",borderRadius:14,textAlign:"center",fontSize:13,fontWeight:900,border:`2px solid ${!manualWaSendAll?C.blue:C.border}`,background:!manualWaSendAll?"#e3f2fd":"#fff",color:!manualWaSendAll?C.blue:C.muted}}>לקוח אחד</Press>
+                  <Press onClick={()=>{setManualWaSendAll(true);setManualWaClient("");setManualWaClientSearch("");haptic();}} style={{padding:"11px",borderRadius:14,textAlign:"center",fontSize:13,fontWeight:900,border:`2px solid ${manualWaSendAll?C.blue:C.border}`,background:manualWaSendAll?"#e3f2fd":"#fff",color:manualWaSendAll?C.blue:C.muted}}>שליחה לכולם</Press>
+                </div>
+                {!manualWaSendAll&&(
+                  <div style={{position:"relative",marginBottom:12}}>
+                    {manualWaClient?(
+                      <div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}>
+                        <span style={{color:C.blue,fontWeight:800}}>🏊 {manualWaClient.split(" - ")[0]}</span>
+                        <span onClick={()=>{setManualWaClient("");setManualWaClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span>
+                      </div>
+                    ):(
+                      <>
+                        <input value={manualWaClientSearch} onChange={e=>setManualWaClientSearch(e.target.value)} placeholder="🔍 בחר לקוח לשליחה..." style={inp} autoComplete="off"/>
+                        {manualWaClientSearch&&(
+                          <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:120,maxHeight:240,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
+                            {filterClientOptions(clients, manualWaClientSearch).map(c=>(
+                              <Press key={c.name} onClick={()=>{setManualWaClient(c.name);setManualWaClientSearch("");setManualWaSendAll(false);haptic();}} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
+                                <div style={{flex:1,minWidth:0}}><div style={{fontWeight:800,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div><div style={{fontSize:11,color:isWhatsAppDisabledForClient(c.name)?C.red:C.muted}}>{isWhatsAppDisabledForClient(c.name)?"WhatsApp כבוי":(c.phone || "ללא טלפון")}</div></div>
+                              </Press>
+                            ))}
+                            {filterClientOptions(clients, manualWaClientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות מתחילת שם הלקוח</div>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
+                  <Badge label={`נבחרו לשליחה: ${recipients.length}`} col={recipients.length?C.green:C.muted}/>
+                  {blockedSelected.length>0&&<Badge label={`WhatsApp כבוי: ${blockedSelected.length}`} col={C.red}/>}
+                  {missingPhoneSelected.length>0&&<Badge label={`ללא טלפון: ${missingPhoneSelected.length}`} col={C.orange}/>}
+                  {manualWaLastResult&&<Badge label={`נשלחו ${manualWaLastResult.sent}/${manualWaLastResult.total}`} col={manualWaLastResult.failed?C.orange:C.green}/>}
+                </div>
+                <Press onClick={()=>canSendManual&&sendManualWhatsApp()} style={{padding:"13px",borderRadius:14,background:actionStatus.sendManualWa==="success"?C.green:actionStatus.sendManualWa==="error"?C.orange:adminPrimaryGradient,color:"#fff",fontSize:13,fontWeight:900,textAlign:"center",boxShadow:"0 12px 28px rgba(79,70,229,0.22)",opacity:canSendManual?1:0.55,marginBottom:12}}>
+                  {actionLabel("sendManualWa",{idle:"שלח הודעה",loading:"שולח...",success:"נשלח",error:"שגיאה"})}
+                </Press>
+                <div style={{border:`1px solid ${C.border}`,borderRadius:14,background:"#f8fafc",padding:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:disabledClients.length?8:0}}>
+                    <div style={{fontSize:12,fontWeight:900,color:C.text}}>לקוחות עם WhatsApp כבוי</div>
+                    <Badge label={`${disabledClients.length}`} col={disabledClients.length?C.red:C.green}/>
+                  </div>
+                  {disabledClients.length>0?(
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",maxHeight:128,overflowY:"auto"}}>
+                      {disabledClients.map(c=><span key={c.name} style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"5px 10px",fontSize:11,fontWeight:800}}>{c.name.split(" - ")[0]}</span>)}
+                    </div>
+                  ):<div style={{fontSize:12,fontWeight:800,color:C.muted}}>אין לקוחות כבויים.</div>}
+                </div>
+              </div>
+              ); })()}
               <div style={{...adminGlass({marginBottom:14,background:"rgba(255,255,255,0.82)"})}}>
                 <div style={{fontSize:13,fontWeight:900,color:C.text,marginBottom:8}}>תצוגה מקדימה</div>
                 <div style={{whiteSpace:"pre-wrap",fontSize:13,fontWeight:700,color:C.text,lineHeight:1.65,background:"#f8fafc",border:`1px solid ${C.border}`,borderRadius:14,padding:12}}>
