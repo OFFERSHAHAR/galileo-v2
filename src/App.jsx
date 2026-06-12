@@ -7,6 +7,8 @@ const WA_TEMPLATE_STORAGE_KEY = "galileo_whatsapp_template";
 const WA_POLL_MESSAGE_STORAGE_KEY = "galileo_whatsapp_poll_message";
 const WA_POLL_OPTIONS_STORAGE_KEY = "galileo_whatsapp_poll_options";
 const WA_DISABLED_CLIENTS_STORAGE_KEY = "galileo_whatsapp_disabled_clients";
+const CHLORINE_TABLET_REMINDER_DAYS = 3;
+const CHLORINE_TABLET_REMINDER_MESSAGE = "יש להוסיף טבלית כלור :)";
 const DEFAULT_WA_MESSAGE_TEMPLATE = `*טיפול בריכה הושלם!*
 
 שלום {clientName},
@@ -166,6 +168,25 @@ const fmtDate = s => {
 };
 const calcNext = (s,days=90) => { if(!s)return null; const d=new Date(s); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10); };
 const nowStr = () => new Date().toLocaleString("he-IL");
+const isoAfterDays = (days) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+};
+const daysUntilIso = (value) => {
+  const due = new Date(value || isoAfterDays(CHLORINE_TABLET_REMINDER_DAYS));
+  if (Number.isNaN(due.getTime())) return CHLORINE_TABLET_REMINDER_DAYS;
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const dueDay = new Date(due);
+  dueDay.setHours(0,0,0,0);
+  return Math.max(0, Math.ceil((dueDay - today) / 86400000));
+};
+const reminderCounterText = (days) => {
+  if (days <= 0) return "נשלח היום";
+  if (days === 1) return "נשלח בעוד יום";
+  return `נשלח בעוד ${days} ימים`;
+};
 
 function getCompany() {
   try { return JSON.parse(localStorage.getItem("galileo_company")||"{}"); } catch { return {}; }
@@ -289,7 +310,7 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
-const APP_BUILD_ID = "20260612-bulk-whatsapp-toggle-1";
+const APP_BUILD_ID = "20260612-chlorine-reminder-1";
 const APP_VERSION_URL = "/version.json";
 const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
 const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
@@ -1239,7 +1260,7 @@ const blank = () => ({
   reportDate:todayStr(),client:"",chlorine:0,ph:0,salt:0,chlora:0,hth:0,phUp:0,acidLiters:0,
   elModel:"",elSerial:"",elDate:"",waterLevel:"תקין",clarity:"תקין",fat:"תקין",flow:"",
   acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyStatus:"",supplyNote:"",suppliedEquipment:[],chlorineZeroConfirmed:false,phLowConfirmed:false,poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
-  notes:"",photos:[],clientLocked:false,adminReport:false,lowSaltLight:false,
+  notes:"",photos:[],clientLocked:false,adminReport:false,lowSaltLight:false,sendReminder:false,chlorineReminderCreatedAt:"",chlorineReminderDueAt:"",chlorineReminderMessage:"",
 });
 
 function generateLicenseKey() {
@@ -2410,7 +2431,17 @@ useEffect(() => {
   };
 
   const sf = (k,v) => setForm(f=>({...f,[k]:v}));
-  const {reportDate,client,chlorine,ph,salt,elModel,elSerial,elDate,waterLevel,clarity,fat,flow,acid,phUpSupply,saltPkg,saltBags,supplyStatus,supplyNote,suppliedEquipment=[],poolStatus,customStatusText,restrictedUntil,notes,photos} = form;
+  const {reportDate,client,chlorine,ph,salt,elModel,elSerial,elDate,waterLevel,clarity,fat,flow,acid,phUpSupply,saltPkg,saltBags,supplyStatus,supplyNote,suppliedEquipment=[],poolStatus,customStatusText,restrictedUntil,notes,photos,sendReminder} = form;
+  const setChlorineReminderEnabled = (checked) => {
+    setForm(f => {
+      if (!checked) return {...f, sendReminder:false, chlorineReminderCreatedAt:"", chlorineReminderDueAt:"", chlorineReminderMessage:""};
+      const createdAt = f.chlorineReminderCreatedAt || new Date().toISOString();
+      const dueAt = f.chlorineReminderDueAt || isoAfterDays(CHLORINE_TABLET_REMINDER_DAYS);
+      return {...f, sendReminder:true, chlorineReminderCreatedAt:createdAt, chlorineReminderDueAt:dueAt, chlorineReminderMessage:CHLORINE_TABLET_REMINDER_MESSAGE};
+    });
+    haptic();
+  };
+  const chlorineReminderDaysLeft = sendReminder ? daysUntilIso(form.chlorineReminderDueAt) : null;
   const fmtTime = (d) => d.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
   const formatDateInput = (d) => d.toISOString().slice(0,10);
   const normalizeDate = (d) => String(d||"").trim().slice(0,10);
@@ -4605,6 +4636,10 @@ useEffect(() => {
   customStatusText,
   restrictedUntil,
   notes,
+  sendReminder: !!form.sendReminder,
+  chlorineReminderCreatedAt: form.chlorineReminderCreatedAt || "",
+  chlorineReminderDueAt: form.chlorineReminderDueAt || "",
+  chlorineReminderMessage: form.sendReminder ? CHLORINE_TABLET_REMINDER_MESSAGE : "",
   photosCount:0
 };
     const sendEditedReportToCustomer = isEditingExistingReport && shouldSendEditedReportToCustomer(editingReport, report);
@@ -6067,6 +6102,11 @@ useEffect(() => {
         </Sec>
 
         <Sec icon="📊" title="מדידות">
+          <label style={{display:"flex",alignItems:"center",gap:12,margin:"0 0 12px",padding:"12px 14px",borderRadius:14,background:sendReminder?"#e8f5e9":C.white,border:`2px solid ${sendReminder?"#c8e6c9":C.border}`,boxShadow:"0 2px 8px rgba(0,0,0,0.04)",cursor:"pointer",userSelect:"none"}}>
+            <input type="checkbox" checked={!!sendReminder} onChange={e=>setChlorineReminderEnabled(e.target.checked)} style={{width:22,height:22,accentColor:C.green,flexShrink:0}}/>
+            <span style={{fontSize:14,fontWeight:900,color:C.text,flex:1}}>שלח תזכורת</span>
+            {sendReminder&&<span style={{fontSize:12,fontWeight:900,color:C.green,background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:99,padding:"4px 10px",whiteSpace:"nowrap"}}>{reminderCounterText(chlorineReminderDaysLeft)}</span>}
+          </label>
           {REPORT_SLIDER_CONFIGS.map(s=>(
             <Fragment key={s.key}>
             <CollapsibleSlider label={s.label} min={s.min} max={s.max} step={s.step} unit={s.unit} warnAbove={s.warnAbove} warnBelow={s.warnBelow} optimal={s.optimal} val={s.val} fn={s.fn} large={largeSlider} expandKey={`_exp_${s.key}`} form={form} sf={sf} disabled={s.disabled} disabledReason={s.disabledReason} zeroButtonLabel={s.zeroButtonLabel} phLowButton={s.phLowButton} saltLowLightButton={s.saltLowLightButton} required={s.required}/>

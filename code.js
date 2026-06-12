@@ -38,6 +38,10 @@
         return json(sendGreenApiPoll_(data, ss));
       }
 
+      if (action === "processChlorineReminders") {
+        return json(sendDueChlorineTabletReminders_(ss));
+      }
+
       if (action === "ensureGreenApiPollWebhooks") {
         return json(ensureGreenApiPollWebhooks_(data));
       }
@@ -376,7 +380,8 @@
           if (duplicate.row) {
             Logger.log("Duplicate report skipped: row " + duplicate.row);
             markSubOperatorShareDone_(ss, r);
-            return json({ success: true, duplicate: true, row: duplicate.row, id: duplicate.id || r.id || "" });
+            const reminderResult = queueChlorineTabletReminderSafe_(ss, r, data, duplicate.id || r.id || "");
+            return json({ success: true, duplicate: true, row: duplicate.row, id: duplicate.id || r.id || "", chlorineReminder: reminderResult });
           }
 
           if (data.supplyUpdate) {
@@ -388,6 +393,7 @@
           const savedRow = sheet.getLastRow();
           refreshMonthlyTreatmentCounters_(ss);
           markSubOperatorShareDone_(ss, r);
+          data._chlorineReminder = queueChlorineTabletReminderSafe_(ss, r, data, r.id || "");
           data._savedReportRow = savedRow;
         } finally {
           try { lock.releaseLock(); } catch(e) {}
@@ -444,7 +450,7 @@
           }
         }
 
-        return json({ success: true, row: data._savedReportRow || 0, id: r.id || "" });
+        return json({ success: true, row: data._savedReportRow || 0, id: r.id || "", chlorineReminder: data._chlorineReminder || null });
       }
 
       if (action === "updateReport") {
@@ -461,7 +467,9 @@
         sheet.getRange(row, 1, 1, 26).setValues([reportRowValues_(r)]);
         refreshMonthlyTreatmentCounters_(ss);
         markSubOperatorShareDone_(ss, r);
-        return json({ success:true, row, id: r.id || reportIdCell_(sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0]) || "" });
+        const savedReportId = r.id || reportIdCell_(sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0]) || "";
+        const reminderResult = queueChlorineTabletReminderSafe_(ss, r, data, savedReportId);
+        return json({ success:true, row, id: savedReportId, chlorineReminder: reminderResult });
       }
 
       if (action === "saveSupplyDB") {
@@ -780,6 +788,16 @@
     } else {
       ensureColumns(s, materialApprovalHeaders_());
     }
+
+    s = clientSS.getSheetByName("תזכורות_כלור");
+    if(!s) {
+      s = clientSS.insertSheet("תזכורות_כלור");
+      s.appendRow(chlorineReminderHeaders_());
+    } else if (s.getLastRow() === 0) {
+      s.appendRow(chlorineReminderHeaders_());
+    } else {
+      ensureColumns(s, chlorineReminderHeaders_());
+    }
     
     Logger.log("✅ Client sheet setup complete: " + clientSS.getName());
   }
@@ -903,6 +921,7 @@
     }
 
     sendNoonWorkClockReminders_(ss);
+    sendDueChlorineTabletReminders_(ss);
     appendMissingDailyReportsAfterFour_(ss);
   }
 
@@ -1470,6 +1489,10 @@
     return ["timestamp","client","phone","reportId","pollMessageId","status","answer","answeredAt","sender","raw"];
   }
 
+  function chlorineReminderHeaders_() {
+    return ["id","reportId","לקוח","clientId","טלפון","מפעיל","תאריך_דוח","createdAt","dueAt","daysDelay","message","status","sentAt","greenApiMessageId","error","updatedAt"];
+  }
+
   function getMaterialApprovalsSheet_(ss) {
     let sheet = ss.getSheetByName("MaterialApprovals");
     if (!sheet) {
@@ -1481,6 +1504,229 @@
       ensureColumns(sheet, materialApprovalHeaders_());
     }
     return sheet;
+  }
+
+  function getChlorineReminderSheet_(ss) {
+    let sheet = ss.getSheetByName("תזכורות_כלור");
+    if (!sheet) {
+      sheet = ss.insertSheet("תזכורות_כלור");
+      sheet.appendRow(chlorineReminderHeaders_());
+    } else if (sheet.getLastRow() === 0) {
+      sheet.appendRow(chlorineReminderHeaders_());
+    } else {
+      ensureColumns(sheet, chlorineReminderHeaders_());
+    }
+    return sheet;
+  }
+
+  function isTruthy_(value) {
+    if (value === true) return true;
+    const text = String(value || "").trim().toLowerCase();
+    return ["true","1","yes","y","כן","מסומן"].includes(text);
+  }
+
+  function reminderDateText_(date) {
+    return Utilities.formatDate(date, "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss");
+  }
+
+  function parseReminderDate_(value) {
+    if (!value) return null;
+    if (value instanceof Date && !isNaN(value)) return value;
+    const text = String(value).trim();
+    const parsed = new Date(text);
+    if (!isNaN(parsed)) return parsed;
+    const normalized = normalizeReportDate_(text);
+    if (normalized) return new Date(normalized + "T00:00:00+02:00");
+    return null;
+  }
+
+  function addReminderDays_(date, days) {
+    const d = new Date((date || new Date()).getTime());
+    d.setDate(d.getDate() + (Number(days) || 3));
+    return d;
+  }
+
+  function updateChlorineReminderRow_(sheet, rowNumber, headers, updates) {
+    Object.keys(updates || {}).forEach(key => {
+      const idx = headers.indexOf(key);
+      if (idx >= 0) sheet.getRange(rowNumber, idx + 1).setValue(updates[key]);
+    });
+  }
+
+  function getClientPhoneForReminder_(ss, clientName, clientId, fallbackPhone) {
+    const fallback = normalizeGreenApiPhone_(fallbackPhone || "");
+    if (fallback) return fallback;
+    const wantedId = normalizeReportValue_(clientId).toLowerCase();
+    const wantedName = normalizeReportValue_(clientName).toLowerCase();
+    const clients = getClients_(ss);
+    const found = clients.find(c => wantedId && normalizeReportValue_(c.clientId).toLowerCase() === wantedId) ||
+      clients.find(c => wantedName && normalizeReportValue_(c.name).toLowerCase() === wantedName);
+    return normalizeGreenApiPhone_(found && found.phone);
+  }
+
+  function findChlorineReminderRow_(sheet, headers, reportId, reminderId) {
+    const values = sheet.getDataRange().getValues();
+    if (values.length < 2) return { row:0, status:"" };
+    const reportIdx = headers.indexOf("reportId");
+    const idIdx = headers.indexOf("id");
+    const statusIdx = headers.indexOf("status");
+    for (let i = values.length - 1; i >= 1; i--) {
+      const row = values[i];
+      const sameReport = reportIdx >= 0 && reportId && String(row[reportIdx] || "").trim() === reportId;
+      const sameId = idIdx >= 0 && reminderId && String(row[idIdx] || "").trim() === reminderId;
+      if (sameReport || sameId) {
+        return { row:i + 1, status:statusIdx >= 0 ? String(row[statusIdx] || "").trim() : "" };
+      }
+    }
+    return { row:0, status:"" };
+  }
+
+  function queueChlorineTabletReminderSafe_(ss, report, data, reportIdOverride) {
+    try {
+      return queueChlorineTabletReminder_(ss, report, data, reportIdOverride);
+    } catch(e) {
+      Logger.log("Chlorine reminder queue failed: " + e);
+      return { success:false, error:String(e) };
+    }
+  }
+
+  function queueChlorineTabletReminder_(ss, report, data, reportIdOverride) {
+    const r = report || {};
+    if (!isTruthy_(r.sendReminder)) return { skipped:true };
+
+    const sheet = getChlorineReminderSheet_(ss);
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h || "").trim());
+    const reportId = String(reportIdOverride || r.id || Utilities.getUuid()).trim();
+    const client = String(r.client || "").trim();
+    const clientId = String(r.clientId || "").trim();
+    const operator = String(r.operator || "").trim();
+    const createdAtDate = parseReminderDate_(r.chlorineReminderCreatedAt) || new Date();
+    const dueAtDate = parseReminderDate_(r.chlorineReminderDueAt) || addReminderDays_(createdAtDate, 3);
+    const createdAt = reminderDateText_(createdAtDate);
+    const dueAt = reminderDateText_(dueAtDate);
+    const phone = getClientPhoneForReminder_(ss, client, clientId, data && data.clientPhone);
+    const reminderId = "chlorine-" + (reportId || Utilities.getUuid());
+    const now = reminderDateText_(new Date());
+    const message = String(r.chlorineReminderMessage || "יש להוסיף טבלית כלור :)").trim() || "יש להוסיף טבלית כלור :)";
+    const existing = findChlorineReminderRow_(sheet, headers, reportId, reminderId);
+
+    if (existing.row && existing.status === "נשלחה") {
+      return { success:true, skipped:true, alreadySent:true, row:existing.row, dueAt };
+    }
+
+    const record = {
+      id: reminderId,
+      reportId,
+      "לקוח": client,
+      clientId,
+      "טלפון": phone,
+      "מפעיל": operator,
+      "תאריך_דוח": normalizeReportDate_(r.reportDate) || r.reportDate || "",
+      createdAt,
+      dueAt,
+      daysDelay: 3,
+      message,
+      status: "ממתינה",
+      sentAt: "",
+      greenApiMessageId: "",
+      error: phone ? "" : "missing_phone",
+      updatedAt: now
+    };
+
+    if (existing.row) {
+      updateChlorineReminderRow_(sheet, existing.row, headers, record);
+      return { success:true, queued:true, updated:true, row:existing.row, dueAt };
+    }
+
+    sheet.appendRow(headers.map(h => record[h] !== undefined ? record[h] : ""));
+    return { success:true, queued:true, row:sheet.getLastRow(), dueAt };
+  }
+
+  function sendDueChlorineTabletReminders_(ss) {
+    const lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(5000);
+      const sheet = getChlorineReminderSheet_(ss);
+      const values = sheet.getDataRange().getValues();
+      if (values.length < 2) return { success:true, sent:0, failed:0 };
+
+      const headers = values[0].map(h => String(h || "").trim());
+      const idx = name => headers.indexOf(name);
+      const statusIdx = idx("status");
+      const dueIdx = idx("dueAt");
+      const phoneIdx = idx("טלפון");
+      const clientIdx = idx("לקוח");
+      const clientIdIdx = idx("clientId");
+      const reportIdx = idx("reportId");
+      const messageIdx = idx("message");
+      const now = new Date();
+      let sent = 0;
+      let failed = 0;
+
+      for (let i = 1; i < values.length; i++) {
+        const row = values[i];
+        const status = statusIdx >= 0 ? String(row[statusIdx] || "").trim() : "";
+        if (status && status !== "ממתינה") continue;
+
+        const dueAt = dueIdx >= 0 ? parseReminderDate_(row[dueIdx]) : null;
+        if (!dueAt || dueAt.getTime() > now.getTime()) continue;
+
+        const rowNumber = i + 1;
+        const client = clientIdx >= 0 ? String(row[clientIdx] || "").trim() : "";
+        const clientId = clientIdIdx >= 0 ? String(row[clientIdIdx] || "").trim() : "";
+        const reportId = reportIdx >= 0 ? String(row[reportIdx] || "").trim() : "";
+        const phone = getClientPhoneForReminder_(ss, client, clientId, phoneIdx >= 0 ? row[phoneIdx] : "");
+        const message = String(messageIdx >= 0 ? row[messageIdx] || "" : "").trim() || "יש להוסיף טבלית כלור :)";
+
+        if (!phone) {
+          failed++;
+          updateChlorineReminderRow_(sheet, rowNumber, headers, {
+            status: "שגיאה",
+            error: "missing_phone",
+            updatedAt: reminderDateText_(new Date())
+          });
+          continue;
+        }
+
+        try {
+          const res = sendGreenApiWhatsApp_({ phone, message, client, reportId });
+          if (res && res.success) {
+            sent++;
+            updateChlorineReminderRow_(sheet, rowNumber, headers, {
+              "טלפון": phone,
+              status: "נשלחה",
+              sentAt: reminderDateText_(new Date()),
+              greenApiMessageId: res.idMessage || "",
+              error: "",
+              updatedAt: reminderDateText_(new Date())
+            });
+          } else {
+            failed++;
+            updateChlorineReminderRow_(sheet, rowNumber, headers, {
+              "טלפון": phone,
+              status: "שגיאה",
+              error: JSON.stringify(res || { error:"send_failed" }).slice(0, 500),
+              updatedAt: reminderDateText_(new Date())
+            });
+          }
+        } catch(e) {
+          failed++;
+          updateChlorineReminderRow_(sheet, rowNumber, headers, {
+            "טלפון": phone,
+            status: "שגיאה",
+            error: String(e).slice(0, 500),
+            updatedAt: reminderDateText_(new Date())
+          });
+        }
+      }
+
+      return { success:true, sent, failed };
+    } catch(e) {
+      Logger.log("sendDueChlorineTabletReminders failed: " + e);
+      return { success:false, error:String(e) };
+    } finally {
+      try { lock.releaseLock(); } catch(e) {}
+    }
   }
 
   function getMaterialApprovals_(ss) {
@@ -3928,7 +4174,8 @@ function json(obj) {
       "PendingSubReports": ["id","status","createdAt","operator","subUsername","subName","payload"],
       "ClientSettings": ["key","value"],
       "UsageEvents": ["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"],
-      "MaterialApprovals": ["timestamp","client","phone","reportId","pollMessageId","status","answer","answeredAt","sender","raw"]
+      "MaterialApprovals": ["timestamp","client","phone","reportId","pollMessageId","status","answer","answeredAt","sender","raw"],
+      "תזכורות_כלור": ["id","reportId","לקוח","clientId","טלפון","מפעיל","תאריך_דוח","createdAt","dueAt","daysDelay","message","status","sentAt","greenApiMessageId","error","updatedAt"]
     };
     const expectedNames = Object.keys(expected);
     const report = {
