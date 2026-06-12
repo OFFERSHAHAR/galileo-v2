@@ -6,9 +6,10 @@ const DEMO_CLIENTS = [];
 const WA_TEMPLATE_STORAGE_KEY = "galileo_whatsapp_template";
 const WA_POLL_MESSAGE_STORAGE_KEY = "galileo_whatsapp_poll_message";
 const WA_POLL_OPTIONS_STORAGE_KEY = "galileo_whatsapp_poll_options";
+const WA_TABLET_REMINDER_STORAGE_KEY = "galileo_whatsapp_tablet_reminder_message";
 const WA_DISABLED_CLIENTS_STORAGE_KEY = "galileo_whatsapp_disabled_clients";
 const CHLORINE_TABLET_REMINDER_DAYS = 3;
-const CHLORINE_TABLET_REMINDER_MESSAGE = "יש להוסיף טבלית כלור :)";
+const DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE = "יש להוסיף טבלית כלור :)";
 const DEFAULT_WA_MESSAGE_TEMPLATE = `*טיפול בריכה הושלם!*
 
 שלום {clientName},
@@ -24,6 +25,7 @@ const normalizeWaMessageTemplate = (value) => String(value || "").trim() || DEFA
 const DEFAULT_WA_POLL_MESSAGE = "האם מאושר לספק חומרים לאיזון המים?";
 const normalizeWaPollMessage = (value) => String(value || "").trim() || DEFAULT_WA_POLL_MESSAGE;
 const DEFAULT_WA_POLL_OPTIONS = ["מאשר אספקה", "לא מאשר"];
+const normalizeChlorineReminderMessage = (value) => String(value || "").trim() || DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE;
 const normalizeWaPollOptions = (value) => {
   let source = value;
   if (typeof source === "string") {
@@ -2033,6 +2035,12 @@ export default function App() {
   const [waPollOptionsDraft,setWaPollOptionsDraft] = useState(() => {
     try { return normalizeWaPollOptions(localStorage.getItem(WA_POLL_OPTIONS_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_OPTIONS; }
   });
+  const [chlorineReminderMessage,setChlorineReminderMessage] = useState(() => {
+    try { return normalizeChlorineReminderMessage(localStorage.getItem(WA_TABLET_REMINDER_STORAGE_KEY)); } catch { return DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE; }
+  });
+  const [chlorineReminderMessageDraft,setChlorineReminderMessageDraft] = useState(() => {
+    try { return normalizeChlorineReminderMessage(localStorage.getItem(WA_TABLET_REMINDER_STORAGE_KEY)); } catch { return DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE; }
+  });
   const [waDisabledClients,setWaDisabledClients] = useState(() => {
     try {
       const value = JSON.parse(localStorage.getItem(WA_DISABLED_CLIENTS_STORAGE_KEY) || "[]");
@@ -2251,6 +2259,11 @@ useEffect(() => {
   try { localStorage.setItem(WA_POLL_OPTIONS_STORAGE_KEY, JSON.stringify(normalizeWaPollOptions(waPollOptions))); } catch {}
 }, [waPollOptions]);
 
+useEffect(() => {
+  setChlorineReminderMessageDraft(chlorineReminderMessage);
+  try { localStorage.setItem(WA_TABLET_REMINDER_STORAGE_KEY, chlorineReminderMessage); } catch {}
+}, [chlorineReminderMessage]);
+
 
 
 const [screen,setScreen] = useState(() => {
@@ -2437,7 +2450,7 @@ useEffect(() => {
       if (!checked) return {...f, sendReminder:false, chlorineReminderCreatedAt:"", chlorineReminderDueAt:"", chlorineReminderMessage:""};
       const createdAt = f.chlorineReminderCreatedAt || new Date().toISOString();
       const dueAt = f.chlorineReminderDueAt || isoAfterDays(CHLORINE_TABLET_REMINDER_DAYS);
-      return {...f, sendReminder:true, chlorineReminderCreatedAt:createdAt, chlorineReminderDueAt:dueAt, chlorineReminderMessage:CHLORINE_TABLET_REMINDER_MESSAGE};
+      return {...f, sendReminder:true, chlorineReminderCreatedAt:createdAt, chlorineReminderDueAt:dueAt, chlorineReminderMessage:normalizeChlorineReminderMessage(chlorineReminderMessage)};
     });
     haptic();
   };
@@ -3186,6 +3199,7 @@ useEffect(() => {
         if(setR?.settings?.waMessageTemplate) setWaMessageTemplate(normalizeWaMessageTemplate(setR.settings.waMessageTemplate));
         if(setR?.settings?.waPollMessage) setWaPollMessage(normalizeWaPollMessage(setR.settings.waPollMessage));
         if(setR?.settings?.waPollOptions) setWaPollOptions(normalizeWaPollOptions(setR.settings.waPollOptions));
+        if(setR?.settings?.chlorineReminderMessage) setChlorineReminderMessage(normalizeChlorineReminderMessage(setR.settings.chlorineReminderMessage));
         if(Array.isArray(repR?.reports)) setSheetReports(repR.reports);
         if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
         try {
@@ -3199,6 +3213,7 @@ useEffect(() => {
             subOperatorApprovals:Array.isArray(apR?.approvals) ? apR.approvals : c.subOperatorApprovals,
             pendingSubReports:Array.isArray(prR?.pendingSubReports) ? prR.pendingSubReports : c.pendingSubReports,
             waMessageTemplate:setR?.settings?.waMessageTemplate || c.waMessageTemplate,
+            chlorineReminderMessage:setR?.settings?.chlorineReminderMessage || c.chlorineReminderMessage,
             lastReadings:lrR?.lastReadings || c.lastReadings,
             sheetReports:Array.isArray(repR?.reports) ? repR.reports : c.sheetReports,
             users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
@@ -3996,7 +4011,7 @@ useEffect(() => {
   },[screen, adminTab, dailyDate, taskDate, sheetId, reportDateFilter, reportDateToFilter, reportFilter]);
 
   const connectSheets = async (bg=false) => {
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,waMessageTemplate:wt,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); if(wt) setWaMessageTemplate(normalizeWaMessageTemplate(wt)); setSheetId("connected"); if(!bg) return; } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,waMessageTemplate:wt,chlorineReminderMessage:crm,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); if(wt) setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(crm) setChlorineReminderMessage(normalizeChlorineReminderMessage(crm)); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
       let boot = await sheetCall("getBootstrapData");
       let u=boot?.users?.length?boot.users:null;
@@ -4013,13 +4028,14 @@ useEffect(() => {
       let wt=boot?.settings?.waMessageTemplate || boot?.waMessageTemplate || null;
       let wp=boot?.settings?.waPollMessage || boot?.waPollMessage || null;
       let wo=boot?.settings?.waPollOptions || boot?.waPollOptions || null;
+      let crm=boot?.settings?.chlorineReminderMessage || boot?.chlorineReminderMessage || null;
       if(!u && !c && !t && !ord && !s && !lr){
         const [uR,cR,tR,oR,sR,rR,ucR,shR,apR,prR,maR,setR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals"),sheetCall("getPendingSubReports"),sheetCall("getMaterialApprovals"),sheetCall("getClientSettings")]);
-        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt; wp=setR?.settings?.waPollMessage || setR?.waPollMessage || wp; wo=setR?.settings?.waPollOptions || setR?.waPollOptions || wo;
+        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt; wp=setR?.settings?.waPollMessage || setR?.waPollMessage || wp; wo=setR?.settings?.waPollOptions || setR?.waPollOptions || wo; crm=setR?.settings?.chlorineReminderMessage || setR?.chlorineReminderMessage || crm;
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
-      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(wp)setWaPollMessage(normalizeWaPollMessage(wp)); if(wo)setWaPollOptions(normalizeWaPollOptions(wo));
-      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,sheetReports:sheetReports||[],waMessageTemplate:wt||waMessageTemplate,cachedAt:Date.now()}));
+      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(wp)setWaPollMessage(normalizeWaPollMessage(wp)); if(wo)setWaPollOptions(normalizeWaPollOptions(wo)); if(crm)setChlorineReminderMessage(normalizeChlorineReminderMessage(crm));
+      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,sheetReports:sheetReports||[],waMessageTemplate:wt||waMessageTemplate,chlorineReminderMessage:crm||chlorineReminderMessage,cachedAt:Date.now()}));
       setSheetId("connected");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
     } catch {}
@@ -4357,14 +4373,17 @@ useEffect(() => {
     const clean = normalizeWaMessageTemplate(waTemplateDraft);
     const cleanPollMessage = normalizeWaPollMessage(waPollMessageDraft);
     const cleanPollOptions = normalizeWaPollOptions(waPollOptionsDraft);
+    const cleanChlorineReminderMessage = normalizeChlorineReminderMessage(chlorineReminderMessageDraft);
     setAction("saveWaTemplate", "loading");
     setWaMessageTemplate(clean);
     setWaPollMessage(cleanPollMessage);
     setWaPollOptions(cleanPollOptions);
+    setChlorineReminderMessage(cleanChlorineReminderMessage);
     try { localStorage.setItem(WA_TEMPLATE_STORAGE_KEY, clean); } catch {}
     try { localStorage.setItem(WA_POLL_MESSAGE_STORAGE_KEY, cleanPollMessage); } catch {}
     try { localStorage.setItem(WA_POLL_OPTIONS_STORAGE_KEY, JSON.stringify(cleanPollOptions)); } catch {}
-    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean,waPollMessage:cleanPollMessage,waPollOptions:cleanPollOptions}}).catch(()=>null) : null;
+    try { localStorage.setItem(WA_TABLET_REMINDER_STORAGE_KEY, cleanChlorineReminderMessage); } catch {}
+    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean,waPollMessage:cleanPollMessage,waPollOptions:cleanPollOptions,chlorineReminderMessage:cleanChlorineReminderMessage}}).catch(()=>null) : null;
     if (sheetId && !res?.success) {
       setAction("saveWaTemplate", "error", 1800);
       showToast("שמירת ההודעה לגיליון נכשלה");
@@ -4378,6 +4397,7 @@ useEffect(() => {
     setWaTemplateDraft(DEFAULT_WA_MESSAGE_TEMPLATE);
     setWaPollMessageDraft(DEFAULT_WA_POLL_MESSAGE);
     setWaPollOptionsDraft(DEFAULT_WA_POLL_OPTIONS);
+    setChlorineReminderMessageDraft(DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE);
     haptic("medium");
   };
 
@@ -4657,7 +4677,7 @@ useEffect(() => {
   sendReminder: !!form.sendReminder,
   chlorineReminderCreatedAt: form.chlorineReminderCreatedAt || "",
   chlorineReminderDueAt: form.chlorineReminderDueAt || "",
-  chlorineReminderMessage: form.sendReminder ? CHLORINE_TABLET_REMINDER_MESSAGE : "",
+  chlorineReminderMessage: form.sendReminder ? normalizeChlorineReminderMessage(form.chlorineReminderMessage || chlorineReminderMessage) : "",
   photosCount:0
 };
     const sendEditedReportToCustomer = isEditingExistingReport && shouldSendEditedReportToCustomer(editingReport, report);
@@ -6632,6 +6652,13 @@ useEffect(() => {
                     <button key={token} type="button" onClick={()=>setWaTemplateDraft(v=>`${v}${v.endsWith("\n")||!v?"":" "}${token}`)} style={{border:"1px solid rgba(37,99,235,0.20)",background:"rgba(219,234,254,0.86)",color:C.blue,borderRadius:99,padding:"6px 10px",fontSize:11,fontWeight:900}}>{label} ({token})</button>
                   ))}
                 </div>
+                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>מלל תזכורת טבלית כלור</div>
+                <textarea
+                  value={chlorineReminderMessageDraft}
+                  onChange={e=>setChlorineReminderMessageDraft(e.target.value)}
+                  rows={3}
+                  style={{...inp,resize:"vertical",minHeight:78,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:12}}
+                />
                 <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>מלל סקר אישור חומרים</div>
                 <textarea
                   value={waPollMessageDraft}
