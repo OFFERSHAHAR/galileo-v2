@@ -369,14 +369,11 @@
       }
 
       if (action === "saveReport") {
-        const sheet = ss.getSheetByName("דוחות");
-        ensureReportsSheetReportId_(sheet);
-        ensureColumns(sheet, ["ציוד_שסופק"]);
         const r = data.report;
         const lock = LockService.getScriptLock();
         try {
           lock.waitLock(10000);
-          const duplicate = findDuplicateReportRow_(sheet, r);
+          const duplicate = findDuplicateReportRowAcrossSheets_(ss, r);
           if (duplicate.row) {
             Logger.log("Duplicate report skipped: row " + duplicate.row);
             markSubOperatorShareDone_(ss, r);
@@ -389,6 +386,7 @@
             if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
           }
 
+          const sheet = getOperatorReportsSheet_(ss, r && r.operator);
           sheet.appendRow(reportRowValues_(r));
           const savedRow = sheet.getLastRow();
           refreshMonthlyTreatmentCounters_(ss);
@@ -454,22 +452,19 @@
       }
 
       if (action === "updateReport") {
-        const sheet = ss.getSheetByName("דוחות");
-        ensureReportsSheetReportId_(sheet);
-        ensureColumns(sheet, ["ציוד_שסופק"]);
         const r = data.report;
         if (data.supplyUpdate) {
           const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
           if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
         }
-        const row = findLatestReportRow_(sheet, data.original || {}, r);
-        if (!row) return json({ success:false, error:"report row not found" });
-        sheet.getRange(row, 1, 1, 26).setValues([reportRowValues_(r)]);
+        const match = findLatestReportRowAcrossSheets_(ss, data.original || {}, r);
+        if (!match.row || !match.sheet) return json({ success:false, error:"report row not found" });
+        match.sheet.getRange(match.row, 1, 1, 26).setValues([reportRowValues_(r)]);
         refreshMonthlyTreatmentCounters_(ss);
         markSubOperatorShareDone_(ss, r);
-        const savedReportId = r.id || reportIdCell_(sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0]) || "";
+        const savedReportId = r.id || reportIdCell_(match.sheet.getRange(match.row, 1, 1, match.sheet.getLastColumn()).getValues()[0]) || "";
         const reminderResult = queueChlorineTabletReminderSafe_(ss, r, data, savedReportId);
-        return json({ success:true, row, id: savedReportId, chlorineReminder: reminderResult });
+        return json({ success:true, row:match.row, id: savedReportId, chlorineReminder: reminderResult });
       }
 
       if (action === "saveSupplyDB") {
@@ -528,16 +523,11 @@
       }
 
       if (action === "getReports") {
-        const sheet = ss.getSheetByName("דוחות");
-        ensureReportsSheetReportId_(sheet);
-        const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => String(r[0]).includes("reportId"));
-        if (hi === -1) hi = 2;
         const fromDate = normalizeSheetDate_(data.fromDate || data.reportDate || data.dateFrom || "");
         const toDate = normalizeSheetDate_(data.toDate || data.dateTo || "");
         const query = String(data.query || data.search || "").trim().toLowerCase();
         const limit = Math.max(0, Number(data.limit || 0) || 0);
-        let dataRows = rows.slice(hi + 1).filter(r => reportCell_(r,0));
+        let dataRows = allReportRows_(ss);
         if (fromDate) dataRows = dataRows.filter(r => normalizeSheetDate_(reportCell_(r,0)) >= fromDate);
         if (toDate) dataRows = dataRows.filter(r => normalizeSheetDate_(reportCell_(r,0)) <= toDate);
         if (query) {
@@ -552,6 +542,7 @@
             return haystack.indexOf(query) >= 0;
           });
         }
+        dataRows = dedupeReportRows_(dataRows).sort((a,b) => normalizeSheetDate_(reportCell_(a,0)).localeCompare(normalizeSheetDate_(reportCell_(b,0))));
         if (limit && dataRows.length > limit) dataRows = dataRows.slice(dataRows.length - limit);
         const reports = dataRows.map((r,i) => ({
           id: reportIdCell_(r),
@@ -608,12 +599,7 @@
       }
 
       if (action === "getLastReadings") {
-        const sheet = ss.getSheetByName("דוחות");
-        ensureReportsSheetReportId_(sheet);
-        const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => String(r[0]).includes("reportId"));
-        if (hi === -1) hi = 2;
-        const dataRows = rows.slice(hi + 1).filter(r => reportCell_(r,0));
+        const dataRows = dedupeReportRows_(allReportRows_(ss));
         // columns: 0=date, 1=operator, 2=client, 3=chlorine, 4=ph, 5=salt,
         // 6=waterLevel, 7=clarity, 8=fat, 9=flow, 10=elModel, 11=elSerial, 12=elDate, 13=elNext
         // 14=supplyLabel, 15=poolStatus, 16=customStatus, 17=restrictedUntil, 18=notes, 19=chlora, 20=hth
@@ -621,7 +607,7 @@
         const lastInternalNotes = {};
         dataRows.forEach(r => {
           const client = String(reportCell_(r,2));
-          const date   = String(reportCell_(r,0));
+          const date   = normalizeSheetDate_(reportCell_(r,0));
           const internalNote = String(reportCell_(r,16)||"").trim();
           if (internalNote) lastInternalNotes[client] = internalNote;
           if (!readings[client] || date > readings[client].date) {
@@ -982,9 +968,7 @@
     if (props.getProperty(key) === "done") return;
 
     const clientsSheet = ss.getSheetByName("לקוחות");
-    const reportsSheet = ss.getSheetByName("דוחות");
-    if (!clientsSheet || !reportsSheet) return;
-    ensureReportsSheetReportId_(reportsSheet);
+    if (!clientsSheet) return;
 
     const clientRows = clientsSheet.getDataRange().getValues();
     if (clientRows.length < 2) {
@@ -1002,9 +986,9 @@
       }))
       .filter(x => x.client && x.days.includes(dayName));
 
-    const reportRows = reportsSheet.getDataRange().getValues();
+    const reportRows = allReportRows_(ss);
     const alreadyReported = {};
-    reportRows.slice(1).forEach(r => {
+    reportRows.forEach(r => {
       const date = normalizeSheetDate_(reportCell_(r,0));
       const client = String(reportCell_(r,2) || "").trim();
       if (date === today && client) alreadyReported[client] = true;
@@ -1013,6 +997,7 @@
     let appended = 0;
     assigned.forEach(item => {
       if (alreadyReported[item.client]) return;
+      const reportsSheet = getOperatorReportsSheet_(ss, item.operator);
       reportsSheet.appendRow(reportRowValues_({
         id: Utilities.getUuid(),
         reportDate: today,
@@ -1036,9 +1021,7 @@
 
   function refreshMonthlyTreatmentCounters_(ss) {
     const clientsSheet = ss.getSheetByName("לקוחות");
-    const reportsSheet = ss.getSheetByName("דוחות");
-    if (!clientsSheet || !reportsSheet) return [];
-    ensureReportsSheetReportId_(reportsSheet);
+    if (!clientsSheet) return [];
 
     ensureColumns(clientsSheet, ["יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל", "מכסת_טיפולים_חודשית", "חודש_טיפולים"]);
 
@@ -1053,7 +1036,7 @@
     const monthKey = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM");
     const counts = {};
 
-    reportsSheet.getDataRange().getValues().slice(1).forEach(r => {
+    dedupeReportRows_(allReportRows_(ss)).forEach(r => {
       const date = normalizeSheetDate_(reportCell_(r,0));
       const client = String(reportCell_(r,2) || "").trim();
       const notes = String(reportCell_(r,18) || "").trim();
@@ -2260,36 +2243,35 @@
   }
 
   function saveClientInternalNote_(ss, data) {
-    const sheet = ss.getSheetByName("דוחות");
-    if (!sheet) return { success:false, error:"reports sheet not found" };
-    ensureReportsSheetReportId_(sheet);
-
     const client = String(data.client || "").trim();
     const note = String(data.note || "");
     if (!client) return { success:false, error:"missing client" };
 
-    const rows = sheet.getDataRange().getValues();
-    let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
-    if (hi === -1) hi = 0;
-
+    let targetSheet = null;
     let targetRow = 0;
     let targetDate = "";
-    for (let i = hi + 1; i < rows.length; i++) {
-      const rowClient = String(reportCell_(rows[i],2) || "").trim();
-      if (rowClient !== client) continue;
-      const rowDate = normalizeSheetDate_(reportCell_(rows[i],0));
-      if (!targetRow || rowDate >= targetDate) {
-        targetRow = i + 1;
-        targetDate = rowDate;
+    reportSheetList_(ss).forEach(sheet => {
+      const rows = sheet.getDataRange().getValues();
+      let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
+      if (hi === -1) hi = 0;
+      for (let i = hi + 1; i < rows.length; i++) {
+        const rowClient = String(reportCell_(rows[i],2) || "").trim();
+        if (rowClient !== client) continue;
+        const rowDate = normalizeSheetDate_(reportCell_(rows[i],0));
+        if (!targetRow || rowDate >= targetDate) {
+          targetSheet = sheet;
+          targetRow = i + 1;
+          targetDate = rowDate;
+        }
       }
-    }
+    });
 
     if (!targetRow) {
       return { success:false, error:"no report row for client", client:client };
     }
 
     // Column 17 is פירוט_מצב / customStatusText.
-    sheet.getRange(targetRow, 18).setValue(note);
+    targetSheet.getRange(targetRow, 18).setValue(note);
     return { success:true, row:targetRow, client:client, note:note };
   }
   function sendOneSignalRequest_(payload, label) {
@@ -2680,6 +2662,79 @@
       }
     });
     if (changed && updates.length) idRange.setValues(updates);
+  }
+
+  function operatorReportsSheetName_(operator) {
+    const clean = String(operator || "").trim().replace(/[\\\/\?\*\[\]\:]/g, "-").replace(/\s+/g, " ");
+    return clean ? ("דוחות - " + clean).slice(0, 99) : "דוחות";
+  }
+
+  function getOperatorReportsSheet_(ss, operator) {
+    const name = operatorReportsSheetName_(operator);
+    let sheet = ss.getSheetByName(name);
+    if (!sheet) {
+      sheet = ss.insertSheet(name);
+      sheet.appendRow(reportHeaders_());
+    }
+    ensureReportsSheetReportId_(sheet);
+    return sheet;
+  }
+
+  function reportSheetList_(ss) {
+    const main = ss.getSheetByName("דוחות");
+    const sheets = main ? [main] : [];
+    ss.getSheets().forEach(sheet => {
+      if (sheet.getName().indexOf("דוחות - ") === 0 && sheets.indexOf(sheet) < 0) sheets.push(sheet);
+    });
+    sheets.forEach(ensureReportsSheetReportId_);
+    return sheets;
+  }
+
+  function reportRowsFromSheet_(sheet) {
+    if (!sheet || sheet.getLastRow() < 2) return [];
+    const rows = sheet.getDataRange().getValues();
+    let hi = rows.findIndex(r => String(r[0]).includes("reportId"));
+    if (hi === -1) hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
+    if (hi === -1) hi = 0;
+    return rows.slice(hi + 1).filter(r => reportCell_(r,0));
+  }
+
+  function allReportRows_(ss) {
+    return reportSheetList_(ss).reduce((out, sheet) => out.concat(reportRowsFromSheet_(sheet)), []);
+  }
+
+  function dedupeReportRows_(rows) {
+    const seen = {};
+    return (rows || []).filter(row => {
+      const id = reportIdCell_(row);
+      const key = id ? ("id:" + id) : ("key:" + reportDuplicateKeyFromRow_(row));
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+
+  function findLatestReportRowAcrossSheets_(ss, original, report) {
+    let found = { sheet:null, row:0, date:"" };
+    reportSheetList_(ss).forEach(sheet => {
+      const row = findLatestReportRow_(sheet, original, report);
+      if (!row) return;
+      const rowValues = sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0];
+      const date = normalizeReportDate_(reportCell_(rowValues,0));
+      if (!found.row || date >= found.date) found = { sheet, row, date };
+    });
+    return found;
+  }
+
+  function findDuplicateReportRowAcrossSheets_(ss, report) {
+    let found = { row:0, id:"", sheet:null };
+    reportSheetList_(ss).some(sheet => {
+      const duplicate = findDuplicateReportRow_(sheet, report);
+      if (!duplicate.row) return false;
+      found = { row:duplicate.row, id:duplicate.id || "", sheet };
+      return true;
+    });
+    return found;
   }
 
   function findLatestReportRow_(sheet, original, report) {
@@ -3752,14 +3807,8 @@ function getSupplyDB_(ss) {
 }
 
 function getLastReadings_(ss) {
-  const sheet = ss.getSheetByName("דוחות");
-  if (!sheet) return {};
-  ensureReportsSheetReportId_(sheet);
-  const rows = sheet.getDataRange().getValues();
-  let hi = rows.findIndex(r => String(r[0]).includes("reportId"));
-  if (hi === -1) hi = 2;
   const readings = {};
-  rows.slice(hi + 1).filter(r => reportCell_(r,0)).forEach(r => {
+  dedupeReportRows_(allReportRows_(ss)).forEach(r => {
     const client = String(reportCell_(r,2));
     const date = normalizeSheetDate_(reportCell_(r,0));
     if (!readings[client] || date > readings[client].date) {
@@ -3773,7 +3822,7 @@ function getLastReadings_(ss) {
         poolStatus: String(reportCell_(r,15)||""),
         customStatusText: String(reportCell_(r,16)||""),
         notes: String(reportCell_(r,18)||""),
-        missedTreatment: String(r[18]||"").trim() === "לא בוצע טיפול"
+        missedTreatment: String(reportCell_(r,18)||"").trim() === "לא בוצע טיפול"
       };
     }
   });
