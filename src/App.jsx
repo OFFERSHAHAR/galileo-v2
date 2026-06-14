@@ -3763,6 +3763,47 @@ useEffect(() => {
     }, 3000);
   };
   const stopClientLongPress = (clientName) => clearTimeout(longPressTimers.current[clientName]);
+  const dailyTaskClientKey = (task) => String(task?.clientId || "").trim() || normalizeName(task?.client);
+  const mergeWaterChecksIntoDailyList = (baseList, waterChecks, date) => {
+    const list = [];
+    const indexByClient = new Map();
+    const pushOrMerge = (task) => {
+      const key = dailyTaskClientKey(task);
+      if (!key) return;
+      const existingIndex = indexByClient.get(key);
+      if (existingIndex !== undefined) {
+        const existing = list[existingIndex];
+        const noteParts = [existing.adminNote || existing.note || "", task.adminNote || task.note || ""]
+          .map(x => String(x || "").trim())
+          .filter(Boolean);
+        list[existingIndex] = {
+          ...existing,
+          clientId: existing.clientId || task.clientId || clientIdByName(existing.client || task.client),
+          adminNote: [...new Set(noteParts)].join(" · "),
+          note: [...new Set(noteParts)].join(" · "),
+          _waterCheck: existing._waterCheck || task._waterCheck
+        };
+        return;
+      }
+      indexByClient.set(key, list.length);
+      list.push(task);
+    };
+    (baseList || []).forEach(pushOrMerge);
+    (waterChecks || []).forEach(task => pushOrMerge({
+      ...task,
+      id: `day-water-check-${normalizeDate(date)}-${task.clientId || normalizeName(task.client)}`,
+      date: normalizeDate(date),
+      status: task.status || "pending",
+      changeLog: task.changeLog || [],
+      orderIndex: task.orderIndex || 9000,
+      createdByAdminOrder: false,
+      _dayProfile: true,
+      _waterCheck: true,
+      adminNote: task.adminNote || task.note || "בדיקת מים",
+      note: task.note || task.adminNote || "בדיקת מים"
+    }));
+    return list;
+  };
   const getOperatorDailyView = (date=dailyDate) => {
     const opName = dailyOwnerName(date);
     if (isSubOperatorRole(user?.role)) {
@@ -3775,10 +3816,11 @@ useEffect(() => {
     if (adminEntries.length) {
       const ordered = entriesToDailyTasks(date, opName, adminEntries, "admin").map(t=>({...t, _adminLocalOrder:true}));
       const extra = myTasks(date).filter(t=>!ordered.some(x=>x.client===t.client));
-      list = [...ordered, ...extra, ...waterChecks];
+      list = [...ordered, ...extra];
     } else {
-      list = [...dayClientProfiles(date, opName), ...waterChecks];
+      list = dayClientProfiles(date, opName);
     }
+    list = mergeWaterChecksIntoDailyList(list, waterChecks, date);
     const operatorOrder = readLocalArray(operatorOrderKey(user?.username || user?.name, date));
     if (operatorOrder.length) {
       const orderMap = new Map(operatorOrder.map((clientName, i)=>[clientName, i]));
@@ -6039,6 +6081,7 @@ useEffect(() => {
                     )}
                   </div>
                 );
+                  const noteDate = normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date);
                   return (
                     <div style={{marginBottom:10}}>
                       {(()=>{ const historyKey = t.clientId || t.client; const history = clientMeasurementHistory(t.client, t.clientId, lr); const historyOpen = !!openMeasurementHistory[historyKey]; return (
@@ -6071,7 +6114,7 @@ useEffect(() => {
                       ); })()}
                       {String(lr.customStatusText||"").trim()&&(
                         <div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 12px",marginBottom:6,border:`1px solid ${C.border}`,fontSize:12,color:C.muted,lineHeight:1.5}}>
-                          <span style={{fontWeight:800,color:C.blue}}>{"\uD83D\uDCDD \u05d4\u05e2\u05e8\u05d4 \u05e4\u05e0\u05d9\u05de\u05d9\u05ea: "}</span>
+                          <span style={{fontWeight:800,color:C.blue}}>📝 הערה פנימית{noteDate ? ` (${fmtDate(noteDate)})` : ""}: </span>
                           {lr.customStatusText}
                         </div>
                       )}

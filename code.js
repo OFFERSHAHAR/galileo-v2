@@ -372,43 +372,42 @@
         const r = Object.assign({}, data.report || {});
         const resolvedOperator = reportOperatorName_(ss, r);
         if (resolvedOperator) r.operator = resolvedOperator;
+        if (!String(r.id || "").trim()) r.id = Utilities.getUuid();
         const lock = LockService.getScriptLock();
         try {
           lock.waitLock(10000);
-          const duplicate = findDuplicateReportRowAcrossSheets_(ss, r);
-          if (duplicate.row) {
-            Logger.log("Duplicate report skipped: row " + duplicate.row);
-            const targetSheet = getOperatorReportsSheet_(ss, r && r.operator);
-            const duplicateSheetName = duplicate.sheet ? duplicate.sheet.getName() : "";
-            if (targetSheet.getName() !== "דוחות" && duplicateSheetName !== targetSheet.getName()) {
-              const existingInTarget = findDuplicateReportRow_(targetSheet, r);
-              if (!existingInTarget.row) {
-                const reportToWrite = duplicate.id && !r.id ? Object.assign({}, r, { id: duplicate.id }) : r;
-                targetSheet.appendRow(reportRowValues_(reportToWrite));
-                const savedRow = targetSheet.getLastRow();
-                refreshMonthlyTreatmentCounters_(ss);
-                markSubOperatorShareDone_(ss, reportToWrite);
-                const reminderResult = queueChlorineTabletReminderSafe_(ss, reportToWrite, data, duplicate.id || r.id || "");
-                return json({ success: true, duplicate: true, copiedToOperatorSheet: true, row: savedRow, id: duplicate.id || r.id || "", chlorineReminder: reminderResult });
-              }
-            }
-            markSubOperatorShareDone_(ss, r);
-            const reminderResult = queueChlorineTabletReminderSafe_(ss, r, data, duplicate.id || r.id || "");
-            return json({ success: true, duplicate: true, row: duplicate.row, id: duplicate.id || r.id || "", chlorineReminder: reminderResult });
-          }
-
           if (data.supplyUpdate) {
             const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
             if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
           }
 
-          const sheet = getOperatorReportsSheet_(ss, r && r.operator);
-          sheet.appendRow(reportRowValues_(r));
-          const savedRow = sheet.getLastRow();
+          const mainSheet = getMainReportsSheet_(ss);
+          const operatorSheet = getOperatorReportsSheet_(ss, r && r.operator);
+          const targets = operatorSheet.getName() === mainSheet.getName() ? [mainSheet] : [mainSheet, operatorSheet];
+          let savedRow = 0;
+          let savedId = String(r.id || "");
+          let wrote = false;
+          let duplicate = false;
+          targets.forEach(sheet => {
+            const existing = findDuplicateReportRow_(sheet, r);
+            if (existing.row) {
+              duplicate = true;
+              if (!savedRow) savedRow = existing.row;
+              if (!savedId && existing.id) savedId = existing.id;
+              return;
+            }
+            const reportToWrite = savedId && !r.id ? Object.assign({}, r, { id: savedId }) : r;
+            sheet.appendRow(reportRowValues_(reportToWrite));
+            savedRow = sheet.getLastRow();
+            savedId = savedId || reportToWrite.id || "";
+            wrote = true;
+          });
           refreshMonthlyTreatmentCounters_(ss);
           markSubOperatorShareDone_(ss, r);
-          data._chlorineReminder = queueChlorineTabletReminderSafe_(ss, r, data, r.id || "");
+          data._chlorineReminder = queueChlorineTabletReminderSafe_(ss, r, data, savedId || r.id || "");
           data._savedReportRow = savedRow;
+          data._savedReportDuplicate = duplicate;
+          data._savedReportId = savedId || r.id || "";
         } finally {
           try { lock.releaseLock(); } catch(e) {}
         }
@@ -464,7 +463,7 @@
           }
         }
 
-        return json({ success: true, row: data._savedReportRow || 0, id: r.id || "", chlorineReminder: data._chlorineReminder || null });
+        return json({ success: true, duplicate: !!data._savedReportDuplicate, row: data._savedReportRow || 0, id: data._savedReportId || r.id || "", chlorineReminder: data._chlorineReminder || null });
       }
 
       if (action === "updateReport") {
@@ -2685,11 +2684,14 @@
   function operatorReportsSheetName_(operator) {
     const clean = String(operator || "").trim().replace(/[\\\/\?\*\[\]\:]/g, "-").replace(/\s+/g, " ");
     const mapped = {
-      "אור מוסה": "אור מוסה",
-      "אור מוסא": "אור מוסה",
-      "אור פרנקו": "אור פרנקו",
-      "גיל פלג": "גיל פלד",
-      "גיל פלד": "גיל פלד"
+      "אור מוסה": "אור_מוסה",
+      "אור מוסא": "אור_מוסה",
+      "אור_מוסה": "אור_מוסה",
+      "אור פרנקו": "אור_פרנקו",
+      "אור_פרנקו": "אור_פרנקו",
+      "גיל פלג": "גיל_פלג",
+      "גיל פלד": "גיל_פלג",
+      "גיל_פלג": "גיל_פלג"
     };
     return mapped[clean] || (clean ? clean.slice(0, 99) : "דוחות");
   }
@@ -2719,12 +2721,22 @@
     return sheet;
   }
 
+  function getMainReportsSheet_(ss) {
+    let sheet = ss.getSheetByName("דוחות");
+    if (!sheet) {
+      sheet = ss.insertSheet("דוחות");
+      sheet.appendRow(reportHeaders_());
+    }
+    ensureReportsSheetReportId_(sheet);
+    return sheet;
+  }
+
   function reportSheetList_(ss) {
     const main = ss.getSheetByName("דוחות");
     const sheets = main ? [main] : [];
     ss.getSheets().forEach(sheet => {
       const name = sheet.getName();
-      const isOperatorSheet = name === "אור מוסה" || name === "אור פרנקו" || name === "גיל פלד" || name.indexOf("דוחות - ") === 0;
+      const isOperatorSheet = name === "אור_מוסה" || name === "אור_פרנקו" || name === "גיל_פלג" || name === "אור מוסה" || name === "אור פרנקו" || name === "גיל פלד" || name.indexOf("דוחות - ") === 0;
       if (isOperatorSheet && sheets.indexOf(sheet) < 0) sheets.push(sheet);
     });
     sheets.forEach(ensureReportsSheetReportId_);
