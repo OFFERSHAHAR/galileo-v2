@@ -369,7 +369,9 @@
       }
 
       if (action === "saveReport") {
-        const r = data.report;
+        const r = Object.assign({}, data.report || {});
+        const resolvedOperator = reportOperatorName_(ss, r);
+        if (resolvedOperator) r.operator = resolvedOperator;
         const lock = LockService.getScriptLock();
         try {
           lock.waitLock(10000);
@@ -466,7 +468,9 @@
       }
 
       if (action === "updateReport") {
-        const r = data.report;
+        const r = Object.assign({}, data.report || {});
+        const resolvedOperator = reportOperatorName_(ss, r);
+        if (resolvedOperator) r.operator = resolvedOperator;
         if (data.supplyUpdate) {
           const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
           if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
@@ -2682,11 +2686,26 @@
     const clean = String(operator || "").trim().replace(/[\\\/\?\*\[\]\:]/g, "-").replace(/\s+/g, " ");
     const mapped = {
       "אור מוסה": "אור מוסה",
+      "אור מוסא": "אור מוסה",
       "אור פרנקו": "אור פרנקו",
       "גיל פלג": "גיל פלד",
       "גיל פלד": "גיל פלד"
     };
     return mapped[clean] || (clean ? clean.slice(0, 99) : "דוחות");
+  }
+
+  function reportOperatorName_(ss, report) {
+    const direct = String(report && report.operator || "").trim();
+    if (direct) return direct;
+    const reportClientId = String(report && report.clientId || "").trim();
+    const reportClient = normalizeReportValue_(report && report.client);
+    const clients = getClientsByHeaders_(ss);
+    const match = clients.find(c => {
+      const cid = String(c.clientId || "").trim();
+      if (reportClientId && cid && reportClientId === cid) return true;
+      return reportClient && normalizeReportValue_(c.name) === reportClient;
+    });
+    return String(match && match.regularOperator || "").trim();
   }
 
   function getOperatorReportsSheet_(ss, operator) {
