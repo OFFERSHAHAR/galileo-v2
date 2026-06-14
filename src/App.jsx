@@ -2084,6 +2084,14 @@ const [pending, setPending] = useState(() => {
     return [];
   }
 });
+const [pendingOperatorIssues, setPendingOperatorIssues] = useState(() => {
+  try {
+    const value = JSON.parse(localStorage.getItem("galileo_pending_operator_issues") || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+});
 const [pendingSubReports, setPendingSubReports] = useState(() => {
   try {
     const value = JSON.parse(localStorage.getItem("galileo_sub_operator_pending_reports") || "[]");
@@ -2109,6 +2117,10 @@ useEffect(() => {
     JSON.stringify(pending)
   );
 }, [pending]);
+
+useEffect(() => {
+  localStorage.setItem("galileo_pending_operator_issues", JSON.stringify(pendingOperatorIssues));
+}, [pendingOperatorIssues]);
 
 useEffect(() => {
   try {
@@ -2163,6 +2175,25 @@ const addPendingReport = (report, supplyUpdate, meta = {}) => {
 };
 const removePendingReport = (item) => {
   setPending(prev => prev.filter(x => !samePendingReport(x, item)));
+};
+const makePendingOperatorIssue = (issue = {}) => ({
+  localId: issue.localId || `opissue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  operator: issue.operator || "",
+  client: issue.client || "",
+  desc: issue.desc || "",
+  priority: issue.priority || "רגיל",
+  date: issue.date || todayStr()
+});
+const pendingOperatorIssueKey = (issue = {}) => String(issue.localId || [issue.operator, issue.client, issue.desc, issue.priority, issue.date].map(normalizeName).join("|"));
+const samePendingOperatorIssue = (a = {}, b = {}) => pendingOperatorIssueKey(a) === pendingOperatorIssueKey(b);
+const operatorIssueToRow = (issue = {}) => [issue.localId || Date.now(), issue.operator || "", issue.client || "", issue.desc || "", issue.priority || "רגיל", "פתוח", "", issue.date || todayStr()];
+const addPendingOperatorIssue = (issue) => {
+  const item = makePendingOperatorIssue(issue);
+  setPendingOperatorIssues(prev => prev.some(x => samePendingOperatorIssue(x, item)) ? prev : [...prev, item]);
+  return item;
+};
+const removePendingOperatorIssue = (issue) => {
+  setPendingOperatorIssues(prev => prev.filter(x => !samePendingOperatorIssue(x, issue)));
 };
 const sameReportIdentity = (a = {}, b = {}) => {
   if (a.id && b.id) return String(a.id) === String(b.id);
@@ -2436,6 +2467,7 @@ useEffect(() => {
   const fileRef = useRef();
   const toastTimer = useRef();
   const operatorIssueSendingRef = useRef(false);
+  const operatorIssueSyncRef = useRef(false);
   const pendingSyncRef = useRef(false);
   const immediateReportIdsRef = useRef(new Set());
   const operatorRefreshRef = useRef(false);
@@ -3220,7 +3252,7 @@ useEffect(() => {
       } catch {}
       return next;
     });
-    const res = await sheetCall("saveClientInternalNote", {client: clientName, note}).catch(()=>null);
+    const res = await sheetCall("saveClientInternalNote", {client: clientName, clientId: clientIdByName(clientName), note}).catch(()=>null);
     if (res?.success) showToast("✅ הערה פנימית נשמרה");
     else showToast("⚠️ ההערה עודכנה מקומית, לא נמצאה שורת דוח לשמירה");
     haptic(res?.success ? "success" : "medium");
@@ -3229,6 +3261,40 @@ useEffect(() => {
   const isCriticalIssue = (priority) => issueText(priority).includes("קריט") || issueText(priority).includes("§");
   const isIssueInProgress = (status) => issueText(status).includes("בטיפול") || issueText(status).includes("˜™₪");
   const isIssueDone = (status) => issueText(status).includes("טופל") || issueText(status).includes("˜•₪");
+
+  const sendPendingOperatorIssueItem = async (issue) => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return false;
+    const clean = makePendingOperatorIssue(issue);
+    const res = await sheetCall("saveOperatorIssue", {
+      operator: clean.operator,
+      client: clean.client,
+      desc: clean.desc,
+      priority: clean.priority,
+      date: clean.date
+    }).catch(()=>null);
+    return !!res?.success;
+  };
+
+  const syncPendingOperatorIssues = async (maxItems = Infinity, silent = false) => {
+    if (!pendingOperatorIssues.length || operatorIssueSyncRef.current) return { sent:0, failed:pendingOperatorIssues.length };
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return { sent:0, failed:pendingOperatorIssues.length, offline:true };
+    operatorIssueSyncRef.current = true;
+    const itemsToSync = Number.isFinite(maxItems) ? pendingOperatorIssues.slice(0, Math.max(1, maxItems)) : pendingOperatorIssues;
+    const failed = Number.isFinite(maxItems) ? pendingOperatorIssues.slice(itemsToSync.length) : [];
+    const sent = [];
+    try {
+      for (const item of itemsToSync) {
+        const ok = await sendPendingOperatorIssueItem(item);
+        if (ok) sent.push(item);
+        else failed.push(item);
+      }
+      setPendingOperatorIssues(failed);
+      if (sent.length && !silent) showToast(failed.length ? `${failed.length} תקלות עדיין ממתינות לשליחה` : "כל התקלות נשלחו לאדמין");
+      return { sent:sent.length, failed:failed.length };
+    } finally {
+      operatorIssueSyncRef.current = false;
+    }
+  };
 
   const reportCriticalFlowIssue = async (report) => {
     if (report.flow !== "לא תקין") return null;
@@ -3240,12 +3306,21 @@ useEffect(() => {
       priority: "קריטי",
       date: report.reportDate || todayStr()
     };
-    const localRow = [Date.now(), issue.operator, issue.client, issue.desc, issue.priority, "פתוח", "", issue.date];
-    setOperatorIssues(prev => [localRow, ...prev]);
-    const res = await sheetCall("saveOperatorIssue", issue).catch(()=>null);
-    if (res?.success) showToast("🚨 תקלה קריטית נשלחה לאדמין");
-    else showToast("⚠️ התקלה נשמרה מקומית, בדוק חיבור");
-    return res;
+    const pendingIssue = addPendingOperatorIssue(issue);
+    setPendingBackgroundSync(true);
+    setOperatorIssues(prev => [operatorIssueToRow(pendingIssue), ...prev]);
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      showToast("התקלה נשמרה מקומית ותישלח כשיחזור חיבור");
+      return { success:false, local:true, offline:true };
+    }
+    const sent = await sendPendingOperatorIssueItem(pendingIssue);
+    if (sent) {
+      removePendingOperatorIssue(pendingIssue);
+      showToast("תקלה קריטית נשלחה לאדמין");
+      return { success:true };
+    }
+    showToast("התקלה נשמרה מקומית, בדוק חיבור");
+    return { success:false, local:true };
   };
 
   const dismissCriticalIssue = (id) => {
@@ -3927,22 +4002,28 @@ useEffect(() => {
       date: todayStr()
     };
 
+    const pendingIssue = addPendingOperatorIssue(issue);
+    setOperatorIssues(prev => [operatorIssueToRow(pendingIssue), ...prev]);
+    setPendingBackgroundSync(true);
     setAction("operatorIssueReport", "loading");
     setShowOperatorIssue(false);
     setOpIssueDesc("");
     setOpIssuePriority("רגיל");
-    showToast("⏳ שולח דיווח ברקע...");
+    showToast("הדיווח נשמר מקומית, שולח ברקע...");
 
     void (async () => {
       try {
-        await sheetCall("saveOperatorIssue", issue);
-        setAction("operatorIssueReport", "success", 1600);
-        showToast("✅ תקלה דווחה לאדמין");
-        haptic("success");
-      } catch {
-        setAction("operatorIssueReport", "error", 2200);
-        showToast("⚠️ שליחת הדיווח נכשלה");
-        haptic("medium");
+        const sent = await sendPendingOperatorIssueItem(pendingIssue);
+        if (sent) {
+          removePendingOperatorIssue(pendingIssue);
+          setAction("operatorIssueReport", "success", 1600);
+          showToast("תקלה דווחה לאדמין");
+          haptic("success");
+        } else {
+          setAction("operatorIssueReport", "local", 2200);
+          showToast("התקלה נשמרה מקומית ותישלח כשיהיה חיבור");
+          haptic("medium");
+        }
       } finally {
         operatorIssueSendingRef.current = false;
       }
@@ -5207,7 +5288,7 @@ useEffect(() => {
       }
 
       setPending(failed);
-      setPendingBackgroundSync(!!failed.length);
+      setPendingBackgroundSync(!!failed.length || pendingOperatorIssues.length > 0);
       const onlySkippedImmediate = failed.length > 0 && failed.length === skippedImmediateCount && sent.length === 0;
       if (onlySkippedImmediate) {
         setAction("syncPending", "idle");
@@ -5276,18 +5357,19 @@ useEffect(() => {
   });
 
   useEffect(() => {
-    if (pending.length) setPendingBackgroundSync(true);
-  }, [pending.length]);
+    if (pending.length || pendingOperatorIssues.length) setPendingBackgroundSync(true);
+  }, [pending.length, pendingOperatorIssues.length]);
 
   useEffect(() => {
     if (!pendingBackgroundSync) return;
-    if (!pending.length) return;
+    if (!pending.length && !pendingOperatorIssues.length) return;
 
     const retryPending = (maxItems = Infinity) => {
       if (isActionLoading("syncPending")) return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void syncPendingReports(maxItems);
+      if (pending.length) void syncPendingReports(maxItems);
+      if (pendingOperatorIssues.length) void syncPendingOperatorIssues(maxItems, true);
     };
     const retryAllPending = () => retryPending();
     const retryOnePending = () => retryPending(1);
@@ -5305,7 +5387,7 @@ useEffect(() => {
       window.removeEventListener("focus", retryAllPending);
       document.removeEventListener("visibilitychange", retryAllPending);
     };
-  }, [pending.length, pendingBackgroundSync]);
+  }, [pending.length, pendingOperatorIssues.length, pendingBackgroundSync]);
 
   const openManualReport = async () => {
     if (isActionLoading("openManualReport")) return;

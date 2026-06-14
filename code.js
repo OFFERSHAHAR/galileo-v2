@@ -616,35 +616,8 @@
       }
 
       if (action === "getLastReadings") {
-        const dataRows = dedupeReportRows_(allReportRows_(ss));
-        // columns: 0=date, 1=operator, 2=client, 3=chlorine, 4=ph, 5=salt,
-        // 6=waterLevel, 7=clarity, 8=fat, 9=flow, 10=elModel, 11=elSerial, 12=elDate, 13=elNext
-        // 14=supplyLabel, 15=poolStatus, 16=customStatus, 17=restrictedUntil, 18=notes, 19=chlora, 20=hth
-        const readings = {};
-        const lastInternalNotes = {};
-        dataRows.forEach(r => {
-          const client = String(reportCell_(r,2));
-          const date   = normalizeSheetDate_(reportCell_(r,0));
-          const internalNote = String(reportCell_(r,16)||"").trim();
-          if (internalNote) lastInternalNotes[client] = internalNote;
-          if (!readings[client] || date > readings[client].date) {
-            readings[client] = {
-              client, clientId: String(reportCell_(r,24)||""),
-              date, chlorine: reportCell_(r,3), ph: reportCell_(r,4),
-              chlora: reportCell_(r,19)||0, hth: reportCell_(r,20)||0, phUp: reportCell_(r,21)||0, acidLiters: reportCell_(r,22)||0,
-              elModel: String(reportCell_(r,10)||""), elSerial: String(reportCell_(r,11)||""),
-              elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||""),
-              elNext: reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||""),
-              poolStatus: String(reportCell_(r,15)||""),
-              customStatusText: internalNote || lastInternalNotes[client] || String(readings[client]?.customStatusText || ""),
-              notes: String(reportCell_(r,18)||""),
-              missedTreatment: String(reportCell_(r,18)||"").trim() === "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc"
-            };
-          }
-        });
-        return json({ lastReadings: readings });
+        return json({ lastReadings: getLastReadings_(ss) });
       }
-
       if (action === "saveClientInternalNote") {
         return json(saveClientInternalNote_(ss, data));
       }
@@ -2259,38 +2232,74 @@
     return "";
   }
 
+  function clientInternalNoteHeaders_() {
+    return ["clientId","לקוח","הערה_פנימית","תאריך_עדכון"];
+  }
+
+  function getClientInternalNotesSheet_(ss) {
+    let sheet = ss.getSheetByName("הערות_לקוחות");
+    if (!sheet) {
+      sheet = ss.insertSheet("הערות_לקוחות");
+      sheet.appendRow(clientInternalNoteHeaders_());
+      return sheet;
+    }
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(clientInternalNoteHeaders_());
+      return sheet;
+    }
+    ensureColumns(sheet, clientInternalNoteHeaders_());
+    return sheet;
+  }
+
+  function getClientInternalNotes_(ss) {
+    const sheet = ss.getSheetByName("הערות_לקוחות");
+    if (!sheet) return { byId:{}, byClient:{} };
+    const rows = sheet.getDataRange().getValues();
+    if (rows.length < 2) return { byId:{}, byClient:{} };
+    const byId = {};
+    const byClient = {};
+    rows.slice(1).forEach(r => {
+      const clientId = String(r[0] || "").trim();
+      const client = String(r[1] || "").trim();
+      if (!client && !clientId) return;
+      const entry = {
+        clientId: clientId,
+        client: client,
+        note: String(r[2] || ""),
+        date: normalizeSheetDate_(r[3]) || String(r[3] || "")
+      };
+      if (clientId) byId[clientId] = entry;
+      if (client) byClient[client] = entry;
+    });
+    return { byId:byId, byClient:byClient };
+  }
+
   function saveClientInternalNote_(ss, data) {
     const client = String(data.client || "").trim();
+    const clientId = String(data.clientId || "").trim();
     const note = String(data.note || "");
     if (!client) return { success:false, error:"missing client" };
 
-    let targetSheet = null;
+    const sheet = getClientInternalNotesSheet_(ss);
+    const rows = sheet.getDataRange().getValues();
+    const updatedAt = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd");
     let targetRow = 0;
-    let targetDate = "";
-    reportSheetList_(ss).forEach(sheet => {
-      const rows = sheet.getDataRange().getValues();
-      let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
-      if (hi === -1) hi = 0;
-      for (let i = hi + 1; i < rows.length; i++) {
-        const rowClient = String(reportCell_(rows[i],2) || "").trim();
-        if (rowClient !== client) continue;
-        const rowDate = normalizeSheetDate_(reportCell_(rows[i],0));
-        if (!targetRow || rowDate >= targetDate) {
-          targetSheet = sheet;
-          targetRow = i + 1;
-          targetDate = rowDate;
-        }
+    for (let i = 1; i < rows.length; i++) {
+      const rowId = String(rows[i][0] || "").trim();
+      const rowClient = String(rows[i][1] || "").trim();
+      if ((clientId && rowId === clientId) || (!clientId && rowClient === client)) {
+        targetRow = i + 1;
+        break;
       }
-    });
-
-    if (!targetRow) {
-      return { success:false, error:"no report row for client", client:client };
     }
 
-    // Column 17 is פירוט_מצב / customStatusText.
-    targetSheet.getRange(targetRow, 18).setValue(note);
-    return { success:true, row:targetRow, client:client, note:note };
+    const row = [clientId, client, note, updatedAt];
+    if (targetRow) sheet.getRange(targetRow, 1, 1, row.length).setValues([row]);
+    else sheet.appendRow(row);
+
+    return { success:true, row:targetRow || sheet.getLastRow(), client:client, clientId:clientId, note:note, internalNoteDate:updatedAt };
   }
+
   function sendOneSignalRequest_(payload, label) {
     const config = getOneSignalConfig_();
     if (!config.appId) return { success:false, ok:false, error:"missing_app_id", recipients:0 };
@@ -3861,19 +3870,34 @@ function getSupplyDB_(ss) {
 
 function getLastReadings_(ss) {
   const readings = {};
-  dedupeReportRows_(allReportRows_(ss)).forEach(r => {
+  const clientNotes = getClientInternalNotes_(ss);
+  const reportRows = dedupeReportRows_(allReportRows_(ss));
+  const lastReportNotes = {};
+  reportRows.forEach(r => {
+    const client = String(reportCell_(r,2));
+    const date = normalizeSheetDate_(reportCell_(r,0));
+    const note = String(reportCell_(r,16)||"").trim();
+    if (note && (!lastReportNotes[client] || date >= lastReportNotes[client].date)) {
+      lastReportNotes[client] = { note:note, date:date };
+    }
+  });
+  reportRows.forEach(r => {
     const client = String(reportCell_(r,2));
     const date = normalizeSheetDate_(reportCell_(r,0));
     if (!readings[client] || date > readings[client].date) {
+      const clientId = String(reportCell_(r,24)||"");
+      const clientNote = (clientId && clientNotes.byId[clientId]) || clientNotes.byClient[client] || null;
+      const reportNote = lastReportNotes[client] || null;
       readings[client] = {
         client, date, chlorine: reportCell_(r,3), ph: reportCell_(r,4),
-        clientId: String(reportCell_(r,24)||""),
+        clientId: clientId,
         chlora: reportCell_(r,19)||0, hth: reportCell_(r,20)||0, phUp: reportCell_(r,21)||0, acidLiters: reportCell_(r,22)||0,
         elModel: String(reportCell_(r,10)||""), elSerial: String(reportCell_(r,11)||""),
         elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||""),
         elNext: reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||""),
         poolStatus: String(reportCell_(r,15)||""),
-        customStatusText: String(reportCell_(r,16)||""),
+        customStatusText: clientNote ? clientNote.note : (reportNote ? reportNote.note : String(reportCell_(r,16)||"")),
+        internalNoteDate: clientNote ? clientNote.date : "",
         notes: String(reportCell_(r,18)||""),
         missedTreatment: String(reportCell_(r,18)||"").trim() === "לא בוצע טיפול"
       };
