@@ -2976,6 +2976,20 @@ function getClientsByHeaders_(ss) {
     ? clientSheet
     : sheets.find(sh => hasClientHeader(sh, false));
   if (!sheet) return [];
+  if (sheet.getName() === "לקוחות") {
+    ensureColumns(sheet, [
+      "clientId",
+      "קוד_שער",
+      "סוג_בריכה",
+      "ימים_קבועים",
+      "מפעיל_קבוע",
+      "ימי_בדיקת_מים",
+      "יתרת_טיפולים_חודשית",
+      "מונה_טיפולים_בפועל",
+      "מכסת_טיפולים_חודשית",
+      "חודש_טיפולים"
+    ]);
+  }
 
   const rows = sheet.getDataRange().getValues();
   let hi = rows.findIndex(r => r.some(cell => isClientNameHeader_(cell)));
