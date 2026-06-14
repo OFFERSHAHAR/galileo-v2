@@ -376,6 +376,20 @@
           const duplicate = findDuplicateReportRowAcrossSheets_(ss, r);
           if (duplicate.row) {
             Logger.log("Duplicate report skipped: row " + duplicate.row);
+            const targetSheet = getOperatorReportsSheet_(ss, r && r.operator);
+            const duplicateSheetName = duplicate.sheet ? duplicate.sheet.getName() : "";
+            if (targetSheet.getName() !== "דוחות" && duplicateSheetName !== targetSheet.getName()) {
+              const existingInTarget = findDuplicateReportRow_(targetSheet, r);
+              if (!existingInTarget.row) {
+                const reportToWrite = duplicate.id && !r.id ? Object.assign({}, r, { id: duplicate.id }) : r;
+                targetSheet.appendRow(reportRowValues_(reportToWrite));
+                const savedRow = targetSheet.getLastRow();
+                refreshMonthlyTreatmentCounters_(ss);
+                markSubOperatorShareDone_(ss, reportToWrite);
+                const reminderResult = queueChlorineTabletReminderSafe_(ss, reportToWrite, data, duplicate.id || r.id || "");
+                return json({ success: true, duplicate: true, copiedToOperatorSheet: true, row: savedRow, id: duplicate.id || r.id || "", chlorineReminder: reminderResult });
+              }
+            }
             markSubOperatorShareDone_(ss, r);
             const reminderResult = queueChlorineTabletReminderSafe_(ss, r, data, duplicate.id || r.id || "");
             return json({ success: true, duplicate: true, row: duplicate.row, id: duplicate.id || r.id || "", chlorineReminder: reminderResult });
