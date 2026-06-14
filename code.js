@@ -2680,7 +2680,13 @@
 
   function operatorReportsSheetName_(operator) {
     const clean = String(operator || "").trim().replace(/[\\\/\?\*\[\]\:]/g, "-").replace(/\s+/g, " ");
-    return clean ? ("דוחות - " + clean).slice(0, 99) : "דוחות";
+    const mapped = {
+      "אור מוסה": "אור מוסה",
+      "אור פרנקו": "אור פרנקו",
+      "גיל פלג": "גיל פלד",
+      "גיל פלד": "גיל פלד"
+    };
+    return mapped[clean] || (clean ? clean.slice(0, 99) : "דוחות");
   }
 
   function getOperatorReportsSheet_(ss, operator) {
@@ -2698,7 +2704,9 @@
     const main = ss.getSheetByName("דוחות");
     const sheets = main ? [main] : [];
     ss.getSheets().forEach(sheet => {
-      if (sheet.getName().indexOf("דוחות - ") === 0 && sheets.indexOf(sheet) < 0) sheets.push(sheet);
+      const name = sheet.getName();
+      const isOperatorSheet = name === "אור מוסה" || name === "אור פרנקו" || name === "גיל פלד" || name.indexOf("דוחות - ") === 0;
+      if (isOperatorSheet && sheets.indexOf(sheet) < 0) sheets.push(sheet);
     });
     sheets.forEach(ensureReportsSheetReportId_);
     return sheets;
