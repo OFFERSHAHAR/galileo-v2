@@ -1,10 +1,14 @@
 dist/
 *.log
 dev-server*.log
+clasp-login*.log
 green-probe.json
 green-status-probe.json
+.clasp.json
+.clasp-deploy/
 node_modules/.vite/
 node_modules/node_modules/
+node_modules/
 android-chrome-*.png
 apple-touch-icon.png
 favicon-*.png

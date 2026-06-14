@@ -2219,12 +2219,16 @@ const upsertReportByIdentity = (list, report) => {
 const reportFoundInSheet = (sheetReport = {}, report = {}) => {
   const wantedId = String(report?.id || "").trim();
   const sheetId = String(sheetReport?.id || "").trim();
-  if (wantedId && sheetId && wantedId === sheetId) return true;
-  return (
-    normalizeDate(sheetReport.reportDate) === normalizeDate(report.reportDate) &&
-    normalizeName(sheetReport.operator) === normalizeName(report.operator) &&
-    normalizeName(sheetReport.client) === normalizeName(report.client)
-  );
+  const identityMatches = (wantedId && sheetId)
+    ? wantedId === sheetId
+    : (
+      normalizeDate(sheetReport.reportDate) === normalizeDate(report.reportDate) &&
+      normalizeName(sheetReport.operator) === normalizeName(report.operator) &&
+      normalizeName(sheetReport.client) === normalizeName(report.client)
+    );
+  if (!identityMatches) return false;
+  const fields = ["chlorine","ph","salt","waterLevel","clarity","fat","flow","elModel","elSerial","elDate","elNext","supplyLabel","poolStatus","customStatusText","restrictedUntil","notes","chlora","hth","phUp","acidLiters","suppliedEquipment","clientId"];
+  return fields.every(field => normalizeName(sheetReport?.[field]) === normalizeName(report?.[field]));
 };
 const confirmReportSavedToSheet = async (report) => {
   if (!sheetId || !report?.client || !report?.reportDate) return false;
@@ -3254,7 +3258,7 @@ useEffect(() => {
     });
     const res = await sheetCall("saveClientInternalNote", {client: clientName, clientId: clientIdByName(clientName), note}).catch(()=>null);
     if (res?.success) showToast("✅ הערה פנימית נשמרה");
-    else showToast("⚠️ ההערה עודכנה מקומית, לא נמצאה שורת דוח לשמירה");
+    else showToast("⚠️ ההערה עודכנה מקומית, שמירה בשיטס נכשלה");
     haptic(res?.success ? "success" : "medium");
   };
   const issueText = (value) => String(value || "").trim();
@@ -3266,6 +3270,7 @@ useEffect(() => {
     if (typeof navigator !== "undefined" && navigator.onLine === false) return false;
     const clean = makePendingOperatorIssue(issue);
     const res = await sheetCall("saveOperatorIssue", {
+      localId: clean.localId,
       operator: clean.operator,
       client: clean.client,
       desc: clean.desc,

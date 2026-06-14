@@ -263,7 +263,7 @@
         if(sheet.getLastRow()===0) sheet.appendRow(["id","מפעיל","לקוח","תיאור","דחיפות","סטטוס","תגובת_אדמין","תאריך"]);
         const duplicateRow = findDuplicateOperatorIssueRow_(sheet, data);
         if (duplicateRow) return json({ success:true, duplicate:true, row:duplicateRow });
-        sheet.appendRow([Date.now(), data.operator, data.client, data.desc, data.priority, "פתוח", "", data.date||new Date().toISOString().slice(0,10)]);
+        sheet.appendRow([String(data.localId || "").trim() || Date.now(), data.operator, data.client, data.desc, data.priority, "פתוח", "", data.date||new Date().toISOString().slice(0,10)]);
         if (String(data.priority || "") === "קריטי") {
           sendAppNotificationToAdmins_(ss, {
             title: "🚨 תקלה קריטית",
@@ -385,29 +385,34 @@
           const operatorSheet = getOperatorReportsSheet_(ss, r && r.operator);
           const targets = operatorSheet.getName() === mainSheet.getName() ? [mainSheet] : [mainSheet, operatorSheet];
           let savedRow = 0;
+          let mainRow = 0;
           let savedId = String(r.id || "");
           let wrote = false;
-          let duplicate = false;
+          const writtenSheets = [];
           targets.forEach(sheet => {
             const existing = findDuplicateReportRow_(sheet, r);
             if (existing.row) {
-              duplicate = true;
               if (!savedRow) savedRow = existing.row;
+              if (sheet.getName() === mainSheet.getName()) mainRow = existing.row;
               if (!savedId && existing.id) savedId = existing.id;
               return;
             }
             const reportToWrite = savedId && !r.id ? Object.assign({}, r, { id: savedId }) : r;
             sheet.appendRow(reportRowValues_(reportToWrite));
             savedRow = sheet.getLastRow();
+            if (sheet.getName() === mainSheet.getName()) mainRow = savedRow;
             savedId = savedId || reportToWrite.id || "";
             wrote = true;
+            writtenSheets.push(sheet.getName());
           });
           refreshMonthlyTreatmentCounters_(ss);
           markSubOperatorShareDone_(ss, r);
           data._chlorineReminder = queueChlorineTabletReminderSafe_(ss, r, data, savedId || r.id || "");
-          data._savedReportRow = savedRow;
-          data._savedReportDuplicate = duplicate;
+          data._savedReportRow = mainRow || savedRow;
+          data._savedReportDuplicate = !wrote;
           data._savedReportId = savedId || r.id || "";
+          data._savedReportTargets = targets.map(sheet => sheet.getName());
+          data._savedReportWrittenSheets = writtenSheets;
         } finally {
           try { lock.releaseLock(); } catch(e) {}
         }
@@ -463,25 +468,29 @@
           }
         }
 
-        return json({ success: true, duplicate: !!data._savedReportDuplicate, row: data._savedReportRow || 0, id: data._savedReportId || r.id || "", chlorineReminder: data._chlorineReminder || null });
+        return json({ success: true, duplicate: !!data._savedReportDuplicate, row: data._savedReportRow || 0, id: data._savedReportId || r.id || "", targets: data._savedReportTargets || [], writtenSheets: data._savedReportWrittenSheets || [], chlorineReminder: data._chlorineReminder || null });
       }
 
       if (action === "updateReport") {
         const r = Object.assign({}, data.report || {});
         const resolvedOperator = reportOperatorName_(ss, r);
         if (resolvedOperator) r.operator = resolvedOperator;
-        if (data.supplyUpdate) {
-          const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
-          if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
+        const lock = LockService.getScriptLock();
+        try {
+          lock.waitLock(10000);
+          if (data.supplyUpdate) {
+            const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
+            if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
+          }
+          const result = updateReportAcrossSheets_(ss, data.original || {}, r);
+          if (!result.updated) return json({ success:false, error:"report row not found" });
+          refreshMonthlyTreatmentCounters_(ss);
+          markSubOperatorShareDone_(ss, result.report);
+          const reminderResult = queueChlorineTabletReminderSafe_(ss, result.report, data, result.id);
+          return json({ success:true, row:result.mainRow || result.row, id:result.id, copiesUpdated:result.updated, copiesCreated:result.created, chlorineReminder:reminderResult });
+        } finally {
+          try { lock.releaseLock(); } catch(e) {}
         }
-        const match = findLatestReportRowAcrossSheets_(ss, data.original || {}, r);
-        if (!match.row || !match.sheet) return json({ success:false, error:"report row not found" });
-        match.sheet.getRange(match.row, 1, 1, 26).setValues([reportRowValues_(r)]);
-        refreshMonthlyTreatmentCounters_(ss);
-        markSubOperatorShareDone_(ss, r);
-        const savedReportId = r.id || reportIdCell_(match.sheet.getRange(match.row, 1, 1, match.sheet.getLastColumn()).getValues()[0]) || "";
-        const reminderResult = queueChlorineTabletReminderSafe_(ss, r, data, savedReportId);
-        return json({ success:true, row:match.row, id: savedReportId, chlorineReminder: reminderResult });
       }
 
       if (action === "saveSupplyDB") {
@@ -591,6 +600,10 @@
           clientId: String(reportCell_(r,24)||""),
         }));
         return json({ reports });
+      }
+
+      if (action === "getReportStorageStatus") {
+        return json({ matches: reportStorageStatus_(ss, data.report || data) });
       }
 
       if (action === "getMaterialApprovals") {
@@ -987,8 +1000,7 @@
     let appended = 0;
     assigned.forEach(item => {
       if (alreadyReported[item.client]) return;
-      const reportsSheet = getOperatorReportsSheet_(ss, item.operator);
-      reportsSheet.appendRow(reportRowValues_({
+      const missingReport = {
         id: Utilities.getUuid(),
         reportDate: today,
         operator: item.operator,
@@ -999,7 +1011,13 @@
         supplyLabel: "", poolStatus: "", customStatusText: "", restrictedUntil: "",
         notes: "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc",
         chlora: 0, hth: 0, phUp: 0, acidLiters: 0, suppliedEquipment: ""
-      }));
+      };
+      const mainSheet = getMainReportsSheet_(ss);
+      const operatorSheet = getOperatorReportsSheet_(ss, item.operator);
+      const targetSheets = operatorSheet.getName() === mainSheet.getName() ? [mainSheet] : [mainSheet, operatorSheet];
+      targetSheets.forEach(sheet => {
+        if (!findDuplicateReportRow_(sheet, missingReport).row) sheet.appendRow(reportRowValues_(missingReport));
+      });
       alreadyReported[item.client] = true;
       appended++;
     });
@@ -2258,7 +2276,7 @@
     if (rows.length < 2) return { byId:{}, byClient:{} };
     const byId = {};
     const byClient = {};
-    rows.slice(1).forEach(r => {
+    rows.slice(1).forEach((r, index) => {
       const clientId = String(r[0] || "").trim();
       const client = String(r[1] || "").trim();
       if (!client && !clientId) return;
@@ -2266,10 +2284,11 @@
         clientId: clientId,
         client: client,
         note: String(r[2] || ""),
-        date: normalizeSheetDate_(r[3]) || String(r[3] || "")
+        date: normalizeSheetDate_(r[3]) || String(r[3] || ""),
+        row: index + 2
       };
-      if (clientId) byId[clientId] = entry;
-      if (client) byClient[client] = entry;
+      if (clientId && (!byId[clientId] || entry.date > byId[clientId].date || (entry.date === byId[clientId].date && entry.row > byId[clientId].row))) byId[clientId] = entry;
+      if (client && (!byClient[client] || entry.date > byClient[client].date || (entry.date === byClient[client].date && entry.row > byClient[client].row))) byClient[client] = entry;
     });
     return { byId:byId, byClient:byClient };
   }
@@ -2283,21 +2302,18 @@
     const sheet = getClientInternalNotesSheet_(ss);
     const rows = sheet.getDataRange().getValues();
     const updatedAt = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd");
-    let targetRow = 0;
+    const targetRows = [];
     for (let i = 1; i < rows.length; i++) {
       const rowId = String(rows[i][0] || "").trim();
       const rowClient = String(rows[i][1] || "").trim();
-      if ((clientId && rowId === clientId) || (!clientId && rowClient === client)) {
-        targetRow = i + 1;
-        break;
-      }
+      if ((clientId && rowId === clientId) || (!clientId && rowClient === client)) targetRows.push(i + 1);
     }
 
     const row = [clientId, client, note, updatedAt];
-    if (targetRow) sheet.getRange(targetRow, 1, 1, row.length).setValues([row]);
+    if (targetRows.length) targetRows.forEach(targetRow => sheet.getRange(targetRow, 1, 1, row.length).setValues([row]));
     else sheet.appendRow(row);
 
-    return { success:true, row:targetRow || sheet.getLastRow(), client:client, clientId:clientId, note:note, internalNoteDate:updatedAt };
+    return { success:true, row:targetRows[targetRows.length - 1] || sheet.getLastRow(), rowsUpdated:targetRows.length || 1, client:client, clientId:clientId, note:note, internalNoteDate:updatedAt };
   }
 
   function sendOneSignalRequest_(payload, label) {
@@ -2691,23 +2707,29 @@
   }
 
   function operatorReportsSheetName_(operator) {
-    const clean = String(operator || "").trim().replace(/[\\\/\?\*\[\]\:]/g, "-").replace(/\s+/g, " ");
+    const clean = canonicalOperatorName_(operator).replace(/[\\\/\?\*\[\]\:]/g, "-");
     const mapped = {
       "אור מוסה": "אור_מוסה",
-      "אור מוסא": "אור_מוסה",
-      "אור_מוסה": "אור_מוסה",
       "אור פרנקו": "אור_פרנקו",
-      "אור_פרנקו": "אור_פרנקו",
-      "גיל פלג": "גיל_פלג",
-      "גיל פלד": "גיל_פלג",
-      "גיל_פלג": "גיל_פלג"
+      "גיל פלג": "גיל_פלג"
     };
     return mapped[clean] || (clean ? clean.slice(0, 99) : "דוחות");
   }
 
+  function canonicalOperatorName_(operator) {
+    const clean = String(operator || "").trim().replace(/_/g, " ").replace(/\s+/g, " ");
+    const mapped = {
+      "אור מוסא": "אור מוסה",
+      "אור מוסה": "אור מוסה",
+      "אור פרנקו": "אור פרנקו",
+      "גיל פלד": "גיל פלג",
+      "גיל פלג": "גיל פלג"
+    };
+    return mapped[clean] || clean;
+  }
+
   function reportOperatorName_(ss, report) {
-    const direct = String(report && report.operator || "").trim();
-    if (direct) return direct;
+    const direct = canonicalOperatorName_(report && report.operator);
     const reportClientId = String(report && report.clientId || "").trim();
     const reportClient = normalizeReportValue_(report && report.client);
     const clients = getClientsByHeaders_(ss);
@@ -2716,7 +2738,7 @@
       if (reportClientId && cid && reportClientId === cid) return true;
       return reportClient && normalizeReportValue_(c.name) === reportClient;
     });
-    return String(match && match.regularOperator || "").trim();
+    return canonicalOperatorName_(match && match.regularOperator) || direct;
   }
 
   function getOperatorReportsSheet_(ss, operator) {
@@ -2743,9 +2765,20 @@
   function reportSheetList_(ss) {
     const main = ss.getSheetByName("דוחות");
     const sheets = main ? [main] : [];
+    const operatorSheetNames = {
+      "אור_מוסה":true, "אור_פרנקו":true, "גיל_פלג":true,
+      "אור מוסה":true, "אור פרנקו":true, "גיל פלד":true, "גיל פלג":true
+    };
+    getClientsByHeaders_(ss).forEach(client => {
+      const operator = canonicalOperatorName_(client.regularOperator);
+      if (!operator) return;
+      operatorSheetNames[operator] = true;
+      operatorSheetNames[operatorReportsSheetName_(operator)] = true;
+      operatorSheetNames["דוחות - " + operator] = true;
+    });
     ss.getSheets().forEach(sheet => {
       const name = sheet.getName();
-      const isOperatorSheet = name === "אור_מוסה" || name === "אור_פרנקו" || name === "גיל_פלג" || name === "אור מוסה" || name === "אור פרנקו" || name === "גיל פלד" || name.indexOf("דוחות - ") === 0;
+      const isOperatorSheet = !!operatorSheetNames[name] || name.indexOf("דוחות - ") === 0;
       if (isOperatorSheet && sheets.indexOf(sheet) < 0) sheets.push(sheet);
     });
     sheets.forEach(ensureReportsSheetReportId_);
@@ -2767,13 +2800,60 @@
 
   function dedupeReportRows_(rows) {
     const seen = {};
-    return (rows || []).filter(row => {
+    const deduped = [];
+    (rows || []).forEach(row => {
       const id = reportIdCell_(row);
       const key = id ? ("id:" + id) : ("key:" + reportDuplicateKeyFromRow_(row));
-      if (seen[key]) return false;
-      seen[key] = true;
-      return true;
+      if (seen[key] !== undefined) deduped[seen[key]] = row;
+      else {
+        seen[key] = deduped.length;
+        deduped.push(row);
+      }
     });
+    return deduped;
+  }
+
+  function updateReportAcrossSheets_(ss, original, report) {
+    const matches = [];
+    reportSheetList_(ss).forEach(sheet => {
+      const row = findLatestReportRow_(sheet, original, report);
+      if (row) matches.push({ sheet:sheet, row:row });
+    });
+    if (!matches.length) return { updated:0, created:0, row:0, mainRow:0, id:"", report:report };
+
+    let savedId = String(report && report.id || "").trim();
+    if (!savedId) {
+      const first = matches[0];
+      const values = first.sheet.getRange(first.row, 1, 1, first.sheet.getLastColumn()).getValues()[0];
+      savedId = reportIdCell_(values) || Utilities.getUuid();
+    }
+    const finalReport = Object.assign({}, report, { id:savedId });
+    const mainSheet = getMainReportsSheet_(ss);
+    const operatorSheet = getOperatorReportsSheet_(ss, finalReport.operator);
+    const requiredNames = [mainSheet.getName(), operatorSheet.getName()];
+    let mainRow = 0;
+    const obsoleteMatches = [];
+    matches.forEach(match => {
+      if (requiredNames.indexOf(match.sheet.getName()) < 0) {
+        obsoleteMatches.push(match);
+        return;
+      }
+      match.sheet.getRange(match.row, 1, 1, reportHeaders_().length).setValues([reportRowValues_(finalReport)]);
+      if (match.sheet.getName() === "דוחות") mainRow = match.row;
+    });
+
+    let created = 0;
+    const requiredSheets = [mainSheet, operatorSheet];
+    requiredSheets.forEach(sheet => {
+      if (matches.some(match => match.sheet.getName() === sheet.getName())) return;
+      sheet.appendRow(reportRowValues_(finalReport));
+      created++;
+      if (sheet.getName() === "דוחות") mainRow = sheet.getLastRow();
+    });
+    obsoleteMatches
+      .sort((a, b) => b.row - a.row)
+      .forEach(match => match.sheet.deleteRow(match.row));
+    return { updated:matches.length - obsoleteMatches.length, created:created, removed:obsoleteMatches.length, row:matches[0].row, mainRow:mainRow, id:savedId, report:finalReport };
   }
 
   function findLatestReportRowAcrossSheets_(ss, original, report) {
@@ -2797,6 +2877,13 @@
       return true;
     });
     return found;
+  }
+
+  function reportStorageStatus_(ss, report) {
+    return reportSheetList_(ss).map(sheet => {
+      const match = findDuplicateReportRow_(sheet, report);
+      return { sheet:sheet.getName(), row:match.row || 0, id:match.id || "" };
+    }).filter(item => item.row);
   }
 
   function findLatestReportRow_(sheet, original, report) {
@@ -2864,6 +2951,7 @@ function findDuplicateReportRow_(sheet, report) {
 
   function findDuplicateOperatorIssueRow_(sheet, issue) {
     if (!sheet || sheet.getLastRow() < 2) return 0;
+    const targetId = String(issue.localId || "").trim();
     const targetKey = [
       normalizeReportDate_(issue.date || new Date()),
       normalizeReportValue_(issue.operator).toLowerCase(),
@@ -2874,6 +2962,7 @@ function findDuplicateReportRow_(sheet, report) {
     ].join("|");
     const rows = sheet.getDataRange().getValues();
     for (let i = 1; i < rows.length; i++) {
+      if (targetId && String(rows[i][0] || "").trim() === targetId) return i + 1;
       const rowKey = [
         normalizeReportDate_(rows[i][7]),
         normalizeReportValue_(rows[i][1]).toLowerCase(),
