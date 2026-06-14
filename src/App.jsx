@@ -315,11 +315,14 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
-const APP_BUILD_ID = "20260612-chlorine-reminder-1";
+const APP_BUILD_ID = "20260615-super-admin-owner-1";
 const APP_VERSION_URL = "/version.json";
 const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
 const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
-const DEFAULT_SUPER_PASS = "039076914";
+const DEFAULT_SUPER_PASS = "1892346";
+const SUPER_PASS_VERSION = "20260615-1";
+const SUPER_PASS_VERSION_KEY = "galileo_super_pass_version";
+const OFFICIAL_INTERFACE_OWNER = "אור";
 
 const normalizeBuildId = (value) => String(value || "").trim();
 function getAcceptedAppBuildId() {
@@ -363,8 +366,18 @@ async function hardRefreshApp() {
   window.location.replace(url.toString());
 }
 
-function getSuperPass() { return localStorage.getItem("galileo_super_pass")||DEFAULT_SUPER_PASS; }
-function setSuperPass(p) { localStorage.setItem("galileo_super_pass",p); }
+function getSuperPass() {
+  if (localStorage.getItem(SUPER_PASS_VERSION_KEY) !== SUPER_PASS_VERSION) {
+    localStorage.setItem("galileo_super_pass", DEFAULT_SUPER_PASS);
+    localStorage.setItem(SUPER_PASS_VERSION_KEY, SUPER_PASS_VERSION);
+    return DEFAULT_SUPER_PASS;
+  }
+  return localStorage.getItem("galileo_super_pass") || DEFAULT_SUPER_PASS;
+}
+function setSuperPass(p) {
+  localStorage.setItem("galileo_super_pass", p);
+  localStorage.setItem(SUPER_PASS_VERSION_KEY, SUPER_PASS_VERSION);
+}
 const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
 const SUPER_MESSAGE_TARGET = { username: "or", name: "אור מוסה" };
 const SUPER_MESSAGE_TARGET_PASSWORD = "1892346";
@@ -1847,6 +1860,7 @@ function SuperAdminScreen({ onClose }) {
             <div>
               <div style={{color:"rgba(255,255,255,0.55)",fontSize:11,fontWeight:700,letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:4}}>Super Admin</div>
               <div style={{color:"#fff",fontSize:22,fontWeight:900}}>POOLMANG.BY.OR2026</div>
+              <div style={{color:"rgba(255,255,255,0.82)",fontSize:12,fontWeight:800,marginTop:3}}>בעלים רשמי: {OFFICIAL_INTERFACE_OWNER}</div>
               {auth&&<div style={{color:"rgba(255,255,255,0.6)",fontSize:12,marginTop:2}}>{clients.length} לקוחות · {pendingCount} תקלות ממתינות</div>}
             </div>
             <div style={{display:"flex",gap:8}}>
@@ -1861,6 +1875,7 @@ function SuperAdminScreen({ onClose }) {
             <div style={{background:"#fff",borderRadius:24,padding:28,width:"100%",maxWidth:340,boxShadow:"0 20px 60px rgba(0,0,0,0.15)"}}>
               <div style={{fontSize:48,textAlign:"center",marginBottom:12}}>🔐</div>
               <div style={{fontWeight:900,fontSize:18,color:C2.text,textAlign:"center",marginBottom:20}}>כניסה מאובטחת</div>
+              <div style={{fontWeight:800,fontSize:12,color:C2.muted,textAlign:"center",margin:"-12px 0 16px"}}>גישה לבעלים הרשמי: {OFFICIAL_INTERFACE_OWNER}</div>
               <input type="password" value={pass} onChange={e=>{setPass(e.target.value);setErr("");}} placeholder="סיסמה סודית" style={{...inp2,marginBottom:err?8:16}} onKeyDown={e=>e.key==="Enter"&&login()}/>
               {err&&<div style={{background:"#ffebee",borderRadius:10,padding:"8px 14px",marginBottom:12,color:C2.red,fontSize:13,fontWeight:700,textAlign:"center"}}>⚠️ {err}</div>}
               <Press onClick={login} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C2.blue},#42a5f5)`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.4)"}}>כניסה →</Press>
