@@ -403,16 +403,180 @@ function getScriptUrl() {
   const c = getCompany();
   return c.scriptUrl || localStorage.getItem("galileo_script_url") || FIXED_SCRIPT_URL;
 }
+const sheetReadRequests = new Map();
+const SHEET_READ_ACTIONS = new Set([
+  "getBootstrapData","getOperatorRefreshData","getTasks","getUsers","getAdminOrders",
+  "getOperatorRefreshVersion",
+  "getSubOperatorShares","getSubOperatorApprovals","getPendingSubReports","getLastReadings",
+  "getClientSettings","getReports","getMaterialApprovals","getReportStorageStatus",
+  "getClients","getUnassignedClients","getOperatorIssues","getTreatmentCounts"
+]);
 async function sheetCall(action, payload={}) {
-  try {
+  const execute = async () => {
     const company = getCompany();
     const sheetId = company.sheetId || localStorage.getItem("galileo_sheet_id") || "";
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 45000);
-    const r = await fetch(getScriptUrl(),{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action, sheetId, ...payload}),signal:controller.signal});
-    clearTimeout(timer);
-    return await r.json();
-  } catch { return null; }
+    try {
+      const r = await fetch(getScriptUrl(),{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action, sheetId, ...payload}),signal:controller.signal});
+      return await r.json();
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  if (!SHEET_READ_ACTIONS.has(action)) return execute();
+  const company = getCompany();
+  const key = `${getScriptUrl()}:${company.sheetId || localStorage.getItem("galileo_sheet_id") || ""}:${action}:${JSON.stringify(payload || {})}`;
+  if (sheetReadRequests.has(key)) return sheetReadRequests.get(key);
+  const request = execute().finally(() => sheetReadRequests.delete(key));
+  sheetReadRequests.set(key, request);
+  return request;
+}
+
+const PENDING_REPORT_DB_NAME = "galileo-sync-db";
+const PENDING_REPORT_DB_VERSION = 1;
+const PENDING_REPORT_STORE = "pending-reports";
+const PENDING_REPORT_SYNC_TAG = "galileo-pending-reports";
+
+function pendingReportStorageId(item = {}) {
+  const report = item?.report || item || {};
+  const id = String(report.id || "").trim();
+  if (id) return id;
+  return [report.reportDate, report.operator, report.client]
+    .map(value => String(value || "").trim().toLowerCase())
+    .join("|");
+}
+
+function openPendingReportDB() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("indexeddb_unavailable"));
+      return;
+    }
+    const request = indexedDB.open(PENDING_REPORT_DB_NAME, PENDING_REPORT_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(PENDING_REPORT_STORE)) {
+        db.createObjectStore(PENDING_REPORT_STORE, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("indexeddb_open_failed"));
+  });
+}
+
+function idbRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("indexeddb_request_failed"));
+  });
+}
+
+async function loadPendingReportsFromIndexedDB() {
+  const db = await openPendingReportDB();
+  try {
+    const transaction = db.transaction(PENDING_REPORT_STORE, "readonly");
+    const records = await idbRequest(transaction.objectStore(PENDING_REPORT_STORE).getAll());
+    return records.map(record => record?.item).filter(Boolean);
+  } finally {
+    db.close();
+  }
+}
+
+function makePendingReportRecord(item, previous) {
+  const company = getCompany();
+  const previousSaved = !!(previous?.item?.report && previous.item.savedToSheet);
+  return {
+    id:pendingReportStorageId(item),
+    item:previousSaved ? previous.item : item,
+    scriptUrl:getScriptUrl(),
+    sheetId:company.sheetId || localStorage.getItem("galileo_sheet_id") || "",
+    updatedAt:Date.now()
+  };
+}
+
+async function upsertPendingReportInIndexedDB(item) {
+  const id = pendingReportStorageId(item);
+  if (!id) return;
+  const db = await openPendingReportDB();
+  try {
+    const transaction = db.transaction(PENDING_REPORT_STORE, "readwrite");
+    const store = transaction.objectStore(PENDING_REPORT_STORE);
+    const request = store.get(id);
+    request.onsuccess = () => store.put(makePendingReportRecord(item, request.result));
+    await new Promise((resolve, reject) => {
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error || new Error("indexeddb_write_failed"));
+      transaction.onabort = () => reject(transaction.error || new Error("indexeddb_write_aborted"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function deletePendingReportFromIndexedDB(item) {
+  const id = pendingReportStorageId(item);
+  if (!id) return;
+  const db = await openPendingReportDB();
+  try {
+    const transaction = db.transaction(PENDING_REPORT_STORE, "readwrite");
+    transaction.objectStore(PENDING_REPORT_STORE).delete(id);
+    await new Promise((resolve, reject) => {
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error || new Error("indexeddb_delete_failed"));
+      transaction.onabort = () => reject(transaction.error || new Error("indexeddb_delete_aborted"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function persistPendingReportsToIndexedDB(items = []) {
+  const db = await openPendingReportDB();
+  try {
+    const transaction = db.transaction(PENDING_REPORT_STORE, "readwrite");
+    const store = transaction.objectStore(PENDING_REPORT_STORE);
+    const request = store.getAll();
+    request.onsuccess = () => {
+      const existing = Array.isArray(request.result) ? request.result : [];
+      const existingById = new Map(existing.map(record => [record.id, record]));
+      const wantedIds = new Set();
+      items.forEach(item => {
+        const id = pendingReportStorageId(item);
+        if (!id) return;
+        wantedIds.add(id);
+        store.put(makePendingReportRecord(item, existingById.get(id)));
+      });
+      existing.forEach(record => {
+        if (!wantedIds.has(record.id)) store.delete(record.id);
+      });
+    };
+    await new Promise((resolve, reject) => {
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error || new Error("indexeddb_write_failed"));
+      transaction.onabort = () => reject(transaction.error || new Error("indexeddb_write_aborted"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function requestPendingReportBackgroundSync() {
+  if (!("serviceWorker" in navigator)) return false;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    if (registration.sync?.register) {
+      await registration.sync.register(PENDING_REPORT_SYNC_TAG);
+      return true;
+    }
+    registration.active?.postMessage({ type:"PROCESS_PENDING_REPORTS" });
+    return !!registration.active;
+  } catch (error) {
+    console.warn("Pending report background sync registration failed", error);
+    return false;
+  }
 }
 
 const USAGE_SESSION_KEY = "galileo_usage_session_id";
@@ -2099,6 +2263,7 @@ const [pending, setPending] = useState(() => {
     return [];
   }
 });
+const [pendingStoreReady, setPendingStoreReady] = useState(false);
 const [pendingOperatorIssues, setPendingOperatorIssues] = useState(() => {
   try {
     const value = JSON.parse(localStorage.getItem("galileo_pending_operator_issues") || "[]");
@@ -2125,13 +2290,6 @@ const [deferredSubReportIds, setDeferredSubReportIds] = useState(() => {
 });
 const [activeSubReportApprovalId, setActiveSubReportApprovalId] = useState("");
 const [approvalEditId, setApprovalEditId] = useState("");
-
-useEffect(() => {
-  localStorage.setItem(
-    "galileo_pending_reports",
-    JSON.stringify(pending)
-  );
-}, [pending]);
 
 useEffect(() => {
   localStorage.setItem("galileo_pending_operator_issues", JSON.stringify(pendingOperatorIssues));
@@ -2167,7 +2325,7 @@ const shouldSendPendingReportWhatsApp = (item, report) => {
 const samePendingReport = (a, b) => {
   const left = getPendingReportPayload(a) || {};
   const right = getPendingReportPayload(b) || {};
-  if (left.id && right.id) return String(left.id) === String(right.id);
+  if (left.id && right.id && String(left.id) === String(right.id)) return true;
   return (
     normalizeDate(left.reportDate) === normalizeDate(right.reportDate) &&
     normalizeName(left.operator) === normalizeName(right.operator) &&
@@ -2180,6 +2338,9 @@ const makePendingReportItem = (report, supplyUpdate, meta = {}) => {
 };
 const addPendingReport = (report, supplyUpdate, meta = {}) => {
   const item = makePendingReportItem(report, supplyUpdate, meta);
+  void upsertPendingReportInIndexedDB(item)
+    .then(() => requestPendingReportBackgroundSync())
+    .catch(error => console.warn("Immediate pending report persistence failed", error));
   setPending(prev => {
     const idx = prev.findIndex(x => samePendingReport(x, item));
     if (idx < 0) return [...prev, item];
@@ -2189,8 +2350,52 @@ const addPendingReport = (report, supplyUpdate, meta = {}) => {
   });
 };
 const removePendingReport = (item) => {
+  void deletePendingReportFromIndexedDB(item)
+    .catch(error => console.warn("Immediate pending report deletion failed", error));
   setPending(prev => prev.filter(x => !samePendingReport(x, item)));
 };
+
+useEffect(() => {
+  let active = true;
+  loadPendingReportsFromIndexedDB()
+    .then(storedItems => {
+      if (!active || !storedItems.length) return;
+      setPending(previous => storedItems.reduce((items, storedItem) => {
+        const index = items.findIndex(item => samePendingReport(item, storedItem));
+        if (index < 0) return [...items, storedItem];
+        const next = [...items];
+        const storedSaved = !!(storedItem?.report && storedItem.savedToSheet);
+        next[index] = storedSaved ? storedItem : next[index];
+        return next;
+      }, previous));
+    })
+    .catch(error => console.warn("Pending report IndexedDB restore failed", error))
+    .finally(() => {
+      if (active) setPendingStoreReady(true);
+    });
+  return () => { active = false; };
+}, []);
+
+useEffect(() => {
+  if (!pendingStoreReady) return;
+  localStorage.setItem("galileo_pending_reports", JSON.stringify(pending));
+  void persistPendingReportsToIndexedDB(pending)
+    .then(() => pending.length ? requestPendingReportBackgroundSync() : false)
+    .catch(error => console.warn("Pending report IndexedDB persistence failed", error));
+}, [pending, pendingStoreReady]);
+
+useEffect(() => {
+  if (!("serviceWorker" in navigator)) return undefined;
+  const onServiceWorkerMessage = event => {
+    const message = event?.data || {};
+    if (message.type !== "GALILEO_REPORT_SAVED_TO_SHEET" || !message.item) return;
+    setPending(previous => previous.map(item =>
+      samePendingReport(item, message.item) ? message.item : item
+    ));
+  };
+  navigator.serviceWorker.addEventListener("message", onServiceWorkerMessage);
+  return () => navigator.serviceWorker.removeEventListener("message", onServiceWorkerMessage);
+}, []);
 const makePendingOperatorIssue = (issue = {}) => ({
   localId: issue.localId || `opissue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   operator: issue.operator || "",
@@ -2247,14 +2452,9 @@ const reportFoundInSheet = (sheetReport = {}, report = {}) => {
 };
 const confirmReportSavedToSheet = async (report) => {
   if (!sheetId || !report?.client || !report?.reportDate) return false;
-  const res = await sheetCall("getReports", {
-    fromDate: report.reportDate,
-    toDate: report.reportDate,
-    query: report.client,
-    limit: 500
-  }).catch(() => null);
-  const reportsFromSheet = Array.isArray(res?.reports) ? res.reports : [];
-  const found = reportsFromSheet.some(r => reportFoundInSheet(r, report));
+  const res = await sheetCall("getReportStorageStatus", { report }).catch(() => null);
+  const matches = Array.isArray(res?.matches) ? res.matches : [];
+  const found = matches.some(match => match?.confirmed === true);
   if (!found) console.warn("Report save was not confirmed in Sheets", {
     id: report?.id,
     reportDate: report?.reportDate,
@@ -2490,6 +2690,8 @@ useEffect(() => {
   const pendingSyncRef = useRef(false);
   const immediateReportIdsRef = useRef(new Set());
   const operatorRefreshRef = useRef(false);
+  const operatorRefreshVersionRef = useRef("");
+  const operatorRefreshLastFullRef = useRef(0);
   const internalNoteClientRef = useRef("");
 
   const setAction = (key, status, resetMs = 0) => {
@@ -3394,20 +3596,26 @@ useEffect(() => {
     setGreeting(getDailyGreeting(user.username || ""));
     const refresh = async() => {
       if (operatorRefreshRef.current) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       operatorRefreshRef.current = true;
       try {
-        const [tR, uR, oR, shR, apR, prR, lrR, setR, repR, maR] = await Promise.all([
-          sheetCall("getTasks"),
-          sheetCall("getUsers"),
-          sheetCall("getAdminOrders"),
-          sheetCall("getSubOperatorShares"),
-          sheetCall("getSubOperatorApprovals"),
-          sheetCall("getPendingSubReports"),
-          sheetCall("getLastReadings"),
-          sheetCall("getClientSettings"),
+        const versionR = await sheetCall("getOperatorRefreshVersion");
+        const versionKey = `${String(versionR?.version || "")}:${dailyDate}`;
+        const forceFullRefresh = Date.now() - operatorRefreshLastFullRef.current >= 60000;
+        if (!forceFullRefresh && versionR?.version && operatorRefreshVersionRef.current === versionKey) return;
+        const [liveR, repR] = await Promise.all([
+          sheetCall("getOperatorRefreshData"),
           sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300}),
-          sheetCall("getMaterialApprovals")
         ]);
+        const tR = {tasks:liveR?.tasks};
+        const uR = {users:liveR?.users};
+        const oR = {adminOrders:liveR?.adminOrders};
+        const shR = {sharedSubOrders:liveR?.sharedSubOrders};
+        const apR = {approvals:liveR?.subOperatorApprovals};
+        const prR = {pendingSubReports:liveR?.pendingSubReports};
+        const lrR = {lastReadings:liveR?.lastReadings};
+        const setR = {settings:liveR?.settings};
+        const maR = {approvals:liveR?.materialApprovals};
         if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
         if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
         if(Array.isArray(shR?.sharedSubOrders)) setSharedSubOrders(shR.sharedSubOrders);
@@ -3422,6 +3630,8 @@ useEffect(() => {
         if(Array.isArray(repR?.reports)) setSheetReports(repR.reports);
         if(Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
         if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
+        if (versionR?.version) operatorRefreshVersionRef.current = versionKey;
+        operatorRefreshLastFullRef.current = Date.now();
         try {
           const cached = localStorage.getItem("galileo_cache");
           const c = cached ? JSON.parse(cached) : {};
@@ -3446,8 +3656,12 @@ useEffect(() => {
       }
     };
     const interval = setInterval(refresh, 10000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
     window.addEventListener("focus", refresh);
-    return ()=>{ clearInterval(interval); window.removeEventListener("focus", refresh); };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return ()=>{ clearInterval(interval); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refreshWhenVisible); };
   },[user, dailyDate]);
 
   useEffect(()=>{
@@ -4726,8 +4940,8 @@ useEffect(() => {
     const phone = normalizeWhatsAppPhone(clientPhone(report.client));
     const message = buildWA(report);
     if (!phone) {
-      showToast("⚠️ אין טלפון לקוח לשליחת WhatsApp");
-      return false;
+      showToast("⚠️ אין טלפון ללקוח - הדוח נשמר והוסר מתור ההודעות");
+      return true;
     }
 
     const res = await sheetCall("sendGreenApiWhatsApp", {
@@ -4823,8 +5037,9 @@ useEffect(() => {
     if (!item || syncing || isActionLoading(`approveSubReport:${item.id}`)) return;
     const report = item.report;
     const supplyUpdateForApproval = buildSupplyUpdateForReport(report);
+    setDeferredSubReportIds(ids => ids.includes(item.id) ? ids : [...ids, item.id]);
+    setActiveSubReportApprovalId("");
     setAction(`approveSubReport:${item.id}`, "loading");
-    setSyncing(true);
 
     let saved = false;
     let savedReport = report;
@@ -4892,7 +5107,6 @@ useEffect(() => {
       showToast("⚠️ הדוח נשמר מקומית לשליחה מאוחרת");
     }
 
-    setSyncing(false);
   };
 
   const deferPendingSubReport = (item) => {
@@ -5000,11 +5214,12 @@ useEffect(() => {
     const sendEditedReportToCustomer = isEditingExistingReport && shouldSendEditedReportToCustomer(editingReport, report);
     if (!isEditingExistingReport && isSubOperatorRole(user?.role) && !approvalEditId) {
       const adminEmail = getCompany().adminEmail || "";
+      const queuePromise = queueSubOperatorReportForApproval(report, photosBase64, adminEmail);
+      setSyncing(false);
+      setEditingReport(null);
+      setScreen("daily");
       try {
-        await queueSubOperatorReportForApproval(report, photosBase64, adminEmail);
-        setSyncing(false);
-        setEditingReport(null);
-        setScreen("daily");
+        await queuePromise;
         return;
       } catch(e) {
         console.warn("Sub-operator report queue failed", e);
@@ -5387,7 +5602,10 @@ useEffect(() => {
     const retryPending = (maxItems = Infinity) => {
       if (isActionLoading("syncPending")) return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        void requestPendingReportBackgroundSync();
+        return;
+      }
       if (pending.length) void syncPendingReports(maxItems);
       if (pendingOperatorIssues.length) void syncPendingOperatorIssues(maxItems, true);
     };
@@ -6063,6 +6281,7 @@ useEffect(() => {
             const hasFreeClientTasks = freeClientTasks.length > 0;
             const isFreeClientTaskDone = freeClientTasks.some(ft => ft.status === "done");
             const isDone = t.status==="done" || isClientReportedDone(dailyDate, t.client) || isFreeClientTaskDone;
+            const isWaterCheckTask = !!t._waterCheck;
             const forceCollapsed = allDailyCardsCollapsed && !operatorEditOrder;
             if(isDone && !isDoneOpen) {
               return (
@@ -6076,13 +6295,13 @@ useEffect(() => {
                   onPointerUp={()=>stopClientLongPress(t.client)}
                   onPointerLeave={()=>stopClientLongPress(t.client)}
                   onClick={()=>canSubOperatorReport&&!operatorEditOrder&&openDoneReportEditor(t)}
-                  style={{...card({marginBottom:8,opacity:0.82,border:"2px solid #c8e6c9",padding:"10px 12px",display:"grid",gridTemplateColumns:"34px minmax(0,1fr) 34px",gridTemplateAreas:'"expand body status" "actions actions actions"',alignItems:"center",columnGap:10,rowGap:8,background:operatorEditOrder?"#fffde7":"#fff",direction:"ltr"})}}
+                  style={{...card({marginBottom:8,opacity:0.82,border:"2px solid #c8e6c9",padding:"10px 12px",display:"grid",gridTemplateColumns:"34px minmax(0,1fr) 34px",gridTemplateAreas:'"expand body status" "actions actions actions"',alignItems:"center",columnGap:10,rowGap:8,background:operatorEditOrder?"#fffde7":isWaterCheckTask?"#ecfdf5":"#fff",direction:"ltr"})}}
                 >
                   <div style={{gridArea:"status",width:30,height:30,borderRadius:"50%",background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",color:C.green,fontWeight:900,justifySelf:"end",direction:"rtl"}}>✓</div>
                   <div style={{gridArea:"body",minWidth:0,textAlign:"right",direction:"rtl"}}>
                     <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start"}}>
                       <div style={{fontWeight:900,fontSize:14,color:C.text,textDecoration:"line-through",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",minWidth:0,maxWidth:"100%"}}>{t.client.split(" - ")[0]}</div>
-                      <WhatsAppClientToggle client={t.client} compact/>
+                      <WhatsAppClientToggle client={t.client} compact/>{isWaterCheckTask&&<Badge label={"בדיקת מים"} col={C.green}/>}
                     </div>
                     {hasFreeClientTasks&&<div style={{fontWeight:900,fontSize:15,color:C.blue,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>משימה חופשית</div>}
                     {clientAddress(t.client)&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{clientAddress(t.client)}</div>}
@@ -6108,7 +6327,7 @@ useEffect(() => {
             }
             const poolType = (clients.find(c=>c.name===t.client)||{}).poolType||"מלח";
             const poolLabel = formatPoolType(poolType);
-            const poolIcon = poolIconForType(poolType);
+            const poolIcon = isWaterCheckTask ? "💧" : poolIconForType(poolType);
             return (
               <div
                 key={t.id}
@@ -6119,16 +6338,16 @@ useEffect(() => {
                 onPointerDown={()=>!isSubOperator&&!operatorEditOrder&&startClientLongPress(t.client, false)}
                 onPointerUp={()=>stopClientLongPress(t.client)}
                 onPointerLeave={()=>stopClientLongPress(t.client)}
-                style={{...card({marginBottom:12,opacity:isDone?0.65:1,border:`2px solid ${operatorEditOrder?"#ffe082":needsAck?"#ff9800":isDone?"#c8e6c9":C.border}`,transition:"all 0.3s",background:operatorEditOrder?"#fffde7":"#fff"})}}
+                style={{...card({marginBottom:12,opacity:isDone?0.65:1,border:`2px solid ${operatorEditOrder?"#ffe082":needsAck?"#ff9800":isWaterCheckTask?"#16a34a":isDone?"#c8e6c9":C.border}`,transition:"all 0.3s",background:operatorEditOrder?"#fffde7":isWaterCheckTask?"#ecfdf5":"#fff"})}}
               >
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:10}}>
                   <div style={{flex:1,minWidth:0,textAlign:"right"}}>
                     <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:4}}>
-                      <div style={{width:40,height:40,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{poolIcon}</div>
+                      <div style={{width:40,height:40,borderRadius:"50%",background:isWaterCheckTask?"#16a34a":`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{poolIcon}</div>
                       <div style={{minWidth:0,textAlign:"right",display:"grid",gap:4,justifyItems:"start"}}>
                         <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start"}}>
                           <div style={{fontWeight:900,fontSize:16,color:C.text,textDecoration:isDone?"line-through":"none"}}>{t.client.split(" - ")[0]}</div>
-                          <WhatsAppClientToggle client={t.client} compact/>
+                          <WhatsAppClientToggle client={t.client} compact/>{isWaterCheckTask&&<Badge label={"בדיקת מים"} col={C.green}/>}
                         </div>
                         <div style={{minHeight:24,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-start"}}>
                           <span style={{minHeight:22,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,background:primaryPoolType(poolType)==="כלור"?"#e3f2fd":secondaryPoolType(poolType)==="גלישה"?"#e0f7fa":secondaryPoolType(poolType)==="סקימר"?"#e8eaf6":"#e8f5e9",color:primaryPoolType(poolType)==="כלור"?C.blue:secondaryPoolType(poolType)==="גלישה"?"#006064":secondaryPoolType(poolType)==="סקימר"?"#3949ab":C.green,borderRadius:99,padding:"0 8px",lineHeight:1}}>{poolLabel}</span>
@@ -6403,7 +6622,7 @@ useEffect(() => {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:8px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}select option{background:#fff}`}</style>
       <div style={{margin:"12px 14px 0",background:"linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))",border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
-          <div><p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:"בחר לקוח"}</p><h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>📝 דוח טיפול</h1></div>
+          <div><p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:"בחר לקוח"}</p><h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>📝 דוח טיפול</h1>{client&&<div style={{marginTop:8,display:"flex",justifyContent:"flex-start"}}><WhatsAppClientToggle client={client} compact/></div>}</div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <RefreshTopButton compact/>
             <Press onClick={()=>setScreen("daily")} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 14px",color:C.muted,fontSize:13,fontWeight:900}}>← חזרה</Press>

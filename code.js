@@ -1,4 +1,4 @@
-﻿  // ─── מרכזי — תומך בכל לקוח לפי sheetId ───────────────────────────────────
+  // ─── מרכזי — תומך בכל לקוח לפי sheetId ───────────────────────────────────
   // הלקוח משתף את הגיליון שלו עם האימייל שלך ומכניס את ה-ID באפליקציה
 
   function doPost(e) {
@@ -10,6 +10,7 @@
       // sheetId מגיע מהאפליקציה — כל לקוח שולח את שלו
       const SHEET_ID = data.sheetId || "1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no";
       const ss = SpreadsheetApp.openById(SHEET_ID);
+      if (operatorDataWriteActions_().indexOf(action) >= 0) bumpOperatorDataVersion_(ss);
 
       if (
         action === "sendAppNotificationToUser" ||
@@ -121,13 +122,6 @@
       }
 
       if (action === "getMgmtIssues") {
-        const sheet = ss.getSheetByName("לקוחות");
-        if(!sheet) return json({ clients: [] });
-        const rows = sheet.getDataRange().getValues();
-        return json({ clients: rows.slice(1).filter(r=>r[0]) });
-      }
-
-      if (action === "getMgmtIssues") {
         const sheet = ss.getSheetByName("תקלות");
         if(!sheet) return json({ issues: [] });
         const rows = sheet.getDataRange().getValues();
@@ -229,7 +223,13 @@
     }
 
     if (action === "getBootstrapData") {
-      return json({
+      const cache = CacheService.getScriptCache();
+      const cacheKey = "bootstrap:" + ss.getId();
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        try { return json(JSON.parse(cached)); } catch(e) {}
+      }
+      const result = {
         users: getUsers_(ss),
         clients: getClients_(ss),
         tasks: getTasks_(ss),
@@ -242,7 +242,35 @@
         supplyDB: getSupplyDB_(ss),
         lastReadings: getLastReadings_(ss),
         unassignedClients: getUnassignedClients_(ss)
-      });
+      };
+      try { cache.put(cacheKey, JSON.stringify(result), 15); } catch(e) {}
+      return json(result);
+    }
+
+    if (action === "getOperatorRefreshData") {
+      const cache = CacheService.getScriptCache();
+      const cacheKey = "operatorRefresh:" + ss.getId();
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        try { return json(JSON.parse(cached)); } catch(e) {}
+      }
+      const result = {
+        users: getUsers_(ss),
+        tasks: getTasks_(ss),
+        adminOrders: getAdminOrders_(ss),
+        sharedSubOrders: getSubOperatorShares_(ss),
+        subOperatorApprovals: getSubOperatorApprovals_(ss),
+        pendingSubReports: getPendingSubReports_(ss),
+        materialApprovals: getMaterialApprovals_(ss),
+        settings: getClientSettings_(ss),
+        lastReadings: getLastReadings_(ss)
+      };
+      try { cache.put(cacheKey, JSON.stringify(result), 8); } catch(e) {}
+      return json(result);
+    }
+
+    if (action === "getOperatorRefreshVersion") {
+      return json({ version:getOperatorDataVersion_(ss) });
     }
 
     if (action === "saveClientPoolType") {
@@ -389,12 +417,14 @@
           let savedId = String(r.id || "");
           let wrote = false;
           const writtenSheets = [];
+          const savedLocations = [];
           targets.forEach(sheet => {
             const existing = findDuplicateReportRow_(sheet, r);
             if (existing.row) {
               if (!savedRow) savedRow = existing.row;
               if (sheet.getName() === mainSheet.getName()) mainRow = existing.row;
               if (!savedId && existing.id) savedId = existing.id;
+              savedLocations.push({ sheet:sheet.getName(), row:existing.row });
               return;
             }
             const reportToWrite = savedId && !r.id ? Object.assign({}, r, { id: savedId }) : r;
@@ -404,10 +434,9 @@
             savedId = savedId || reportToWrite.id || "";
             wrote = true;
             writtenSheets.push(sheet.getName());
+            savedLocations.push({ sheet:sheet.getName(), row:savedRow });
           });
-          refreshMonthlyTreatmentCounters_(ss);
-          markSubOperatorShareDone_(ss, r);
-          data._chlorineReminder = queueChlorineTabletReminderSafe_(ss, r, data, savedId || r.id || "");
+          writeReportIndex_(ss, savedId || r.id || "", savedLocations);
           data._savedReportRow = mainRow || savedRow;
           data._savedReportDuplicate = !wrote;
           data._savedReportId = savedId || r.id || "";
@@ -416,6 +445,9 @@
         } finally {
           try { lock.releaseLock(); } catch(e) {}
         }
+        refreshClientTreatmentCounter_(ss, r.client);
+        markSubOperatorShareDone_(ss, r);
+        data._chlorineReminder = queueChlorineTabletReminderSafe_(ss, r, data, data._savedReportId || r.id || "");
 
         // Send email with photos if adminEmail provided
         if (data.adminEmail && data.adminEmail.includes("@")) {
@@ -476,21 +508,22 @@
         const resolvedOperator = reportOperatorName_(ss, r);
         if (resolvedOperator) r.operator = resolvedOperator;
         const lock = LockService.getScriptLock();
+        let result = null;
         try {
           lock.waitLock(10000);
           if (data.supplyUpdate) {
             const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
             if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
           }
-          const result = updateReportAcrossSheets_(ss, data.original || {}, r);
+          result = updateReportAcrossSheets_(ss, data.original || {}, r);
           if (!result.updated) return json({ success:false, error:"report row not found" });
-          refreshMonthlyTreatmentCounters_(ss);
-          markSubOperatorShareDone_(ss, result.report);
-          const reminderResult = queueChlorineTabletReminderSafe_(ss, result.report, data, result.id);
-          return json({ success:true, row:result.mainRow || result.row, id:result.id, copiesUpdated:result.updated, copiesCreated:result.created, chlorineReminder:reminderResult });
         } finally {
           try { lock.releaseLock(); } catch(e) {}
         }
+        refreshClientTreatmentCounter_(ss, result.report && result.report.client);
+        markSubOperatorShareDone_(ss, result.report);
+        const reminderResult = queueChlorineTabletReminderSafe_(ss, result.report, data, result.id);
+        return json({ success:true, row:result.mainRow || result.row, id:result.id, copiesUpdated:result.updated, copiesCreated:result.created, chlorineReminder:reminderResult });
       }
 
       if (action === "saveSupplyDB") {
@@ -526,13 +559,6 @@
 
       if (action === "getMgmtClients") {
         const sheet = ss.getSheetByName("לקוחות");
-        if (!sheet) return json({ rows: [] });
-        const rows = sheet.getDataRange().getValues();
-        return json({ rows: rows.slice(1).filter(r=>r[0]) });
-      }
-
-      if (action === "getMgmtIssues") {
-        const sheet = ss.getSheetByName("תקלות");
         if (!sheet) return json({ rows: [] });
         const rows = sheet.getDataRange().getValues();
         return json({ rows: rows.slice(1).filter(r=>r[0]) });
@@ -963,7 +989,7 @@
   function appendMissingDailyReportsAfterFour_(ss) {
     const now = new Date();
     const hour = Number(Utilities.formatDate(now, "Asia/Jerusalem", "H"));
-    if (hour < 16) return;
+    if (hour < 23) return;
 
     const today = Utilities.formatDate(now, "Asia/Jerusalem", "yyyy-MM-dd");
     const props = PropertiesService.getScriptProperties();
@@ -1044,7 +1070,7 @@
     const monthKey = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM");
     const counts = {};
 
-    dedupeReportRows_(allReportRows_(ss)).forEach(r => {
+    dedupeReportRows_(reportRowsFromSheet_(getMainReportsSheet_(ss))).forEach(r => {
       const date = normalizeSheetDate_(reportCell_(r,0));
       const client = String(reportCell_(r,2) || "").trim();
       const notes = String(reportCell_(r,18) || "").trim();
@@ -1053,9 +1079,16 @@
     });
 
     const treatments = [];
+    const dataStartRow = headerRowIndex + 1;
+    const dataRows = clientsRows.slice(dataStartRow);
+    const balanceValues = balanceIdx >= 0 ? dataRows.map(row => [row[balanceIdx]]) : null;
+    const countValues = countIdx >= 0 ? dataRows.map(row => [row[countIdx]]) : null;
+    const quotaValues = quotaIdx >= 0 ? dataRows.map(row => [row[quotaIdx]]) : null;
+    const monthValues = quotaMonthIdx >= 0 ? dataRows.map(row => [row[quotaMonthIdx]]) : null;
     for (let i = headerRowIndex + 1; i < clientsRows.length; i++) {
       const client = String(clientsRows[i][0] || "").trim();
       if (!client) continue;
+      const dataIndex = i - dataStartRow;
       const actual = counts[client] || 0;
       const row = clientsRows[i];
       const regularDays = String(row[6] || "");
@@ -1068,13 +1101,61 @@
         ? Math.max(0, Math.round(manualQuota || calculatedQuota))
         : calculatedQuota;
       const balance = Math.max(0, quota - actual);
-      if (balanceIdx >= 0) clientsSheet.getRange(i + 1, balanceIdx + 1).setValue(balance);
-      if (countIdx >= 0) clientsSheet.getRange(i + 1, countIdx + 1).setValue(actual);
-      if (quotaIdx >= 0) clientsSheet.getRange(i + 1, quotaIdx + 1).setValue(quota);
-      if (quotaMonthIdx >= 0) clientsSheet.getRange(i + 1, quotaMonthIdx + 1).setValue(monthKey);
+      if (balanceValues) balanceValues[dataIndex][0] = balance;
+      if (countValues) countValues[dataIndex][0] = actual;
+      if (quotaValues) quotaValues[dataIndex][0] = quota;
+      if (monthValues) monthValues[dataIndex][0] = monthKey;
       treatments.push({ client, monthlyTreatmentBalance: balance, monthlyTreatmentCount: actual, monthlyTreatmentQuota: quota });
     }
+    if (dataRows.length) {
+      if (balanceValues) clientsSheet.getRange(dataStartRow + 1, balanceIdx + 1, dataRows.length, 1).setValues(balanceValues);
+      if (countValues) clientsSheet.getRange(dataStartRow + 1, countIdx + 1, dataRows.length, 1).setValues(countValues);
+      if (quotaValues) clientsSheet.getRange(dataStartRow + 1, quotaIdx + 1, dataRows.length, 1).setValues(quotaValues);
+      if (monthValues) clientsSheet.getRange(dataStartRow + 1, quotaMonthIdx + 1, dataRows.length, 1).setValues(monthValues);
+    }
     return treatments;
+  }
+
+  function refreshClientTreatmentCounter_(ss, clientName) {
+    const wantedClient = String(clientName || "").trim();
+    if (!wantedClient) return null;
+    const clientsSheet = ss.getSheetByName("לקוחות");
+    if (!clientsSheet) return null;
+    ensureColumns(clientsSheet, ["יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל", "מכסת_טיפולים_חודשית", "חודש_טיפולים"]);
+    const rows = clientsSheet.getDataRange().getValues();
+    if (!rows.length) return null;
+    const headerRowIndex = findHeaderRowIndex_(clientsSheet, ["שם_לקוח", "שם לקוח", "יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל"]);
+    const headers = (rows[headerRowIndex] || []).map(h => String(h || "").trim());
+    const balanceIdx = headers.indexOf("יתרת_טיפולים_חודשית");
+    const countIdx = headers.indexOf("מונה_טיפולים_בפועל");
+    const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
+    const quotaMonthIdx = headers.indexOf("חודש_טיפולים");
+    const clientRowIndex = rows.findIndex((row, index) => index > headerRowIndex && String(row[0] || "").trim() === wantedClient);
+    if (clientRowIndex < 0) return null;
+
+    const monthKey = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM");
+    const actual = dedupeReportRows_(reportRowsFromSheet_(getMainReportsSheet_(ss))).reduce((count, row) => {
+      const date = normalizeSheetDate_(reportCell_(row,0));
+      const client = String(reportCell_(row,2) || "").trim();
+      const notes = String(reportCell_(row,18) || "").trim();
+      return client === wantedClient && date.startsWith(monthKey) && notes !== "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc" ? count + 1 : count;
+    }, 0);
+    const row = rows[clientRowIndex];
+    const regularDays = String(row[6] || "");
+    const savedMonth = quotaMonthIdx >= 0 ? String(row[quotaMonthIdx] || "").trim() : "";
+    const typedQuota = quotaIdx >= 0 ? Number(row[quotaIdx] || 0) : 0;
+    const typedBalance = balanceIdx >= 0 ? Number(row[balanceIdx] || 0) : 0;
+    const calculatedQuota = countClientCalendarTreatments_(regularDays, new Date()) || 4;
+    const manualQuota = typedQuota || (typedBalance ? typedBalance + actual : 0);
+    const quota = (savedMonth === monthKey || !savedMonth)
+      ? Math.max(0, Math.round(manualQuota || calculatedQuota))
+      : calculatedQuota;
+    const balance = Math.max(0, quota - actual);
+    if (balanceIdx >= 0) clientsSheet.getRange(clientRowIndex + 1, balanceIdx + 1).setValue(balance);
+    if (countIdx >= 0) clientsSheet.getRange(clientRowIndex + 1, countIdx + 1).setValue(actual);
+    if (quotaIdx >= 0) clientsSheet.getRange(clientRowIndex + 1, quotaIdx + 1).setValue(quota);
+    if (quotaMonthIdx >= 0) clientsSheet.getRange(clientRowIndex + 1, quotaMonthIdx + 1).setValue(monthKey);
+    return { client:wantedClient, monthlyTreatmentBalance:balance, monthlyTreatmentCount:actual, monthlyTreatmentQuota:quota };
   }
 
   function countClientCalendarTreatments_(regularDays, date) {
@@ -2785,6 +2866,46 @@
     return sheets;
   }
 
+  function reportIndexKey_(ss, reportId) {
+    return "reportIndex:" + ss.getId() + ":" + String(reportId || "").trim();
+  }
+
+  function readReportIndex_(ss, reportId) {
+    const id = String(reportId || "").trim();
+    if (!id) return [];
+    const cache = CacheService.getScriptCache();
+    let locations = [];
+    try { locations = JSON.parse(cache.get(reportIndexKey_(ss, id)) || "[]"); } catch(e) { return []; }
+    const valid = (locations || []).map(location => {
+      const sheet = ss.getSheetByName(String(location.sheet || ""));
+      const row = Number(location.row || 0);
+      if (!sheet || row < 2 || row > sheet.getLastRow()) return null;
+      const values = sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0];
+      return reportIdCell_(values) === id ? { sheet:sheet, row:row, values:values } : null;
+    }).filter(Boolean);
+    if (valid.length !== locations.length) {
+      try { cache.remove(reportIndexKey_(ss, id)); } catch(e) {}
+    }
+    return valid;
+  }
+
+  function writeReportIndex_(ss, reportId, locations) {
+    const id = String(reportId || "").trim();
+    if (!id || !(locations || []).length) return;
+    const clean = locations.map(location => ({
+      sheet:String(location.sheet && location.sheet.getName ? location.sheet.getName() : location.sheet || ""),
+      row:Number(location.row || 0)
+    })).filter(location => location.sheet && location.row > 0);
+    if (!clean.length) return;
+    try { CacheService.getScriptCache().put(reportIndexKey_(ss, id), JSON.stringify(clean), 21600); } catch(e) {}
+  }
+
+  function reportRowConfirmed_(row, report) {
+    return reportDuplicateKeyFromRow_(row) === reportDuplicateKeyFromReport_(report) &&
+      normalizeReportValue_(reportCell_(row,14)) === normalizeReportValue_(report && report.supplyLabel) &&
+      normalizeReportValue_(reportCell_(row,24)) === normalizeReportValue_(report && report.clientId);
+  }
+
   function reportRowsFromSheet_(sheet) {
     if (!sheet || sheet.getLastRow() < 2) return [];
     const rows = sheet.getDataRange().getValues();
@@ -2815,10 +2936,16 @@
 
   function updateReportAcrossSheets_(ss, original, report) {
     const matches = [];
-    reportSheetList_(ss).forEach(sheet => {
-      const row = findLatestReportRow_(sheet, original, report);
-      if (row) matches.push({ sheet:sheet, row:row });
-    });
+    const wantedId = String(report && report.id || original && (original.id || original.localId) || "").trim();
+    const indexed = readReportIndex_(ss, wantedId);
+    if (indexed.length) {
+      indexed.forEach(match => matches.push({ sheet:match.sheet, row:match.row }));
+    } else {
+      reportSheetList_(ss).forEach(sheet => {
+        const row = findLatestReportRow_(sheet, original, report);
+        if (row) matches.push({ sheet:sheet, row:row });
+      });
+    }
     if (!matches.length) return { updated:0, created:0, row:0, mainRow:0, id:"", report:report };
 
     let savedId = String(report && report.id || "").trim();
@@ -2853,6 +2980,10 @@
     obsoleteMatches
       .sort((a, b) => b.row - a.row)
       .forEach(match => match.sheet.deleteRow(match.row));
+    writeReportIndex_(ss, savedId, requiredSheets.map(sheet => ({
+      sheet:sheet,
+      row:matches.find(match => match.sheet.getName() === sheet.getName())?.row || sheet.getLastRow()
+    })));
     return { updated:matches.length - obsoleteMatches.length, created:created, removed:obsoleteMatches.length, row:matches[0].row, mainRow:mainRow, id:savedId, report:finalReport };
   }
 
@@ -2880,10 +3011,24 @@
   }
 
   function reportStorageStatus_(ss, report) {
-    return reportSheetList_(ss).map(sheet => {
+    const reportId = String(report && report.id || "").trim();
+    const indexed = readReportIndex_(ss, reportId);
+    if (indexed.length) {
+      return indexed.map(match => ({
+        sheet:match.sheet.getName(),
+        row:match.row,
+        id:reportId,
+        confirmed:reportRowConfirmed_(match.values, report)
+      }));
+    }
+    const matches = reportSheetList_(ss).map(sheet => {
       const match = findDuplicateReportRow_(sheet, report);
-      return { sheet:sheet.getName(), row:match.row || 0, id:match.id || "" };
-    }).filter(item => item.row);
+      if (!match.row) return null;
+      const values = sheet.getRange(match.row, 1, 1, sheet.getLastColumn()).getValues()[0];
+      return { sheet:sheet.getName(), row:match.row, id:match.id || reportId, confirmed:reportRowConfirmed_(values, report) };
+    }).filter(Boolean);
+    writeReportIndex_(ss, reportId, matches);
+    return matches;
   }
 
   function findLatestReportRow_(sheet, original, report) {
@@ -4270,6 +4415,34 @@ function jsonResponse_(obj) {
 
 function json(obj) {
   return jsonResponse_(obj);
+}
+
+function operatorDataVersionKey_(ss) {
+  return "operatorDataVersion:" + ss.getId();
+}
+
+function getOperatorDataVersion_(ss) {
+  return PropertiesService.getScriptProperties().getProperty(operatorDataVersionKey_(ss)) || "0";
+}
+
+function bumpOperatorDataVersion_(ss) {
+  const version = String(Date.now());
+  PropertiesService.getScriptProperties().setProperty(operatorDataVersionKey_(ss), version);
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.remove("operatorRefresh:" + ss.getId());
+    cache.remove("bootstrap:" + ss.getId());
+  } catch(e) {}
+  return version;
+}
+
+function operatorDataWriteActions_() {
+  return [
+    "saveTasks","saveAdminOrders","saveSubOperatorShares","saveSubOperatorApprovals",
+    "savePendingSubReports","saveReport","updateReport","saveSupplyDB","saveClients",
+    "deleteClient","saveClientInternalNote","saveClientSettings","updateMaterialApproval",
+    "syncDailyMaterialApprovals","saveSubOperatorAssignment"
+  ];
 }
 
   function doOptions(e) {
