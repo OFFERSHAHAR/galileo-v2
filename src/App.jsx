@@ -409,7 +409,7 @@ const SHEET_READ_ACTIONS = new Set([
   "getOperatorRefreshVersion",
   "getSubOperatorShares","getSubOperatorApprovals","getPendingSubReports","getLastReadings",
   "getClientSettings","getReports","getMaterialApprovals","getReportStorageStatus",
-  "getClients","getUnassignedClients","getOperatorIssues","getTreatmentCounts"
+  "getClients","getUnassignedClients","getOperatorIssues","getTreatmentCounts","getOperatorDoneAlerts"
 ]);
 async function sheetCall(action, payload={}) {
   const execute = async () => {
@@ -2687,6 +2687,7 @@ useEffect(() => {
   const [issuePriority,setIssuePriority] = useState("רגיל");
   const [showGateCode,setShowGateCode] = useState({});
   const [operatorIssues,setOperatorIssues] = useState([]);
+  const [operatorDoneAlerts,setOperatorDoneAlerts] = useState([]);
   const [dismissedCriticalIssueIds,setDismissedCriticalIssueIds] = useState(()=>{ try{return JSON.parse(localStorage.getItem("galileo_dismissed_critical_issues")||"[]");}catch{return [];} });
   const [showOperatorIssue,setShowOperatorIssue] = useState(false);
   const [opIssueClient,setOpIssueClient] = useState("");
@@ -2933,7 +2934,7 @@ useEffect(() => {
     showToast(wasDisabled ? "שליחת ווצאפ הופעלה ללקוח" : "שליחת ווצאפ בוטלה ללקוח");
     haptic("medium");
   };
-  const setWhatsAppForClients = (values = [], disabled = true) => {
+  const setWhatsAppForClients = (values = [], disabled = true, toastMessage = "") => {
     const keys = [...new Set((values || []).flatMap(value => whatsAppClientKeys(value)))];
     if (!keys.length) return;
     setWaDisabledClients(prev => {
@@ -2941,8 +2942,13 @@ useEffect(() => {
       keys.forEach(key => disabled ? next.add(key) : next.delete(key));
       return [...next];
     });
-    showToast(disabled ? "שליחת ווצאפ בוטלה לכל הלקוחות המשויכים" : "שליחת ווצאפ הופעלה לכל הלקוחות המשויכים");
+    showToast(toastMessage || (disabled ? "שליחת ווצאפ בוטלה לכל הלקוחות המשויכים" : "שליחת ווצאפ הופעלה לכל הלקוחות המשויכים"));
     haptic("medium");
+  };
+  const toggleWhatsAppForAllClients = () => {
+    if (!clients.length) return;
+    const allDisabled = clients.every(c => isWhatsAppDisabledForClient(c));
+    setWhatsAppForClients(clients, !allDisabled, allDisabled ? "שליחת ווצאפ הופעלה לכל הלקוחות" : "שליחת ווצאפ בוטלה לכל הלקוחות");
   };
   const disabledWhatsAppClients = () => sortByClientName(clients.filter(c => isWhatsAppDisabledForClient(c.name)));
   const manualWaBaseClients = () => {
@@ -3502,6 +3508,39 @@ useEffect(() => {
     if (res?.issues) setOperatorIssues(res.issues);
     if (!silent) showToast(`✅ ${res?.issues?.length||0} תקלות`);
     return res?.issues || [];
+  };
+  const loadOperatorDoneAlerts = async () => {
+    const res = await sheetCall("getOperatorDoneAlerts", { date:dailyDate }).catch(()=>null);
+    const alerts = Array.isArray(res?.alerts) ? res.alerts : [];
+    setOperatorDoneAlerts(alerts);
+    return alerts;
+  };
+  const dismissOperatorDoneAlert = async (alert) => {
+    if (!alert?.id) return;
+    setOperatorDoneAlerts(prev => prev.filter(item => String(item.id) !== String(alert.id)));
+    await sheetCall("dismissOperatorDoneAlert", { id:alert.id, dismissedBy:user?.name || user?.username || "" }).catch(e=>console.warn("Dismiss operator done alert failed", e));
+  };
+  const notifyOperatorDoneForDay = async () => {
+    if (isActionLoading("operatorDone")) return;
+    const operatorName = dailyOwnerName(dailyDate) || user?.name || user?.username || "מפעיל";
+    const message = `${operatorName} המפעיל סיים הכל להיום:)`;
+    setAction("operatorDone", "loading");
+    const saveRes = await sheetCall("saveOperatorDoneAlert", {
+      date:dailyDate,
+      operator:operatorName,
+      message,
+      createdBy:user?.name || user?.username || operatorName
+    }).catch(()=>null);
+    if (!saveRes?.success) {
+      setAction("operatorDone", "error", 2200);
+      showToast("לא נשמרה התראת סיום לאדמין");
+      haptic("medium");
+      return;
+    }
+    await sendNotificationToAdmins("המפעיל סיים הכל להיום", message).catch(e=>console.warn("Operator done admin notification failed", e));
+    setAction("operatorDone", "success", 1600);
+    showToast("נשלח לאדמין");
+    haptic("success");
   };
   const saveInternalNoteForClient = async () => {
     if (!internalNoteEdit?.client) return;
@@ -4466,6 +4505,13 @@ useEffect(() => {
     const timer = setInterval(()=>loadOperatorIssues(true), 9 * 60 * 1000);
     return () => clearInterval(timer);
   },[screen, adminTab]);
+
+  useEffect(()=>{
+    if(screen!=="admin" || !sheetId || !isAdminPanelRole(user?.role)) return;
+    loadOperatorDoneAlerts();
+    const timer = setInterval(()=>loadOperatorDoneAlerts(), 30000);
+    return () => clearInterval(timer);
+  },[screen, sheetId, dailyDate, user?.role]);
 
   useEffect(()=>{
     if(screen!=="daily") return;
@@ -6657,6 +6703,9 @@ useEffect(() => {
           <BottomSheet title={"\uD83D\uDCCA \u05D4\u05EA\u05E7\u05D3\u05DE\u05D5\u05EA \u05D9\u05D5\u05DE\u05D9\u05EA"} onClose={()=>setNavTab(0)}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12,flexWrap:"wrap"}}>
               <input type="date" value={dailyDate} onClick={openDatePicker} onFocus={openDatePicker} onChange={e=>setDailyDate(e.target.value)} style={{...inp,maxWidth:170,color:C.blue,border:`1px solid ${C.lightBlue}`,fontWeight:900,cursor:"pointer"}}/>
+              <Press onClick={notifyOperatorDoneForDay} disabled={isActionLoading("operatorDone")} style={{padding:"9px 16px",borderRadius:99,background:actionStatus.operatorDone==="success"?C.green:actionStatus.operatorDone==="error"?C.red:"linear-gradient(135deg,#16a34a,#22c55e)",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 10px 24px rgba(22,163,74,0.18)",opacity:isActionLoading("operatorDone")?0.72:1,whiteSpace:"nowrap"}}>
+                {actionLabel("operatorDone", {idle:"סיימתי",loading:"שולח...",success:"נשלח",error:"נסה שוב"})}
+              </Press>
               <Badge label={`${operatorProgressDone}/${operatorProgressEntries.length}`} col={operatorProgressEntries.length&&operatorProgressDone===operatorProgressEntries.length?C.green:C.blue}/>
             </div>
             {operatorProgressEntries.length>0 ? (
@@ -7097,6 +7146,7 @@ useEffect(() => {
     const dayTasks = tasks.filter(t=>normalizeDate(t.date)===taskDate && !t.createdByAdminOrder && Number(t.orderIndex || 0) <= 0);
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
     const criticalAdminIssue = criticalAdminIssueIndex >= 0 ? operatorIssues[criticalAdminIssueIndex] : null;
+    const activeOperatorDoneAlert = operatorDoneAlerts[0] || null;
     const adminShellBg = "linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)";
     const adminHeroBg = "linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))";
     const adminHeroText = {color:"#10233f"};
@@ -7183,6 +7233,16 @@ useEffect(() => {
       <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:adminShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:"calc(112px + env(safe-area-inset-bottom, 0px))"}}>
         <IPhoneComfortLayer/>
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
+        {activeOperatorDoneAlert&&(
+          <div style={{position:"fixed",inset:0,zIndex:1220,display:"flex",alignItems:"center",justifyContent:"center",padding:18,background:"rgba(15,23,42,0.36)",backdropFilter:"blur(8px)"}}>
+            <div style={{width:"100%",maxWidth:360,background:"rgba(255,255,255,0.98)",borderRadius:22,padding:20,border:"1px solid rgba(148,163,184,0.24)",boxShadow:"0 28px 80px rgba(15,23,42,0.28)",textAlign:"center"}}>
+              <div style={{fontSize:34,marginBottom:8}}>✅</div>
+              <div style={{fontSize:17,fontWeight:900,color:C.text,lineHeight:1.45,marginBottom:8}}>{activeOperatorDoneAlert.message || `${activeOperatorDoneAlert.operator || "מפעיל"} המפעיל סיים הכל להיום:)`}</div>
+              <div style={{fontSize:12,fontWeight:800,color:C.muted,marginBottom:16}}>{fmtDate(activeOperatorDoneAlert.date || dailyDate)}</div>
+              <Press onClick={()=>dismissOperatorDoneAlert(activeOperatorDoneAlert)} style={{padding:"12px 18px",borderRadius:14,background:C.blue,color:"#fff",fontWeight:900,fontSize:14,display:"inline-block",minWidth:120}}>סגור</Press>
+            </div>
+          </div>
+        )}
         {criticalAdminIssue&&(()=>{
           const [id, operator, clientName, desc, priority, status, response, date] = criticalAdminIssue;
           return (
@@ -7511,11 +7571,13 @@ useEffect(() => {
                     {selectedAdminOrderEntries.map((entry)=>{
                       const i = adminOrderList.findIndex(x=>x.client===entry.client);
                       const lowSaltWarning = hasLowSaltLight(entry.client);
+                      const waterCheckDaysText = formatWaterCheckDays((adminOrderClientMap.get(entry.client) || {}).waterCheckDays);
                       return (
                       <div key={`${entry.client}-${i}`} draggable onDragStart={e=>e.dataTransfer.setData("text/plain", String(i))} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();moveAdminOrderItem(Number(e.dataTransfer.getData("text/plain")), i);}} style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:8}}>
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
                           <input type="number" inputMode="numeric" min="1" value={entry.orderIndex || ""} onChange={e=>updateAdminOrderIndex(i, e.target.value)} onClick={e=>e.stopPropagation()} style={{width:42,height:32,borderRadius:999,background:"#e3f2fd",color:C.blue,border:`1px solid ${C.border}`,textAlign:"center",fontWeight:900,fontSize:14,flexShrink:0,outline:"none"}}/>
                           <div style={{flex:1,minWidth:0,fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{entry.client.split(" - ")[0]}</div>
+                          {waterCheckDaysText&&<span style={{padding:"5px 10px",borderRadius:999,background:"#e8f5e9",border:"1px solid #c8e6c9",color:C.green,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>בדיקת מים: {waterCheckDaysText}</span>}
                           {lowSaltWarning&&<span style={{padding:"5px 10px",borderRadius:999,background:"#fff7ed",border:"1px solid #fdba74",color:C.orange,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>מלח נמוך</span>}
                           <Press onClick={()=>removeClientFromAdminOrder(entry, i)} style={{padding:"5px 9px",borderRadius:8,background:"#ffebee",color:C.red,fontSize:12,fontWeight:900}}>הסר</Press>
                         </div>
@@ -7528,10 +7590,14 @@ useEffect(() => {
                     {unselectedAdminOrderClients.length===0&&<div style={{padding:16,borderRadius:12,background:"#f8fafc",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700}}>אין בריכות נוספות ליום הזה</div>}
                     {unselectedAdminOrderClients.map(c=>{
                       const removed = adminOrderRemovedClients.includes(c.name);
+                      const waterCheckDaysText = formatWaterCheckDays(c.waterCheckDays);
                       return (
                       <Press key={c.name} onClick={()=>addClientToAdminOrder(c.name)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",border:`1px solid ${removed?"#fbbf24":C.border}`,borderRadius:12,background:removed?"#fffbeb":"#fff",marginBottom:8}}>
                         <div style={{minWidth:0}}>
-                          <div style={{fontSize:13,fontWeight:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</div>
+                          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                            <span style={{fontSize:13,fontWeight:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</span>
+                            {waterCheckDaysText&&<span style={{padding:"3px 8px",borderRadius:999,background:"#e8f5e9",border:"1px solid #c8e6c9",color:C.green,fontSize:10,fontWeight:900,whiteSpace:"nowrap"}}>בדיקת מים: {waterCheckDaysText}</span>}
+                          </div>
                           {c.address&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>}
                           <div style={{fontSize:11,color:C.blue,fontWeight:800,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>
                             {clientMetaLine(c) || "ללא שיוך קבוע"}
@@ -7729,6 +7795,16 @@ useEffect(() => {
               <div style={{position:"relative",marginBottom:12}}>
                 <input value={clientListSearch} onChange={e=>setClientListSearch(e.target.value)} placeholder="🔍 חפש לקוח לפי שתי אותיות ראשונות..." style={{...inp,fontSize:13}}/>
               </div>
+              {clients.length>0&&(()=>{
+                const allClientsWhatsAppDisabled = clients.every(c=>isWhatsAppDisabledForClient(c));
+                const disabledCount = clients.filter(c=>isWhatsAppDisabledForClient(c)).length;
+                return (
+                  <Press onClick={toggleWhatsAppForAllClients} style={{marginBottom:12,padding:"12px 14px",borderRadius:14,background:allClientsWhatsAppDisabled?"#ffebee":"#e8f5e9",border:`1px solid ${allClientsWhatsAppDisabled?"rgba(185,28,28,0.22)":"rgba(21,128,61,0.22)"}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,color:allClientsWhatsAppDisabled?C.red:C.green,fontWeight:900,fontSize:13,boxShadow:"0 10px 24px rgba(15,23,42,0.06)"}}>
+                    <span>{allClientsWhatsAppDisabled?"הפעל ווצאפ לכל הלקוחות":"כבה ווצאפ לכל הלקוחות"}</span>
+                    <Badge label={`${disabledCount}/${clients.length} כבוי`} col={allClientsWhatsAppDisabled?C.red:C.green}/>
+                  </Press>
+                );
+              })()}
               {(clientListSearch.trim().length>=2?filterClientOptions(clients, clientListSearch):sortByClientName(clients)).map((c,i)=>{ const missing=adminClientMissingFields(c); const isEditing=editingAdminClient?.originalName===c.name; const draft=isEditing?editingAdminClient.draft:null; return (
                 <div key={c.name+"-"+i} style={{...card({marginBottom:10,border:missing.length?"1px solid rgba(194,65,12,0.28)":"1px solid "+C.border})}}>
                   {!isEditing&&<>

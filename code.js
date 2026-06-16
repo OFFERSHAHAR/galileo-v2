@@ -308,6 +308,18 @@
         return json({ issues: rows.slice(1).filter(r=>r[0]) });
       }
 
+      if (action === "getOperatorDoneAlerts") {
+        return json({ alerts: getOperatorDoneAlerts_(ss, data) });
+      }
+
+      if (action === "saveOperatorDoneAlert") {
+        return json(saveOperatorDoneAlert_(ss, data));
+      }
+
+      if (action === "dismissOperatorDoneAlert") {
+        return json(dismissOperatorDoneAlert_(ss, data));
+      }
+
       if (action === "updateOperatorIssue") {
         const sheet = ss.getSheetByName("תקלות_מפעילים");
         if(!sheet) return json({ error:"no sheet" });
@@ -3455,6 +3467,101 @@ function saveClientSettings_(ss, settings) {
   return { success:true, settings:getClientSettings_(ss) };
 }
 
+function operatorDoneAlertHeaders_() {
+  return ["id","date","operator","message","createdAt","createdBy","dismissedAt","dismissedBy"];
+}
+
+function getOperatorDoneAlertsSheet_(ss) {
+  let sheet = ss.getSheetByName("סיום_מפעילים");
+  if (!sheet) {
+    sheet = ss.insertSheet("סיום_מפעילים");
+    sheet.appendRow(operatorDoneAlertHeaders_());
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(operatorDoneAlertHeaders_());
+  } else {
+    ensureColumns(sheet, operatorDoneAlertHeaders_());
+  }
+  return sheet;
+}
+
+function operatorDoneAlertId_(date, operator) {
+  return [normalizeAdminOrderDate_(date), normalizeReportValue_(operator).toLowerCase()].join(":");
+}
+
+function operatorDoneAlertObject_(headers, row, rowNumber) {
+  const obj = { rowIndex: rowNumber };
+  headers.forEach((h, i) => obj[h] = row[i]);
+  return {
+    rowIndex: rowNumber,
+    id: String(obj.id || ""),
+    date: normalizeAdminOrderDate_(obj.date),
+    operator: String(obj.operator || ""),
+    message: String(obj.message || ""),
+    createdAt: String(obj.createdAt || ""),
+    createdBy: String(obj.createdBy || ""),
+    dismissedAt: String(obj.dismissedAt || ""),
+    dismissedBy: String(obj.dismissedBy || "")
+  };
+}
+
+function getOperatorDoneAlerts_(ss, data) {
+  const sheet = getOperatorDoneAlertsSheet_(ss);
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  const headers = values[0].map(String);
+  const targetDate = normalizeAdminOrderDate_(data && data.date);
+  return values.slice(1).map((row, idx) => operatorDoneAlertObject_(headers, row, idx + 2))
+    .filter(item => item.id && !item.dismissedAt && (!targetDate || item.date === targetDate))
+    .sort((a,b)=>String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+function saveOperatorDoneAlert_(ss, data) {
+  const sheet = getOperatorDoneAlertsSheet_(ss);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+  const date = normalizeAdminOrderDate_(data.date || new Date());
+  const operator = String(data.operator || "").trim();
+  if (!operator) return { success:false, error:"missing_operator" };
+  const id = String(data.id || "").trim() || operatorDoneAlertId_(date, operator);
+  const message = String(data.message || `${operator} המפעיל סיים הכל להיום:)`);
+  const createdAt = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss");
+  const values = sheet.getDataRange().getValues();
+  const idCol = headers.indexOf("id");
+  const rowIndex = values.findIndex((row, idx) => idx > 0 && String(row[idCol] || "") === id);
+  const rowValues = headers.map(h => {
+    if (h === "id") return id;
+    if (h === "date") return date;
+    if (h === "operator") return operator;
+    if (h === "message") return message;
+    if (h === "createdAt") return createdAt;
+    if (h === "createdBy") return String(data.createdBy || operator);
+    if (h === "dismissedAt" || h === "dismissedBy") return "";
+    return "";
+  });
+  if (rowIndex > 0) {
+    sheet.getRange(rowIndex + 1, 1, 1, headers.length).setValues([rowValues]);
+    return { success:true, duplicate:true, id };
+  }
+  sheet.appendRow(rowValues);
+  return { success:true, id };
+}
+
+function dismissOperatorDoneAlert_(ss, data) {
+  const sheet = getOperatorDoneAlertsSheet_(ss);
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return { success:false, error:"empty" };
+  const headers = values[0].map(String);
+  const idCol = headers.indexOf("id");
+  const dismissedAtCol = headers.indexOf("dismissedAt");
+  const dismissedByCol = headers.indexOf("dismissedBy");
+  const id = String(data.id || "").trim();
+  const rowIndex = values.findIndex((row, idx) => idx > 0 && String(row[idCol] || "") === id);
+  if (rowIndex <= 0) return { success:false, error:"not_found" };
+  const rowNumber = rowIndex + 1;
+  if (dismissedAtCol >= 0) sheet.getRange(rowNumber, dismissedAtCol + 1).setValue(Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss"));
+  if (dismissedByCol >= 0) sheet.getRange(rowNumber, dismissedByCol + 1).setValue(String(data.dismissedBy || ""));
+  return { success:true };
+}
+
 function getUsageEventsSheet_(ss) {
   const headers = ["timestamp","sessionId","userId","role","screen","event","target","metadata","userAgent","appVersion"];
   let sheet = ss.getSheetByName("UsageEvents");
@@ -4441,7 +4548,8 @@ function operatorDataWriteActions_() {
     "saveTasks","saveAdminOrders","saveSubOperatorShares","saveSubOperatorApprovals",
     "savePendingSubReports","saveReport","updateReport","saveSupplyDB","saveClients",
     "deleteClient","saveClientInternalNote","saveClientSettings","updateMaterialApproval",
-    "syncDailyMaterialApprovals","saveSubOperatorAssignment"
+    "syncDailyMaterialApprovals","saveSubOperatorAssignment","saveOperatorDoneAlert",
+    "dismissOperatorDoneAlert"
   ];
 }
 
