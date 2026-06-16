@@ -2901,9 +2901,9 @@
   }
 
   function reportRowConfirmed_(row, report) {
-    return reportDuplicateKeyFromRow_(row) === reportDuplicateKeyFromReport_(report) &&
-      normalizeReportValue_(reportCell_(row,14)) === normalizeReportValue_(report && report.supplyLabel) &&
-      normalizeReportValue_(reportCell_(row,24)) === normalizeReportValue_(report && report.clientId);
+    const wantedId = String(report && report.id || "").trim();
+    if (wantedId && reportIdCell_(row) === wantedId) return true;
+    return reportDuplicateKeyFromRow_(row) === reportDuplicateKeyFromReport_(report);
   }
 
   function reportRowsFromSheet_(sheet) {

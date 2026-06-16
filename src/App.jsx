@@ -2256,13 +2256,7 @@ const [completedReports,setCompletedReports] = useState(() => {
   }
 });
 
-const [pending, setPending] = useState(() => {
-  try {
-    return JSON.parse(localStorage.getItem("galileo_pending_reports") || "[]");
-  } catch {
-    return [];
-  }
-});
+const [pending, setPending] = useState([]);
 const [pendingStoreReady, setPendingStoreReady] = useState(false);
 const [pendingOperatorIssues, setPendingOperatorIssues] = useState(() => {
   try {
@@ -2322,6 +2316,34 @@ const shouldSendPendingReportWhatsApp = (item, report) => {
   if (item.updateOriginal) return shouldSendEditedReportToCustomer(item.updateOriginal, report) || item.sendWhatsAppOnSave !== false;
   return true;
 };
+const pendingReportQueueInfo = (item) => {
+  const report = getPendingReportPayload(item) || {};
+  const savedToSheet = isPendingReportSavedToSheet(item);
+  if (!savedToSheet) {
+    return { stage:"sheetPending", keep:true, label:"ממתין לשמירה בשיטס", tone:"error" };
+  }
+  const shouldSend = shouldSendPendingReportWhatsApp(item, report);
+  if (!shouldSend) {
+    return { stage:"sheetSaved", keep:false, label:"נשמר בשיטס - ללא הודעה", tone:"success" };
+  }
+  if (isWhatsAppDisabledForClient(report)) {
+    return { stage:"whatsappDisabled", keep:false, label:"נשמר בשיטס - ווצאפ כבוי", tone:"success" };
+  }
+  const clientRecord = findClientByName(report.client);
+  if (!clientRecord) {
+    return { stage:"clientLoading", keep:true, label:"נשמר בשיטס - ממתין לנתוני לקוח", tone:"warning" };
+  }
+  if (!normalizeWhatsAppPhone(clientRecord.phone)) {
+    return { stage:"missingPhone", keep:false, label:"נשמר בשיטס - אין טלפון", tone:"success" };
+  }
+  return {
+    stage:"messagePending",
+    keep:true,
+    label:item?.lastError ? "נשמר בשיטס - הודעה נכשלה" : "נשמר בשיטס - ממתין לווצאפ",
+    tone:item?.lastError ? "error" : "warning"
+  };
+};
+const shouldKeepPendingReport = (item) => pendingReportQueueInfo(item).keep;
 const samePendingReport = (a, b) => {
   const left = getPendingReportPayload(a) || {};
   const right = getPendingReportPayload(b) || {};
@@ -2338,6 +2360,12 @@ const makePendingReportItem = (report, supplyUpdate, meta = {}) => {
 };
 const addPendingReport = (report, supplyUpdate, meta = {}) => {
   const item = makePendingReportItem(report, supplyUpdate, meta);
+  if (!shouldKeepPendingReport(item)) {
+    void deletePendingReportFromIndexedDB(item)
+      .catch(error => console.warn("Skipped pending report cleanup failed", error));
+    setPending(prev => prev.filter(x => !samePendingReport(x, item)));
+    return;
+  }
   void upsertPendingReportInIndexedDB(item)
     .then(() => requestPendingReportBackgroundSync())
     .catch(error => console.warn("Immediate pending report persistence failed", error));
@@ -2349,7 +2377,16 @@ const addPendingReport = (report, supplyUpdate, meta = {}) => {
     return next;
   });
 };
+const isPendingReportDeletedLocally = (item) => {
+  const id = pendingReportStorageId(item);
+  return !!id && deletedPendingReportIdsRef.current.has(id);
+};
+const markPendingReportDeletedLocally = (item) => {
+  const id = pendingReportStorageId(item);
+  if (id) deletedPendingReportIdsRef.current.add(id);
+};
 const removePendingReport = (item) => {
+  markPendingReportDeletedLocally(item);
   void deletePendingReportFromIndexedDB(item)
     .catch(error => console.warn("Immediate pending report deletion failed", error));
   setPending(prev => prev.filter(x => !samePendingReport(x, item)));
@@ -2357,10 +2394,19 @@ const removePendingReport = (item) => {
 
 useEffect(() => {
   let active = true;
+  const legacyPending = (() => {
+    try {
+      const value = JSON.parse(localStorage.getItem("galileo_pending_reports") || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch {
+      return [];
+    }
+  })();
   loadPendingReportsFromIndexedDB()
     .then(storedItems => {
-      if (!active || !storedItems.length) return;
-      setPending(previous => storedItems.reduce((items, storedItem) => {
+      const sourceItems = storedItems.length ? storedItems : legacyPending;
+      if (!active || !sourceItems.length) return;
+      setPending(previous => sourceItems.reduce((items, storedItem) => {
         const index = items.findIndex(item => samePendingReport(item, storedItem));
         if (index < 0) return [...items, storedItem];
         const next = [...items];
@@ -2389,6 +2435,10 @@ useEffect(() => {
   const onServiceWorkerMessage = event => {
     const message = event?.data || {};
     if (message.type !== "GALILEO_REPORT_SAVED_TO_SHEET" || !message.item) return;
+    if (!shouldKeepPendingReport(message.item)) {
+      removePendingReport(message.item);
+      return;
+    }
     setPending(previous => previous.map(item =>
       samePendingReport(item, message.item) ? message.item : item
     ));
@@ -2689,6 +2739,7 @@ useEffect(() => {
   const operatorIssueSyncRef = useRef(false);
   const pendingSyncRef = useRef(false);
   const immediateReportIdsRef = useRef(new Set());
+  const deletedPendingReportIdsRef = useRef(new Set());
   const operatorRefreshRef = useRef(false);
   const operatorRefreshVersionRef = useRef("");
   const operatorRefreshLastFullRef = useRef(0);
@@ -5448,18 +5499,25 @@ useEffect(() => {
     }
   };
 
-  const syncPendingReports = async (maxItems = Infinity) => {
-    if (!pending.length || pendingSyncRef.current || isActionLoading("syncPending")) return;
+  const syncPendingReports = async (maxItems = Infinity, preferredItem = null) => {
+    const pendingSource = preferredItem
+      ? [preferredItem, ...pending.filter(item => !samePendingReport(item, preferredItem))]
+      : pending;
+    if (!pendingSource.length || pendingSyncRef.current || isActionLoading("syncPending")) {
+      return { success:false, skipped:true, sent:0, failed:pendingSource.length };
+    }
     pendingSyncRef.current = true;
     setAction("syncPending", "loading");
 
     const sent = [];
-    const itemsToSync = Number.isFinite(maxItems) ? pending.slice(0, Math.max(1, maxItems)) : pending;
-    const failed = Number.isFinite(maxItems) ? pending.slice(itemsToSync.length) : [];
+    const syncablePending = pendingSource.filter(item => !isPendingReportDeletedLocally(item));
+    const itemsToSync = Number.isFinite(maxItems) ? syncablePending.slice(0, Math.max(1, maxItems)) : syncablePending;
+    const failed = Number.isFinite(maxItems) ? syncablePending.slice(itemsToSync.length) : [];
     let nextSupplyDBFromSync = null;
     let skippedImmediateCount = 0;
     try {
       for (const item of itemsToSync) {
+        if (isPendingReportDeletedLocally(item)) continue;
         const r = getPendingReportPayload(item);
         const immediateId = String(r?.id || "");
         if (immediateId && immediateReportIdsRef.current.has(immediateId)) {
@@ -5485,13 +5543,13 @@ useEffect(() => {
         }
 
         if (!saveSucceeded) {
-          failed.push(item);
+          if (!isPendingReportDeletedLocally(item)) failed.push(item);
           continue;
         }
 
         const sheetConfirmed = await confirmReportSavedToSheet(savedReport);
         if (!sheetConfirmed) {
-          failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet:false, updateOriginal, sendWhatsAppOnSave:shouldSendPendingReportWhatsApp(item, savedReport) }));
+          if (!isPendingReportDeletedLocally(item)) failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet:false, updateOriginal, sendWhatsAppOnSave:shouldSendPendingReportWhatsApp(item, savedReport), lastError:"sheet_confirm_failed" }));
           continue;
         }
 
@@ -5509,7 +5567,7 @@ useEffect(() => {
         if (whatsAppSent) {
           sent.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal, sendWhatsAppOnSave }));
         } else {
-          failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal, sendWhatsAppOnSave }));
+          if (!isPendingReportDeletedLocally(item)) failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal, sendWhatsAppOnSave, lastError:"whatsapp_send_failed" }));
         }
       }
 
@@ -5522,15 +5580,22 @@ useEffect(() => {
         });
       }
 
-      setPending(failed);
-      setPendingBackgroundSync(!!failed.length || pendingOperatorIssues.length > 0);
-      const onlySkippedImmediate = failed.length > 0 && failed.length === skippedImmediateCount && sent.length === 0;
+      const visibleFailed = failed.filter(item => !isPendingReportDeletedLocally(item));
+      setPending(visibleFailed);
+      setPendingBackgroundSync(!!visibleFailed.length || pendingOperatorIssues.length > 0);
+      const onlySkippedImmediate = visibleFailed.length > 0 && visibleFailed.length === skippedImmediateCount && sent.length === 0;
       if (onlySkippedImmediate) {
         setAction("syncPending", "idle");
       } else {
-        setAction("syncPending", failed.length ? "error" : "success", failed.length ? 2200 : 1600);
-        showToast(failed.length ? `⚠️ ${failed.length} דוחות עדיין ממתינים לשליחה ללקוח` : "✅ כל הדוחות נשלחו ללקוחות!");
+        setAction("syncPending", visibleFailed.length ? "error" : "success", visibleFailed.length ? 2200 : 1600);
+        showToast(visibleFailed.length ? `⚠️ ${visibleFailed.length} דוחות עדיין ממתינים לשליחה ללקוח` : "✅ כל הדוחות נשלחו ללקוחות!");
       }
+      const preferredStillPending = preferredItem ? visibleFailed.some(item => samePendingReport(item, preferredItem)) : false;
+      return {
+        success: preferredItem ? !preferredStillPending : visibleFailed.length === 0,
+        sent: sent.length,
+        failed: visibleFailed.length
+      };
     } finally {
       pendingSyncRef.current = false;
     }
@@ -5580,11 +5645,52 @@ useEffect(() => {
     haptic("medium");
   };
 
+  const retryPendingReport = async (item, e) => {
+    e?.stopPropagation?.();
+    const key = `retryPending:${pendingReportStorageId(item)}`;
+    if (isActionLoading(key)) return;
+    setAction(key, "loading");
+    const result = await syncPendingReports(1, item).catch(error => {
+      console.warn("Manual pending report retry failed", error);
+      return { success:false };
+    });
+    setAction(key, result?.success ? "success" : "error", result?.success ? 1400 : 2200);
+  };
+
+  const pendingReportToneStyle = (tone) => {
+    if (tone === "success") return { background:"#e8f5e9", color:C.green, border:"1px solid #c8e6c9" };
+    if (tone === "error") return { background:"#ffebee", color:C.red, border:"1px solid #ffcdd2" };
+    return { background:"#fff8e1", color:C.orange, border:"1px solid #ffe082" };
+  };
+
+  const pendingReportSummary = () => pending.reduce((acc, item) => {
+    const info = pendingReportQueueInfo(item);
+    acc.total += 1;
+    if (info.stage === "sheetPending") acc.sheet += 1;
+    else acc.message += 1;
+    return acc;
+  }, { total:0, sheet:0, message:0 });
+
+  const pendingReportSummaryText = () => {
+    const s = pendingReportSummary();
+    if (s.sheet && s.message) return `${s.sheet} לשיטס · ${s.message} הודעות`;
+    if (s.sheet) return `${s.sheet} ממתינים לשמירה בשיטס`;
+    return `${s.message} ממתינים לווצאפ`;
+  };
+
   const renderPendingReportRows = () => pending.map((item,i)=>{
     const r = getPendingReportPayload(item)||{};
+    const info = pendingReportQueueInfo(item);
+    const retryKey = `retryPending:${pendingReportStorageId(item)}`;
     return (
-      <div key={r.id||i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
-        <div style={{flex:1,minWidth:0,fontSize:12,fontWeight:900,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.client||"לקוח ללא שם"}</div>
+      <div key={r.id||i} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto auto auto",alignItems:"center",gap:8,padding:"6px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:12,fontWeight:900,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.client||"לקוח ללא שם"}</div>
+          <div style={{display:"inline-flex",marginTop:4,padding:"3px 8px",borderRadius:99,fontSize:10,fontWeight:900,...pendingReportToneStyle(info.tone)}}>{info.label}</div>
+        </div>
+        <Press onClick={(e)=>retryPendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:actionStatus[retryKey]==="success"?C.green:actionStatus[retryKey]==="error"?C.orange:"#e8f5e9",color:actionStatus[retryKey]==="success"?"#fff":C.green,fontSize:11,fontWeight:900}}>
+          {actionLabel(retryKey,{idle:"נסה",loading:"שולח...",success:"בוצע",error:"נכשל"})}
+        </Press>
         <Press onClick={(e)=>openPendingReportForEdit(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#e3f2fd",color:C.blue,fontSize:11,fontWeight:900}}>טען</Press>
         <Press onClick={(e)=>deletePendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#ffebee",color:C.red,fontSize:11,fontWeight:900}}>מחק</Press>
       </div>
@@ -6172,7 +6278,7 @@ useEffect(() => {
           {pending.length>0&&!dismissed&&(
             <div onClick={()=>setShowPendingReportNames(v=>!v)} style={{...card({background:"#fff8e1",border:"1px solid #ffe082",marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}),padding:"12px 16px",cursor:"pointer"}}>
               <span style={{fontSize:18}}>⚠️</span>
-              <div style={{flex:1}}><div style={{fontWeight:800,fontSize:13,color:C.orange}}>{pending.length} דוחות ממתינים לשליחה</div><div style={{fontSize:11,color:C.muted}}>{pendingBackgroundSync ? "שליחה ברקע פעילה" : "שמורים מקומית — הפעל שליחה ברקע או שלח ידנית"}</div></div>
+              <div style={{flex:1}}><div style={{fontWeight:800,fontSize:13,color:C.orange}}>{pending.length} דוחות בתור</div><div style={{fontSize:11,color:C.muted}}>{pendingReportSummaryText()} · {pendingBackgroundSync ? "סנכרון ברקע פעיל" : "שמורים מקומית — אפשר לנסות ידנית"}</div></div>
               <Press onClick={togglePendingBackgroundSync} style={{background:pendingBackgroundSync?C.green:"#fff7ed",border:`1px solid ${pendingBackgroundSync?"#86efac":"#fed7aa"}`,borderRadius:99,padding:"6px 12px",color:pendingBackgroundSync?"#fff":C.orange,fontWeight:900,fontSize:12}}>{pendingBackgroundSync?"עצור רקע":"הפעל רקע"}</Press>
               <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
               <Press onClick={(e)=>{e.stopPropagation();setDismissed(true);}} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
@@ -6802,7 +6908,7 @@ useEffect(() => {
 
         {pending.length>0&&(
           <div onClick={()=>setShowPendingReportNames(v=>!v)} style={{...card({background:"#fff8e1",border:`1px solid #ffe082`}),marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",cursor:"pointer"}}>
-            <span style={{fontSize:13,fontWeight:700,color:C.orange}}>⚠️ {pending.length} דוחות ממתינים לשליחה</span>
+            <span style={{fontSize:13,fontWeight:700,color:C.orange}}>⚠️ {pending.length} דוחות בתור · {pendingReportSummaryText()}</span>
             <Press onClick={togglePendingBackgroundSync} style={{background:pendingBackgroundSync?C.green:"#fff7ed",border:`1px solid ${pendingBackgroundSync?"#86efac":"#fed7aa"}`,borderRadius:99,padding:"6px 12px",color:pendingBackgroundSync?"#fff":C.orange,fontWeight:900,fontSize:12}}>{pendingBackgroundSync?"עצור רקע":"הפעל רקע"}</Press>
             <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח הכל",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
             {showPendingReportNames&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.72)",borderRadius:12,padding:"8px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
