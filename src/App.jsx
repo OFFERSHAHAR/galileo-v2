@@ -6978,6 +6978,9 @@ useEffect(() => {
     allOrderClients.forEach(c => {
       if (activeAdminOperator && clientAssignedToOperatorDate(c, taskDate, activeAdminOperator)) adminOrderEligibleMap.set(c.name, c);
     });
+    const adminOrderAssignedTodayCount = activeAdminOperator
+      ? allOrderClients.filter(c => clientAssignedToOperatorDate(c, taskDate, activeAdminOperator)).length
+      : 0;
     adminOrderList.forEach(entry => {
       const base = adminOrderClientMap.get(entry.client) || {name:entry.client};
       adminOrderEligibleMap.set(entry.client, base);
@@ -7489,8 +7492,8 @@ useEffect(() => {
                     </div>}
                     <input value={adminOrderClientSearch} onChange={e=>setAdminOrderClientSearch(e.target.value)} placeholder="חפש מכל הלקוחות, הימים והמפעילים..." style={{...inp,fontSize:12,marginBottom:8}}/>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,margin:"10px 0 8px"}}>
-                      <div style={{fontSize:12,fontWeight:900,color:C.green}}>נבחרו לסדר היום</div>
-                      <Badge label={<span dir="ltr" style={{unicodeBidi:"isolate"}}>{selectedAdminOrderEntries.length}/{adminOrderEligibleClients.length}</span>} col={C.green}/>
+                      <div style={{fontSize:12,fontWeight:900,color:C.green}}>נבחרו / משויכות להיום</div>
+                      <Badge label={<span dir="ltr" style={{unicodeBidi:"isolate"}}>{selectedAdminOrderEntries.length}/{adminOrderAssignedTodayCount}</span>} col={C.green}/>
                     </div>
                     {adminOrderWaterCheckClients.length>0&&(
                       <div style={{margin:"0 0 10px"}}>
