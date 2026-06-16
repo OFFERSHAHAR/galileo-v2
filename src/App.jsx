@@ -6996,6 +6996,8 @@ useEffect(() => {
     const selectedAdminOrderEntries = adminOrderList
       .filter(entry => !adminOrderClientSearch || filterClientOptions([{name:entry.client, ...(adminOrderClientMap.get(entry.client)||{})}], adminOrderClientSearch).length)
       .sort((a,b)=>Number(a.orderIndex || 9999)-Number(b.orderIndex || 9999));
+    const adminOrderWaterCheckClients = sortByClientName(allOrderClients)
+      .filter(c => activeAdminOperator && clientWaterCheckAssigned(c, taskDate, activeAdminOperator));
     const unselectedAdminOrderClientsBase = adminOrderEligibleClients.filter(c=>!adminOrderNames.has(c.name));
     const removedVisibleClients = adminOrderRemovedClients
       .map(name => adminOrderClientMap.get(name) || {name})
@@ -7488,8 +7490,20 @@ useEffect(() => {
                     <input value={adminOrderClientSearch} onChange={e=>setAdminOrderClientSearch(e.target.value)} placeholder="חפש מכל הלקוחות, הימים והמפעילים..." style={{...inp,fontSize:12,marginBottom:8}}/>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,margin:"10px 0 8px"}}>
                       <div style={{fontSize:12,fontWeight:900,color:C.green}}>נבחרו לסדר היום</div>
-                      <Badge label={`${selectedAdminOrderEntries.length}/${adminOrderEligibleClients.length} בריכות`} col={C.green}/>
+                      <Badge label={<span dir="ltr" style={{unicodeBidi:"isolate"}}>{selectedAdminOrderEntries.length}/{adminOrderEligibleClients.length}</span>} col={C.green}/>
                     </div>
+                    {adminOrderWaterCheckClients.length>0&&(
+                      <div style={{margin:"0 0 10px"}}>
+                        <div style={{fontSize:11,fontWeight:900,color:C.green,marginBottom:6}}>בדיקות מים</div>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          {adminOrderWaterCheckClients.map(c=>(
+                            <span key={`water-check-admin-${c.name}`} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minHeight:24,padding:"0 10px",borderRadius:99,background:"#e8f5e9",border:"1px solid #c8e6c9",color:C.green,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>
+                              {String(c.name || "").split(" - ")[0]}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {selectedAdminOrderEntries.length===0&&<div style={{padding:18,borderRadius:12,background:"#f5f9ff",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700,marginBottom:10}}>אין בריכות שנבחרו לסדר היום</div>}
                     {selectedAdminOrderEntries.map((entry)=>{
                       const i = adminOrderList.findIndex(x=>x.client===entry.client);
