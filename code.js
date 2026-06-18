@@ -358,20 +358,38 @@
       }
 
       if (action === "saveTasks") {
-        const sheet = ss.getSheetByName("משימות");
-        ensureColumns(sheet, ["clientId"]);
+        let sheet = ss.getSheetByName("משימות");
+        const headers = taskHeaders_();
+        if (!sheet) {
+          sheet = ss.insertSheet("משימות");
+          sheet.appendRow(headers);
+        }
+        ensureColumns(sheet, headers);
         const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
-        if (hi === -1) hi = 2;
+        let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID" || String(r[0]).toLowerCase() === "id");
+        if (hi === -1) hi = 0;
+        sheet.getRange(hi + 1, 1, 1, headers.length).setValues([headers]);
         const dataStart = hi + 2;
         const last = sheet.getLastRow();
         if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
-        dedupeTasks_(data.tasks || []).filter(t => !isAdminOrderTask_(t)).forEach(t => {
-          sheet.appendRow([t.id, t.date, t.client, t.operators.join(","), t.status, JSON.stringify(t.changeLog), t.orderIndex || 0, t.adminNote || "", t.createdByAdminOrder === true, t.clientId || ""]);
-        });
+        const taskRows = dedupeTasks_(data.tasks || []).filter(t => !isAdminOrderTask_(t)).map(t => ([
+          t.id,
+          t.date,
+          t.client,
+          t.operators.join(","),
+          t.status,
+          JSON.stringify(t.changeLog),
+          t.orderIndex || 0,
+          t.adminNote || "",
+          t.createdByAdminOrder === true,
+          t.clientId || "",
+          t.operatorCreated === true,
+          t.adminApproval || "",
+          t.requestedBy || ""
+        ]));
+        if (taskRows.length) sheet.getRange(dataStart, 1, taskRows.length, headers.length).setValues(taskRows);
         return json({ success: true });
       }
-
       if (action === "getAdminOrders") {
         return json({ adminOrders: getAdminOrders_(ss) });
       }
@@ -741,11 +759,10 @@
     s = clientSS.getSheetByName("משימות");
     if(!s) {
       s = clientSS.insertSheet("משימות");
-      s.appendRow(["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"]);
+      s.appendRow(taskHeaders_());
     } else {
-      ensureColumns(s, ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"]);
+      ensureColumns(s, taskHeaders_());
     }
-
     // ── חלוקת_עבודה ──
     s = clientSS.getSheetByName("חלוקת_עבודה");
     if(!s) {
@@ -3784,33 +3801,67 @@ function deleteClient_(sheet, data) {
   return { success:false, error:"client not found", clientName:targetName };
 }
 
+function taskHeaders_() {
+  return ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog","orderIndex","adminNote","createdByAdminOrder","clientId","operatorCreated","adminApproval","requestedBy"];
+}
+
+function taskColumnIndex_(headers, names, fallback) {
+  const normalized = headers.map(h => String(h || "").trim().replace(/[\s_\-]/g, "").toLowerCase());
+  const wanted = names.map(name => String(name || "").trim().replace(/[\s_\-]/g, "").toLowerCase());
+  const found = normalized.findIndex(header => wanted.includes(header));
+  return found >= 0 ? found : fallback;
+}
+
 function getTasks_(ss) {
   const sheet = ss.getSheetByName("משימות");
   if (!sheet) return [];
-  const rows = sheet.getDataRange().getValues();
-  let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID");
+  const originalRows = sheet.getDataRange().getValues();
+  let hi = originalRows.findIndex(r => String(r[0]).toUpperCase() === "ID" || String(r[0]).toLowerCase() === "id");
   if (hi === -1) hi = 2;
-  return rows.slice(hi + 1).filter(r => r[0]).map(r => {
-    let date = r[1];
+  const originalHeaders = (originalRows[hi] || []).map(h => String(h || "").trim());
+  const legacyShiftedClientId = originalHeaders.indexOf("clientId") === 6 && originalHeaders.indexOf("orderIndex") < 0;
+  ensureColumns(sheet, taskHeaders_());
+  const rows = sheet.getDataRange().getValues();
+  const headers = (rows[hi] || []).map(h => String(h || "").trim());
+  const idx = {
+    id: taskColumnIndex_(headers, ["id","ID"], 0),
+    date: taskColumnIndex_(headers, ["תאריך","date"], 1),
+    client: taskColumnIndex_(headers, ["לקוח","client"], 2),
+    operators: taskColumnIndex_(headers, ["מפעילים","operators"], 3),
+    status: taskColumnIndex_(headers, ["סטטוס","status"], 4),
+    changeLog: taskColumnIndex_(headers, ["changeLog"], 5),
+    orderIndex: taskColumnIndex_(headers, ["orderIndex","סדר"], 6),
+    adminNote: taskColumnIndex_(headers, ["adminNote","הערת_מנהל","הערת מנהל"], 7),
+    createdByAdminOrder: taskColumnIndex_(headers, ["createdByAdminOrder"], 8),
+    clientId: legacyShiftedClientId ? 9 : taskColumnIndex_(headers, ["clientId"], 9),
+    operatorCreated: taskColumnIndex_(headers, ["operatorCreated"], 10),
+    adminApproval: taskColumnIndex_(headers, ["adminApproval"], 11),
+    requestedBy: taskColumnIndex_(headers, ["requestedBy"], 12)
+  };
+  return rows.slice(hi + 1).filter(r => r[idx.id]).map(r => {
+    let date = r[idx.date];
     if (date instanceof Date) {
       date = Utilities.formatDate(date, "Asia/Jerusalem", "yyyy-MM-dd");
     } else {
       date = String(date).slice(0,10);
     }
+    const adminApproval = String(r[idx.adminApproval] || "");
     return {
-      id: r[0], date,
-      client: r[2],
-      operators: r[3] ? String(r[3]).split(",").map(x => x.trim()) : [],
-      status: r[4],
-      changeLog: r[5] ? JSON.parse(String(r[5])) : [],
-      orderIndex: Number(r[6] || 0),
-      adminNote: String(r[7] || ""),
-      createdByAdminOrder: String(r[8] || "").toLowerCase() === "true" || r[8] === true,
-      clientId: String(r[9] || "")
+      id: r[idx.id], date,
+      client: r[idx.client],
+      operators: r[idx.operators] ? String(r[idx.operators]).split(",").map(x => x.trim()) : [],
+      status: String(r[idx.status] || "pending"),
+      changeLog: r[idx.changeLog] ? JSON.parse(String(r[idx.changeLog])) : [],
+      orderIndex: Number(r[idx.orderIndex] || 0),
+      adminNote: String(r[idx.adminNote] || ""),
+      createdByAdminOrder: String(r[idx.createdByAdminOrder] || "").toLowerCase() === "true" || r[idx.createdByAdminOrder] === true,
+      clientId: String(r[idx.clientId] || ""),
+      operatorCreated: String(r[idx.operatorCreated] || "").toLowerCase() === "true" || r[idx.operatorCreated] === true || !!adminApproval,
+      adminApproval,
+      requestedBy: String(r[idx.requestedBy] || "")
     };
   }).filter(t => !isAdminOrderTask_(t));
 }
-
 function isAdminOrderTask_(t) {
   return !!(t && (t.createdByAdminOrder === true || Number(t.orderIndex || 0) > 0));
 }
@@ -3828,6 +3879,7 @@ function dedupeTasks_(tasks) {
   const map = {};
   (tasks || []).filter(t => t && t.date && t.client && !isAdminOrderTask_(t)).forEach(t => {
     const key = taskKey_(t);
+    const adminApproval = String(t.adminApproval || "");
     map[key] = {
       id: t.id || key,
       date: normalizeAdminOrderDate_(t.date),
@@ -3838,12 +3890,14 @@ function dedupeTasks_(tasks) {
       orderIndex: Number(t.orderIndex || 0),
       adminNote: String(t.adminNote || ""),
       createdByAdminOrder: t.createdByAdminOrder === true,
-      clientId: String(t.clientId || "")
+      clientId: String(t.clientId || ""),
+      operatorCreated: t.operatorCreated === true || String(t.operatorCreated || "").toLowerCase() === "true" || !!adminApproval,
+      adminApproval,
+      requestedBy: String(t.requestedBy || "")
     };
   });
   return Object.keys(map).map(k => map[k]);
 }
-
 function getAdminOrders_(ss) {
   const sheet = ss.getSheetByName("חלוקת_עבודה");
   let orders = [];

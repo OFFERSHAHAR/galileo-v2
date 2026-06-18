@@ -1006,7 +1006,7 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
                 <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(t.client || "").split(" - ")[0]}</div>
                 {t.adminNote&&<div style={{fontSize:11,fontWeight:700,color:C.orange,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.adminNote}</div>}
               </div>
-              <Badge label={t.status==="done"?"בוצע":"ממתין"} col={t.status==="done"?C.green:C.orange}/>
+              <Badge label={t.status==="done"?"\u2713 \u05d1\u05d5\u05e6\u05e2":"\u05de\u05de\u05ea\u05d9\u05df"} col={t.status==="done"?C.green:C.orange}/>
             </div>
           ))}
           {list.length>12&&<div style={{padding:10,textAlign:"center",fontSize:12,fontWeight:800,color:C.muted,background:"#f5f9ff"}}>ועוד {list.length-12} בריכות</div>}
@@ -1074,7 +1074,7 @@ function Badge({label,col="#1565c0",bg}) {
   return <span style={{minWidth:52,minHeight:24,display:"inline-flex",alignItems:"center",justifyContent:"center",background:bg||col+"18",color:col,border:`1px solid ${col}33`,borderRadius:99,padding:"0 11px",fontSize:11,fontWeight:800,lineHeight:1,whiteSpace:"nowrap"}}>{label}</span>;
 }
 
-function Sec({icon,title,children}) {
+function Sec({icon,title,action,children}) {
   const displayTitle = String(title || "").includes("ציוד") && String(title || "").includes("טיפול") ? "חומרים לטיפול הבא" : title;
   return (
     <div style={{marginBottom:22}}>
@@ -1082,6 +1082,7 @@ function Sec({icon,title,children}) {
         <span style={{fontSize:16}}>{icon}</span>
         <span style={{fontSize:11,fontWeight:800,color:C.muted,letterSpacing:"0.12em",textTransform:"uppercase"}}>{displayTitle}</span>
         <div style={{flex:1,height:1,background:"linear-gradient(90deg,#bbdefb,transparent)"}}/>
+        {action&&<div style={{display:"flex",alignItems:"center",justifyContent:"flex-end"}}>{action}</div>}
       </div>
       {children}
     </div>
@@ -2670,6 +2671,9 @@ useEffect(() => {
   const [showConv,setShowConv] = useState(false);
   const [navTab,setNavTab] = useState(0);
   const [freeTaskActionId,setFreeTaskActionId] = useState(null);
+  const [operatorTaskClient,setOperatorTaskClient] = useState("");
+  const [operatorTaskClientSearch,setOperatorTaskClientSearch] = useState("");
+  const [operatorTaskNote,setOperatorTaskNote] = useState("");
   const [openDoneTasks,setOpenDoneTasks] = useState({});
   const [toast,setToast] = useState({msg:"",visible:false});
   const [workStart,setWorkStart] = useState(()=>localStorage.getItem("galileo_workstart")||null);
@@ -2727,6 +2731,7 @@ useEffect(() => {
   const [sheetReports,setSheetReports] = useState([]);
   const [treatmentCounts,setTreatmentCounts] = useState([]);
   const [chemicalRestrictionPrompt,setChemicalRestrictionPrompt] = useState(null);
+  const [confirmReportWhatsApp,setConfirmReportWhatsApp] = useState(null);
   const [openDailySupplyType,setOpenDailySupplyType] = useState(null);
   const [openCompletedPools,setOpenCompletedPools] = useState(false);
   const [openTodayTasks,setOpenTodayTasks] = useState(false);
@@ -3804,10 +3809,18 @@ useEffect(() => {
   const sharedSubOrderKey = (date, opName, subUsername) => localKey("galileo_shared_sub_order", date, opName, subUsername);
   const subOperatorAssignKey = (date, opName) => localKey("galileo_sub_operator", date, opName);
   const subOperatorApprovalKey = (date, opName, subUsername) => localKey("galileo_sub_operator_approval", date, opName, subUsername);
-  const sharedSubMatch = (row, date, opName, subUsername) =>
-    normalizeDate(row?.date) === date &&
-    normalizeName(row?.operator) === normalizeName(opName) &&
-    (normalizeName(row?.subUsername) === normalizeName(subUsername) || normalizeName(row?.subOperator) === normalizeName(subUsername));
+  const canonicalSubUsername = (value) => {
+    const v = normalizeName(value);
+    if (!v) return "";
+    const match = subOperatorUsers.find(su => normalizeName(su?.username) === v || normalizeName(su?.name) === v);
+    return String(match?.username || value || "").trim();
+  };
+  const sharedSubMatch = (row, date, opName, subUsername) => {
+    const target = normalizeName(canonicalSubUsername(subUsername));
+    return normalizeDate(row?.date) === date &&
+      normalizeName(row?.operator) === normalizeName(opName) &&
+      (normalizeName(canonicalSubUsername(row?.subUsername)) === target || normalizeName(canonicalSubUsername(row?.subOperator)) === target);
+  };
   const lockedClientsKey = (username, date) => localKey("galileo_locked_clients", username, date);
   const rawLinkedOperatorValue = (u) => String(
     u?.linkedOperator ||
@@ -3839,7 +3852,7 @@ useEffect(() => {
       return normalizeName(resolveKnownOperatorName(linked) || linked) === normalizeName(opName);
     });
     if (fromUsers?.username) return String(fromUsers.username || "");
-    return String(localStorage.getItem(subOperatorAssignKey(date, opName)) || "");
+    return "";
   };
   const updateSubOperatorUserCache = (username, opName) => {
     if (!username) return;
@@ -3863,19 +3876,20 @@ useEffect(() => {
     });
   };
   const isSameSubOperator = (saved, u) => {
-    const value = normalizeName(saved);
-    return !!value && (value === normalizeName(u?.username) || value === normalizeName(u?.name));
+    const value = normalizeName(canonicalSubUsername(saved));
+    return !!value && value === normalizeName(canonicalSubUsername(u?.username || u?.name));
   };
-  const subOperatorValues = (u) => [u?.username, u?.name].map(normalizeName).filter(Boolean);
+  const subOperatorValues = (u) => [canonicalSubUsername(u?.username || u?.name), u?.name].map(normalizeName).filter(Boolean);
   const setAssignedSubOperator = async (date, opName, username) => {
     const key = subOperatorAssignKey(date, opName);
+    const nextUsername = canonicalSubUsername(username);
     const previousUsername = getAssignedSubOperator(date, opName);
-    username ? localStorage.setItem(key, username) : localStorage.removeItem(key);
+    localStorage.removeItem(key);
     updateSubOperatorUserCache(previousUsername, "");
-    updateSubOperatorUserCache(username, opName);
+    updateSubOperatorUserCache(nextUsername, opName);
     setSubOperatorRefresh(x=>x+1);
     const previousUser = subOperatorUsers.find(su => isSameSubOperator(previousUsername, su));
-    const nextUser = subOperatorUsers.find(su => isSameSubOperator(username, su));
+    const nextUser = subOperatorUsers.find(su => isSameSubOperator(nextUsername, su));
     const removeValues = subOperatorValues(previousUser);
     const addValues = [nextUser?.name, nextUser?.username].filter(Boolean);
     const nextTasks = tasks.map(t => {
@@ -3891,8 +3905,8 @@ useEffect(() => {
     if (sheetId) await sheetCall("saveTasks", {tasks: nextTasks}).catch(e => console.warn("Sub-operator task assignment sync failed", e));
     if (sheetId) {
       try {
-        if (previousUsername && previousUsername !== username) await sheetCall("saveSubOperatorAssignment", {username: previousUsername, operator: ""});
-        if (username) await sheetCall("saveSubOperatorAssignment", {username, operator: opName});
+        if (previousUsername && previousUsername !== nextUsername) await sheetCall("saveSubOperatorAssignment", {username: previousUsername, operator: ""});
+        if (nextUsername) await sheetCall("saveSubOperatorAssignment", {username: nextUsername, operator: opName});
         const usersRes = await sheetCall("getUsers");
         if (Array.isArray(usersRes?.users) && usersRes.users.length > 0) applyFetchedUsers(usersRes.users);
       } catch(e) {
@@ -3925,24 +3939,12 @@ useEffect(() => {
     );
     const taskOperator = (taskMatch?.operators || []).find(op => !subValues.includes(normalizeName(op)));
     if (taskOperator) return resolveOperatorName(taskOperator);
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i) || "";
-        if (!key.startsWith("galileo_sub_operator:")) continue;
-        const saved = localStorage.getItem(key);
-        if (!isSameSubOperator(saved, subUser)) continue;
-        const parts = key.split(":");
-        const opName = parts.slice(2).join(":");
-        if (opName) return opName;
-      }
-    } catch {}
     return "";
   };
   const linkedOperatorName = (u=user, date=dailyDate) => findAssignedOperatorForSub(date, u) || resolveOperatorName(rawLinkedOperatorValue(u));
   const dailyOwnerName = (date=dailyDate) => isSubOperatorRole(user?.role) ? (linkedOperatorName(user, date) || user?.name || "") : (user?.name || "");
   const isSubOperatorApproved = (date=dailyDate, opName=dailyOwnerName(date), subUsername=user?.username) =>
-    subOperatorApprovals.some(row => sharedSubMatch(row, date, opName, subUsername) && row.approved !== false) ||
-    localStorage.getItem(subOperatorApprovalKey(date, opName, subUsername)) === "yes";
+    subOperatorApprovals.some(row => sharedSubMatch(row, date, opName, subUsername) && row.approved !== false);
   const saveSubOperatorApprovals = async (next) => {
     setSubOperatorApprovals(next);
     const res = await sheetCall("saveSubOperatorApprovals", {approvals:next});
@@ -3954,7 +3956,7 @@ useEffect(() => {
     const next = [...subOperatorApprovals.filter(x=>!sharedSubMatch(x, date, opName, subUsername)), row];
     try {
       await saveSubOperatorApprovals(next);
-      localStorage.setItem(subOperatorApprovalKey(date, opName, subUsername), "yes");
+      localStorage.removeItem(subOperatorApprovalKey(date, opName, subUsername));
       setSubOperatorRefresh(x=>x+1);
       void sendAppNotificationToUser("אישור מילוי דוחות", `אושרת למילוי דוחות עבור ${opName} בתאריך ${fmtDate(date)}`, subUsername)
         .catch(e => console.warn("Sub-operator approval notification failed", e));
@@ -4040,7 +4042,7 @@ useEffect(() => {
   const getAdminOrderEntries = (date, opName) => {
     const fromTasks = getSheetAdminOrderEntries(date, opName);
     if (fromTasks.length) return fromTasks;
-    return getLocalAdminOrderEntries(date, opName);
+    return sheetId ? [] : getLocalAdminOrderEntries(date, opName);
   };
   const getLocalAdminOrderEntries = (date, opName) => readLocalArray(adminOrderKey(date, opName))
       .filter(x=>x?.client)
@@ -4067,7 +4069,7 @@ useEffect(() => {
   const getEffectiveAdminOrderEntries = (date, opName) => {
     const fromSheet = getSheetAdminOrderEntries(date, opName);
     if (fromSheet.length) return fromSheet;
-    return getLocalAdminOrderEntries(date, opName).sort((a,b)=>a.orderIndex-b.orderIndex);
+    return sheetId ? [] : getLocalAdminOrderEntries(date, opName).sort((a,b)=>a.orderIndex-b.orderIndex);
   };
   const prepareAdminOrderEntries = (entries) => {
     const byClient = new Map();
@@ -4124,6 +4126,7 @@ useEffect(() => {
       .map((x, i)=>({id:x.id, client:x.client, clientId:x.clientId||clientIdByName(x.client), note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || [], completedAt:x.completedAt || "", completedBy:x.completedBy || "", reportId:x.reportId || ""}))
       .sort((a,b)=>a.orderIndex-b.orderIndex);
     if (fromSheet.length) return fromSheet;
+    if (sheetId) return [];
     return readLocalArray(sharedSubOrderKey(date, opName, subUsername))
       .filter(x=>x?.client)
       .map((x, i)=>({id:x.id, client:x.client, clientId:x.clientId||clientIdByName(x.client), note:x.note || x.adminNote || "", orderIndex:Number(x.orderIndex || i + 1), status:x.status || "pending", changeLog:x.changeLog || [], completedAt:x.completedAt || "", completedBy:x.completedBy || "", reportId:x.reportId || ""}))
@@ -4214,7 +4217,7 @@ useEffect(() => {
     let list;
     if (adminEntries.length) {
       const ordered = entriesToDailyTasks(date, opName, adminEntries, "admin").map(t=>({...t, _adminLocalOrder:true}));
-      const extra = myTasks(date).filter(t=>!ordered.some(x=>x.client===t.client));
+      const extra = myTasks(date).filter(t=>t.adminApproval !== "pending" && t.adminApproval !== "rejected" && !ordered.some(x=>x.client===t.client));
       list = [...ordered, ...extra];
     } else {
       list = dayClientProfiles(date, opName);
@@ -4851,7 +4854,48 @@ useEffect(() => {
   const removeOp=async(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t)return;await updateTask(id,{operators:t.operators.filter(o=>o!==n)},`הוסר ${n} מהמשימה`,true);await sendNotificationToOperators([n], "📋 הוסרת ממשימה", `${t.client?.split(" - ")[0] || ""} — ${fmtDate(t.date)}`);};
   const addOp=(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t||t.operators.includes(n))return;updateTask(id,{operators:[...t.operators,n]},`נוסף ${n} למשימה`,true);};
   const markDone=(id)=>updateTask(id,{status:"done"},"דוח הוגש — בוצעה",false);
+  const taskStatusLabel = (t) => t.adminApproval==="pending" ? "ממתין לאישור" : t.adminApproval==="rejected" ? "נדחה" : t.status==="done" ? "✓ בוצע" : t.adminApproval==="approved" ? "מאושר" : "ממתין";
+  const taskStatusColor = (t) => t.adminApproval==="pending" ? C.orange : t.adminApproval==="rejected" ? C.red : t.status==="done" ? C.green : t.adminApproval==="approved" ? C.blue : C.orange;
 
+  const submitOperatorTaskRequest = async () => {
+    if (!operatorTaskClient || isActionLoading("operatorTaskRequest")) return;
+    const opName = dailyOwnerName(dailyDate) || user?.name || "";
+    const note = String(operatorTaskNote || "").trim();
+    const task = {
+      id: Date.now(),
+      date: dailyDate.slice(0,10),
+      client: operatorTaskClient,
+      clientId: clientIdByName(operatorTaskClient),
+      operators: [opName],
+      status: "pending",
+      operatorCreated: true,
+      adminApproval: "pending",
+      requestedBy: user?.name || opName,
+      changeLog: [{at:nowStr(),note:note || "\u05de\u05e9\u05d9\u05de\u05d4 \u05d0\u05d9\u05e9\u05d9\u05ea \u05de\u05de\u05ea\u05d9\u05e0\u05d4 \u05dc\u05d0\u05d9\u05e9\u05d5\u05e8",by:user?.name || opName,needsAck:false,ackedBy:[]}]
+    };
+    const newTasks = [...tasks, task];
+    setAction("operatorTaskRequest", "loading");
+    setTasks(newTasks);
+    setOperatorTaskClient("");
+    setOperatorTaskClientSearch("");
+    setOperatorTaskNote("");
+    if (sheetId) await sheetCall("saveTasks", {tasks:newTasks});
+    await sendNotificationToAdmins("\u05de\u05e9\u05d9\u05de\u05d4 \u05d7\u05d3\u05e9\u05d4 \u05de\u05de\u05e4\u05e2\u05d9\u05dc", `${opName} \u2014 ${operatorTaskClient.split(" - ")[0]}`).catch(e => console.warn("Operator task request notification failed", e));
+    setAction("operatorTaskRequest", "success", 1500);
+    showToast("\u05d4\u05de\u05e9\u05d9\u05de\u05d4 \u05e0\u05e9\u05dc\u05d7\u05d4 \u05dc\u05d0\u05d9\u05e9\u05d5\u05e8 \u05d0\u05d3\u05de\u05d9\u05df");
+    haptic("success");
+  };
+
+  const approveOperatorTaskRequest = async (id, approved = true) => {
+    const target = tasks.find(t=>t.id===id);
+    if (!target) return;
+    const next = tasks.map(t=>t.id===id ? {...t, adminApproval:approved ? "approved" : "rejected", status:approved ? (t.status || "pending") : "rejected", changeLog:[...(t.changeLog||[]), {at:nowStr(),note:approved ? "\u05d0\u05d3\u05de\u05d9\u05df \u05d0\u05d9\u05e9\u05e8 \u05d0\u05ea \u05d4\u05de\u05e9\u05d9\u05de\u05d4" : "\u05d0\u05d3\u05de\u05d9\u05df \u05d3\u05d7\u05d4 \u05d0\u05ea \u05d4\u05de\u05e9\u05d9\u05de\u05d4",by:user?.name,needsAck:true,ackedBy:[]}]} : t);
+    setTasks(next);
+    if (sheetId) await sheetCall("saveTasks", {tasks:next});
+    await sendNotificationToOperators(target.operators || [], approved ? "\u05de\u05e9\u05d9\u05de\u05d4 \u05d0\u05d5\u05e9\u05e8\u05d4" : "\u05de\u05e9\u05d9\u05de\u05d4 \u05e0\u05d3\u05d7\u05ea\u05d4", `${target.client?.split(" - ")[0] || ""} \u2014 ${fmtDate(target.date)}`).catch(e => console.warn("Operator task approval notification failed", e));
+    showToast(approved ? "\u05d4\u05de\u05e9\u05d9\u05de\u05d4 \u05d0\u05d5\u05e9\u05e8\u05d4" : "\u05d4\u05de\u05e9\u05d9\u05de\u05d4 \u05e0\u05d3\u05d7\u05ea\u05d4");
+    haptic("success");
+  };
   const timeToMinutes = (value) => {
     const [h,m] = String(value || "").split(":").map(Number);
     return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
@@ -5078,7 +5122,8 @@ useEffect(() => {
     showToast(`⚠️ WhatsApp לא נשלח${res?.status ? ` (${res.status})` : ""}${greenState}${greenError}`);
     return false;
   };
-  const sendReportWhatsAppAfterSheetConfirm = async (report) => {
+  const sendReportWhatsAppAfterSheetConfirm = async (report, shouldSend = true) => {
+    if (!shouldSend) return { sent:true, sheetConfirmed:true, skipped:true };
     const sheetConfirmed = await confirmReportSavedToSheet(report);
     if (!sheetConfirmed) {
       showToast("⚠️ הדוח עדיין לא אומת בשיטס - הודעת לקוח לא נשלחה");
@@ -5222,8 +5267,9 @@ useEffect(() => {
     haptic("medium");
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (options = {}) => {
     if (!client || syncing || isActionLoading("submitReport")) return;
+    const sendCustomerWhatsApp = options.sendCustomerWhatsApp !== false;
     const isEditingExistingReport = !!editingReport && !editingReport.pendingLocal;
     if (chlorine === "" || ph === "" || !flow) {
       showToast("⚠️ חובה למלא כלור, pH וזרימה");
@@ -5308,7 +5354,7 @@ useEffect(() => {
   chlorineReminderMessage: form.sendReminder ? normalizeChlorineReminderMessage(form.chlorineReminderMessage || chlorineReminderMessage) : "",
   photosCount:0
 };
-    const sendEditedReportToCustomer = isEditingExistingReport && shouldSendEditedReportToCustomer(editingReport, report);
+    const sendEditedReportToCustomer = sendCustomerWhatsApp && isEditingExistingReport && shouldSendEditedReportToCustomer(editingReport, report);
     if (!isEditingExistingReport && isSubOperatorRole(user?.role) && !approvalEditId) {
       const adminEmail = getCompany().adminEmail || "";
       const queuePromise = queueSubOperatorReportForApproval(report, photosBase64, adminEmail);
@@ -5328,7 +5374,7 @@ useEffect(() => {
       }
     }
     if (!isEditingExistingReport) {
-      addPendingReport(report, supplyUpdate);
+      addPendingReport(report, supplyUpdate, { sendWhatsAppOnSave: sendCustomerWhatsApp });
       setDismissed(false);
       if (typeof navigator !== "undefined" && navigator.onLine === false) {
         setPendingBackgroundSync(true);
@@ -5423,7 +5469,7 @@ useEffect(() => {
               ).catch(e => console.warn("Admin report notification failed", e));
             }
             void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
-            const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport).catch(e => {
+            const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport, sendCustomerWhatsApp).catch(e => {
               console.warn("WhatsApp send failed", e);
               return { sent:false, sheetConfirmed:false };
             });
@@ -5431,14 +5477,14 @@ useEffect(() => {
               removePendingReport(makePendingReportItem(report, supplyUpdate));
               setAction("submitReport", "success", 1200);
             } else {
-              addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed });
+              addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed, sendWhatsAppOnSave: sendCustomerWhatsApp });
               setDismissed(false);
               setPendingBackgroundSync(true);
               setAction("submitReport", "local", 2200);
             }
             void autoShareOrderAfterReport(savedReport);
           } else {
-            addPendingReport(report, supplyUpdate);
+            addPendingReport(report, supplyUpdate, { sendWhatsAppOnSave: sendCustomerWhatsApp });
             setDismissed(false);
             setPendingBackgroundSync(true);
             setAction("submitReport", "local", 2200);
@@ -5492,7 +5538,7 @@ useEffect(() => {
         haptic("medium");
         return;
       }
-      addPendingReport(report, supplyUpdate);
+      addPendingReport(report, supplyUpdate, { sendWhatsAppOnSave: sendCustomerWhatsApp });
       setDismissed(false);
       setAction("submitReport", "local", 2200);
       showToast("⚠️ הדוח נשמר מקומית");
@@ -5517,7 +5563,7 @@ useEffect(() => {
     if (sendEditedReportToCustomer && saved) {
       void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
       void (async () => {
-        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport).catch(e => {
+        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport, sendCustomerWhatsApp).catch(e => {
           console.warn("WhatsApp send failed", e);
           return { sent:false, sheetConfirmed:false };
         });
@@ -5531,18 +5577,28 @@ useEffect(() => {
     } else if (!isEditingExistingReport) {
       void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
       void (async () => {
-        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport).catch(e => {
+        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport, sendCustomerWhatsApp).catch(e => {
           console.warn("WhatsApp send failed", e);
           return { sent:false, sheetConfirmed:false };
         });
         if (!whatsAppResult.sent) {
-          addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed });
+          addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed, sendWhatsAppOnSave: sendCustomerWhatsApp });
           setDismissed(false);
           setPendingBackgroundSync(true);
         }
       })();
       void autoShareOrderAfterReport(savedReport);
     }
+  };
+
+  const handleSubmitPress = () => {
+    if (!client || syncing || isActionLoading("submitReport")) return;
+    if (!isWhatsAppDisabledForClient(client)) {
+      setConfirmReportWhatsApp({send:true});
+      haptic("medium");
+      return;
+    }
+    void handleSubmit();
   };
 
   const syncPendingReports = async (maxItems = Infinity, preferredItem = null) => {
@@ -5926,9 +5982,10 @@ useEffect(() => {
     const activeDayTasks = orderedDayTasks.filter(t=>!lockedClients.has(t.client));
     const dayTasks = (!isSubOperator && operatorEditOrder) ? operatorOrderDraft : activeDayTasks;
     const todayManualTasks = myTasks(dailyDate);
+    const todayVisibleManualTasks = todayManualTasks.filter(t=>t.adminApproval !== "rejected");
     const isDailyTaskDone = (task) => {
       const freeClientTasks = todayManualTasks
-        .filter(ft => normalizeName(ft.client) === normalizeName(task.client) && !ft.createdByAdminOrder && Number(ft.orderIndex || 0) <= 0);
+        .filter(ft => normalizeName(ft.client) === normalizeName(task.client) && !ft.createdByAdminOrder && Number(ft.orderIndex || 0) <= 0 && ft.adminApproval !== "pending" && ft.adminApproval !== "rejected");
       return task.status === "done" || isClientReportedDone(dailyDate, task.client) || freeClientTasks.some(ft => ft.status === "done");
     };
     const displayDayTasks = operatorEditOrder
@@ -6021,7 +6078,7 @@ useEffect(() => {
     const completedDayTasks = dayTasks.filter(isDailyTaskDone);
     const operatorProgressEntries = getOperatorProgressEntries(dailyDate, dailyOwnerName(dailyDate) || user?.name || "");
     const operatorProgressDone = operatorProgressEntries.filter(entry => entry.reported).length;
-    const doneManualTasks = todayManualTasks.filter(t=>t.status==="done").length;
+    const doneManualTasks = todayVisibleManualTasks.filter(t=>t.status==="done").length;
     const workMonthKey = normalizeDate(dailyDate).slice(0,7);
     const operatorWorkLogs = workLogs.filter(log=>normalizeName(log.operator)===normalizeName(user?.name));
     const monthWorkLogs = operatorWorkLogs.filter(log=>normalizeDate(log.date).slice(0,7)===workMonthKey);
@@ -6198,7 +6255,7 @@ useEffect(() => {
             </Press>
             <Press onClick={()=>{setOpenTodayTasks(v=>!v);haptic();}} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:`1px solid ${openTodayTasks?"rgba(21,101,192,0.62)":"rgba(148,163,184,0.20)"}`,boxShadow:"0 12px 28px rgba(30,64,175,0.12)",cursor:"pointer"}}>
               <div style={{fontSize:16,marginBottom:2}}>📌</div>
-              <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{doneManualTasks}/{todayManualTasks.length}</div>
+              <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{doneManualTasks}/{todayVisibleManualTasks.length}</div>
               <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>משימות</div>
             </Press>
             <Press onClick={()=>openWorkClockEditor(workStart?"end":"start")} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:"1px solid rgba(148,163,184,0.20)",boxShadow:"0 12px 28px rgba(30,64,175,0.12)",cursor:"pointer"}}>
@@ -6210,13 +6267,13 @@ useEffect(() => {
           {openTodayTasks&&(
             <div style={{marginTop:10,background:"rgba(244,249,255,0.82)",border:`1px solid ${C.border}`,borderRadius:16,padding:"10px 12px",boxShadow:"0 12px 28px rgba(30,64,175,0.10)"}}>
               <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>משימות היום</div>
-              {todayManualTasks.length ? todayManualTasks.map((t,i)=>{
+              {todayVisibleManualTasks.length ? todayVisibleManualTasks.map((t,i)=>{
                 const note = freeTaskLogNote(t);
                 return (
-                  <div key={`${t.id || t.client}-task-${i}`} style={{padding:"8px 0",borderBottom:i<todayManualTasks.length-1?`1px solid ${C.border}`:"none",display:"grid",gap:6}}>
+                  <div key={`${t.id || t.client}-task-${i}`} style={{padding:"8px 0",borderBottom:i<todayVisibleManualTasks.length-1?`1px solid ${C.border}`:"none",display:"grid",gap:6}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                       <span style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(t.client || "").split(" - ")[0]}</span>
-                      <span style={{fontSize:11,fontWeight:900,color:t.status==="done"?C.green:C.orange,background:t.status==="done"?"#e8f5e9":"#fff8e1",borderRadius:99,padding:"3px 9px",flexShrink:0}}>{t.status==="done"?"בוצע":"ממתין"}</span>
+                      <Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/>
                     </div>
                     {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערת משימה: {note}</div>}
                   </div>
@@ -6428,7 +6485,7 @@ useEffect(() => {
             const needsAck = !isSubOperator && !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy||[]).includes(user?.name);
             const logIdx = t.changeLog?t.changeLog.length-1:-1;
             const freeClientTasks = myTasks(dailyDate)
-              .filter(ft => normalizeName(ft.client) === normalizeName(t.client) && !ft.createdByAdminOrder && Number(ft.orderIndex || 0) <= 0);
+              .filter(ft => normalizeName(ft.client) === normalizeName(t.client) && !ft.createdByAdminOrder && Number(ft.orderIndex || 0) <= 0 && ft.adminApproval !== "pending" && ft.adminApproval !== "rejected");
             const freeClientTaskNotes = freeClientTasks.map(freeTaskLogNote).filter(Boolean);
             const hasFreeClientTasks = freeClientTasks.length > 0;
             const isFreeClientTaskDone = freeClientTasks.some(ft => ft.status === "done");
@@ -6669,8 +6726,33 @@ useEffect(() => {
           ))}
         </div>
         {navTab===1&&(
-          <BottomSheet title="📋 משימות ידניות היום" onClose={()=>setNavTab(0)}>
-            {(()=>{
+          <BottomSheet title="📋 משימות היום" onClose={()=>setNavTab(0)}>
+            {!isSubOperator&&(
+              <div style={{...card({marginBottom:12,background:"rgba(245,249,255,0.86)",border:`1px solid ${C.border}`})}}>
+                <div style={{fontSize:13,fontWeight:900,color:C.text,marginBottom:10}}>{"\u05d9\u05e6\u05d9\u05e8\u05ea \u05de\u05e9\u05d9\u05de\u05d4 \u05dc\u05d0\u05d9\u05e9\u05d5\u05e8"}</div>
+                {operatorTaskClient?(
+                  <div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <span style={{color:C.blue,fontWeight:900}}>🏊 {operatorTaskClient.split(" - ")[0]}</span>
+                    <span onClick={()=>{setOperatorTaskClient("");setOperatorTaskClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>×</span>
+                  </div>
+                ):(
+                  <div style={{position:"relative",marginBottom:8}}>
+                    <input value={operatorTaskClientSearch} onChange={e=>setOperatorTaskClientSearch(e.target.value)} placeholder={"\u05d1\u05d7\u05e8 \u05dc\u05e7\u05d5\u05d7 \u05dc\u05de\u05e9\u05d9\u05de\u05d4..."} style={inp} autoComplete="off"/>
+                    {operatorTaskClientSearch&&<div style={{maxHeight:180,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#fff",boxShadow:"0 8px 24px rgba(0,0,0,0.12)",marginTop:4}}>
+                      {filterClientOptions(clients, operatorTaskClientSearch).map(c=>(
+                        <Press key={c.name} onClick={()=>{setOperatorTaskClient(c.name);setOperatorTaskClientSearch("");haptic();}} style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`}}>
+                          <div style={{fontSize:13,fontWeight:900,color:C.text}}>{c.name.split(" - ")[0]}</div>
+                          <div style={{fontSize:11,fontWeight:800,color:C.muted}}>{clientMetaLine(c) || c.address || ""}</div>
+                        </Press>
+                      ))}
+                      {filterClientOptions(clients, operatorTaskClientSearch).length===0&&<div style={{padding:"12px 14px",fontSize:12,color:C.muted}}>{"\u05dc\u05d0 \u05e0\u05de\u05e6\u05d0 \u05dc\u05e7\u05d5\u05d7"}</div>}
+                    </div>}
+                  </div>
+                )}
+                <input value={operatorTaskNote} onChange={e=>setOperatorTaskNote(e.target.value)} placeholder={"\u05d4\u05e2\u05e8\u05d4 \u05dc\u05d0\u05d3\u05de\u05d9\u05df..."} style={{...inp,marginBottom:10}}/>
+                <Press onClick={submitOperatorTaskRequest} disabled={!operatorTaskClient||isActionLoading("operatorTaskRequest")} style={{padding:"12px",borderRadius:14,background:actionStatus.operatorTaskRequest==="success"?C.green:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:900,fontSize:13,textAlign:"center",opacity:!operatorTaskClient||isActionLoading("operatorTaskRequest")?0.55:1}}>{actionLabel("operatorTaskRequest",{idle:"\u05e9\u05dc\u05d7 \u05dc\u05d0\u05d9\u05e9\u05d5\u05e8 \u05d0\u05d3\u05de\u05d9\u05df",loading:"\u05e9\u05d5\u05dc\u05d7...",success:"\u05e0\u05e9\u05dc\u05d7",error:"\u05e0\u05e1\u05d4 \u05e9\u05d5\u05d1"})}</Press>
+              </div>
+            )}            {(()=>{
               const todayTasks = myTasks(dailyDate);
               if(todayTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות להיום</div></div>;
               return todayTasks.map(t=>(
@@ -6680,11 +6762,11 @@ useEffect(() => {
                       <div style={{fontWeight:800,fontSize:15,color:C.text}}>{t.client.split(" - ")[0]}</div>
                       <WhatsAppClientToggle client={t.client} compact/>
                     </div>
-                    <Badge label={t.status==="done"?"✓ בוצע":"⏳ ממתין"} col={t.status==="done"?C.green:C.orange}/>
+                    <Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/>
                   </div>
                   {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
                   {(t.changeLog?.[t.changeLog.length-1]?.note)&&<div style={{background:"#fff8e1",borderRadius:8,padding:"6px 10px",fontSize:12,color:C.orange,fontWeight:600,marginBottom:8}}>📝 {t.changeLog[t.changeLog.length-1].note}</div>}
-                  {t.status!=="done"&&(
+                  {t.status!=="done"&&t.adminApproval!=="pending"&&t.adminApproval!=="rejected"&&(
                     <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                       {freeTaskActionId===t.id ? (
                         <Press onClick={async()=>{await markDone(t.id);setFreeTaskActionId(null);showToast("✓ משימה סומנה כבוצעה");haptic("success");}} style={{padding:"8px 16px",borderRadius:10,background:C.green,color:"#fff",fontWeight:900,fontSize:12,display:"inline-block"}}>בוצע</Press>
@@ -6729,7 +6811,7 @@ useEffect(() => {
           <BottomSheet title="📅 משימות עתידיות" onClose={()=>setNavTab(0)}>
             {(()=>{
               const today = todayStr();
-              const futureTasks = tasks.filter(t=>{ if (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0) return false; const d = normalizeDate(t.date); const ownerName = isSubOperator ? dailyOwnerName(d) : user?.name; return d > today && (t.operators||[]).some(op=>normalizeName(op)===normalizeName(ownerName)); }).sort((a,b)=>normalizeDate(a.date).localeCompare(normalizeDate(b.date)));
+              const futureTasks = tasks.filter(t=>{ if (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0 || t.adminApproval === "rejected") return false; const d = normalizeDate(t.date); const ownerName = isSubOperator ? dailyOwnerName(d) : user?.name; return d > today && (t.operators||[]).some(op=>normalizeName(op)===normalizeName(ownerName)); }).sort((a,b)=>normalizeDate(a.date).localeCompare(normalizeDate(b.date)));
               if(futureTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות עתידיות</div></div>;
               const grouped = {};
               futureTasks.forEach(t=>{ const d = normalizeDate(t.date); if(!grouped[d]) grouped[d]=[]; grouped[d].push(t); });
@@ -6777,7 +6859,7 @@ useEffect(() => {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:8px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}select option{background:#fff}`}</style>
       <div style={{margin:"12px 14px 0",background:"linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))",border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
-          <div><p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:"בחר לקוח"}</p><h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>📝 דוח טיפול</h1>{client&&<div style={{marginTop:8,display:"flex",justifyContent:"flex-start"}}><WhatsAppClientToggle client={client} compact/></div>}</div>
+          <div><p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:"בחר לקוח"}</p><h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>📝 דוח טיפול</h1></div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <RefreshTopButton compact/>
             <Press onClick={()=>setScreen("daily")} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 14px",color:C.muted,fontSize:13,fontWeight:900}}>← חזרה</Press>
@@ -6785,7 +6867,7 @@ useEffect(() => {
         </div>
       </div>
       <div style={{padding:"18px 16px 0"}}>
-        <Sec icon="📋" title="פרטים">
+        <Sec icon="📋" title="פרטים" action={client ? <WhatsAppClientToggle client={client} compact/> : null}>
           <div style={{...card(),marginBottom:12}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
               <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תאריך</label><input type="date" value={reportDate} onChange={e=>sf("reportDate",e.target.value)} style={inp}/></div>
@@ -6965,9 +7047,19 @@ useEffect(() => {
             </div>}
           </div>
         )}
-        <Press onClick={handleSubmit} disabled={!client||syncing||isActionLoading("submitReport")} style={{padding:"18px",borderRadius:18,background:actionStatus.submitReport==="success"?C.green:actionStatus.submitReport==="local"?C.orange:syncing||!client?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 16px 36px rgba(79,70,229,0.24)",marginBottom:8}}>{actionLabel("submitReport",{idle:"שלח דוח ⚡",loading:"⏳ שולח דוח...",success:"✅ נשלח",local:"⚠️ נשמר מקומית",error:"⚠️ שגיאה"})}</Press>
+        <Press onClick={handleSubmitPress} disabled={!client||syncing||isActionLoading("submitReport")} style={{padding:"18px",borderRadius:18,background:actionStatus.submitReport==="success"?C.green:actionStatus.submitReport==="local"?C.orange:syncing||!client?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 16px 36px rgba(79,70,229,0.24)",marginBottom:8}}>{actionLabel("submitReport",{idle:"שלח דוח ⚡",loading:"⏳ שולח דוח...",success:"✅ נשלח",local:"⚠️ נשמר מקומית",error:"⚠️ שגיאה"})}</Press>
         <Press onClick={()=>setScreen("daily")} style={{padding:"14px",borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.muted,fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>← ביטול</Press>
       </div>
+      {confirmReportWhatsApp&&(
+        <BottomSheet title={"\u05e9\u05dc\u05d9\u05d7\u05ea \u05d5\u05d5\u05e6\u05d0\u05e4"} onClose={()=>setConfirmReportWhatsApp(null)}>
+          <div style={{fontSize:16,fontWeight:900,color:C.text,marginBottom:14,textAlign:"center",lineHeight:1.5}}>{"\u05d4\u05d0\u05dd \u05dc\u05e9\u05dc\u05d5\u05d7 \u05dc\u05dc\u05e7\u05d5\u05d7 \u05d4\u05d5\u05d3\u05e2\u05ea \u05d5\u05d5\u05e6\u05d0\u05e4?"}</div>
+          <label style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,padding:"13px 14px",borderRadius:14,background:confirmReportWhatsApp.send?"#e8f5e9":"#ffebee",border:`2px solid ${confirmReportWhatsApp.send?"#c8e6c9":"#ffcdd2"}`,cursor:"pointer"}}>
+            <input type="checkbox" checked={!!confirmReportWhatsApp.send} onChange={e=>setConfirmReportWhatsApp(x=>({...x,send:e.target.checked}))} style={{width:22,height:22,accentColor:C.green,flexShrink:0}}/>
+            <span style={{fontSize:14,fontWeight:900,color:confirmReportWhatsApp.send?C.green:C.red,flex:1}}>{confirmReportWhatsApp.send?"\u05dc\u05e9\u05dc\u05d5\u05d7 \u05d5\u05d5\u05e6\u05d0\u05e4 \u05dc\u05dc\u05e7\u05d5\u05d7":"\u05dc\u05d0 \u05dc\u05e9\u05dc\u05d5\u05d7 \u05d5\u05d5\u05e6\u05d0\u05e4"}</span>
+          </label>
+          <Press onClick={()=>{ const sendCustomerWhatsApp = !!confirmReportWhatsApp.send; setConfirmReportWhatsApp(null); void handleSubmit({sendCustomerWhatsApp}); }} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontSize:15,fontWeight:900,textAlign:"center",boxShadow:"0 12px 28px rgba(37,99,235,0.22)"}}>{"\u05d0\u05d9\u05e9\u05d5\u05e8"}</Press>
+        </BottomSheet>
+      )}
       {chemicalRestrictionPrompt&&(
         <BottomSheet title={"\u05d4\u05d2\u05d1\u05dc\u05ea \u05e9\u05d9\u05de\u05d5\u05e9"} onClose={()=>setChemicalRestrictionPrompt(null)}>
           <Press onClick={()=>applyChemicalRestriction(360)}
@@ -7028,7 +7120,10 @@ useEffect(() => {
       if (activeAdminOperator && clientAssignedToOperatorDate(c, taskDate, activeAdminOperator)) adminOrderEligibleMap.set(c.name, c);
     });
     const adminOrderAssignedTodayCount = activeAdminOperator
-      ? allOrderClients.filter(c => clientAssignedToOperatorDate(c, taskDate, activeAdminOperator)).length
+      ? new Set(allOrderClients
+          .filter(c => clientAssignedToOperatorDate(c, taskDate, activeAdminOperator))
+          .map(c => String(c.clientId || c.id || c.name || "").trim() || normalizeName(c.name))
+        ).size
       : 0;
     adminOrderList.forEach(entry => {
       const base = adminOrderClientMap.get(entry.client) || {name:entry.client};
@@ -7143,7 +7238,7 @@ useEffect(() => {
       haptic("success");
     };
     const taskClientOptions = sortByClientName(clients);
-    const dayTasks = tasks.filter(t=>normalizeDate(t.date)===taskDate && !t.createdByAdminOrder && Number(t.orderIndex || 0) <= 0);
+    const dayTasks = tasks.filter(t=>normalizeDate(t.date)===taskDate && !t.createdByAdminOrder && Number(t.orderIndex || 0) <= 0).sort((a,b)=>String((a.operators||[])[0]||"").localeCompare(String((b.operators||[])[0]||""), "he") || normalizeName(a.client).localeCompare(normalizeName(b.client)));
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
     const criticalAdminIssue = criticalAdminIssueIndex >= 0 ? operatorIssues[criticalAdminIssueIndex] : null;
     const activeOperatorDoneAlert = operatorDoneAlerts[0] || null;
@@ -7155,7 +7250,7 @@ useEffect(() => {
     const adminGlass = (extra={}) => card({background:"rgba(226,237,250,0.78)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(30,64,175,0.14), 0 1px 0 rgba(255,255,255,0.76) inset",...extra});
     const isSubAdminPanel = false;
     const dashboardTasksToday = tasks.filter(t=>normalizeDate(t.date)===dailyDate);
-    const dashboardOpenTasks = tasks.filter(t=>t.status!=="done").length;
+    const dashboardOpenTasks = tasks.filter(t=>t.status!=="done" && t.adminApproval!=="rejected").length;
     const dashboardDoneToday = dashboardTasksToday.filter(t=>t.status==="done").length;
     const dashboardReportCount = [...sheetReports, ...reports].length;
     const dashboardCriticalIssues = operatorIssues.filter(iss=>isCriticalIssue(iss[4]) && !isIssueDone(iss[5])).length;
@@ -7712,17 +7807,27 @@ useEffect(() => {
               </div>
               <h3 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:"0 0 12px"}}>משימות — {fmtDate(taskDate)}</h3>
               {dayTasks.length===0&&<div style={{...card({textAlign:"center"}),padding:24,color:C.muted,fontSize:14}}>אין משימות לתאריך זה</div>}
-              {dayTasks.map(t=>{
+              {dayTasks.map((t,i)=>{
                 const lastLog=t.changeLog?.[t.changeLog.length-1];
+                const primaryOp = String((t.operators || [])[0] || "");
+                const prevPrimaryOp = i > 0 ? String((dayTasks[i-1]?.operators || [])[0] || "") : "";
                 return (
-                  <div key={t.id} style={{...card({marginBottom:10})}}>
+                  <Fragment key={t.id}>
+                    {primaryOp!==prevPrimaryOp&&<div style={{fontSize:12,fontWeight:900,color:C.blue,margin:"12px 0 8px",padding:"0 4px"}}>{primaryOp || "\u05dc\u05dc\u05d0 \u05de\u05e4\u05e2\u05d9\u05dc"}</div>}
+                  <div style={{...card({marginBottom:10})}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                       <div>
                         <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:3}}>{t.client.split(" - ")[0]}</div>
                         <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{t.operators.map(op=>(<span key={op} style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700,display:"inline-flex",alignItems:"center",gap:4}}>{op}<span onClick={()=>removeOp(t.id,op)} style={{cursor:"pointer",opacity:0.7,fontSize:12}}>✕</span></span>))}</div>
                       </div>
-                      <Badge label={t.status==="done"?"✓ בוצע":"ממתין"} col={t.status==="done"?C.green:C.orange}/>
+                      <Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/>
                     </div>
+                    {t.adminApproval==="pending"&&(
+                      <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                        <Press onClick={()=>approveOperatorTaskRequest(t.id,true)} style={{padding:"8px 14px",borderRadius:10,background:C.green,color:"#fff",fontSize:12,fontWeight:900}}>{"\u05d0\u05e9\u05e8"}</Press>
+                        <Press onClick={()=>approveOperatorTaskRequest(t.id,false)} style={{padding:"8px 14px",borderRadius:10,background:"#ffebee",color:C.red,fontSize:12,fontWeight:900,border:"1px solid #ffcdd2"}}>{"\u05d3\u05d7\u05d4"}</Press>
+                      </div>
+                    )}
                     <div style={{display:"flex",gap:8}}>
                       <select defaultValue="" onChange={e=>{if(e.target.value){addOp(t.id,e.target.value);e.target.value="";}}} style={{...sel,flex:1,fontSize:12,padding:"7px 10px"}}><option value="">+ הוסף מפעיל</option>{opNames.filter(n=>!t.operators.includes(n)).map(n=><option key={n}>{n}</option>)}</select>
                       <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}} style={{padding:"7px 14px",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:12,fontWeight:700}}>✏️</Press>
@@ -7735,6 +7840,7 @@ useEffect(() => {
                       </div>
                     )}
                   </div>
+                  </Fragment>
                 );
               })}
             </div>
