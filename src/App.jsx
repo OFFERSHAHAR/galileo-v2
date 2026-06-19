@@ -6713,11 +6713,6 @@ useEffect(() => {
                     <Press onClick={()=>{ackChange(t.id,logIdx);haptic("success");}} style={{padding:"8px 16px",borderRadius:99,background:"#e65100",color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>קיבלתי ✓</Press>
                   </div>
                 )}
-                {t.adminNote&&(
-                  <div style={{background:"#fff8e1",borderRadius:10,padding:"8px 12px",marginBottom:10,border:"1px solid #ffe082",fontSize:12,color:C.orange,fontWeight:800,lineHeight:1.5}}>
-                    📝 {t.adminNote}
-                  </div>
-                )}
                 {hasFreeClientTasks&&(
                   <div style={{background:"#eef6ff",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`2px solid rgba(21,101,192,0.24)`,color:C.text,lineHeight:1.5}}>
                     <div style={{fontSize:17,fontWeight:900,color:C.blue,marginBottom:freeClientTaskNotes.length?4:0}}>משימה חופשית</div>
