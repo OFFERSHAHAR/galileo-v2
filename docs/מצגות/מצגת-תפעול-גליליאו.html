@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>מצגת תפעול גליליאו</title>
+  <style>
+    :root{
+      --blue:#1d4ed8;
+      --light-blue:#3b82f6;
+      --bg:#dbeafe;
+      --card:rgba(232,241,253,.82);
+      --white:rgba(241,247,255,.9);
+      --text:#0f1f38;
+      --muted:#52657f;
+      --border:rgba(100,116,139,.28);
+      --green:#15803d;
+      --orange:#c2410c;
+      --red:#b91c1c;
+      --shadow:0 16px 45px rgba(37,99,235,.12);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      min-height:100vh;
+      color:var(--text);
+      font-family:Arial,"Noto Sans Hebrew","Segoe UI",sans-serif;
+      background:
+        radial-gradient(circle at 15% 5%,rgba(59,130,246,.2),transparent 30%),
+        linear-gradient(180deg,#edf6ff 0%,var(--bg) 52%,#eef6ff 100%);
+      overflow:hidden;
+    }
+    button,input{font:inherit}
+    .deck{height:100vh;display:grid;grid-template-rows:auto 1fr auto;padding:20px;gap:14px}
+    .top{
+      display:flex;align-items:center;gap:12px;justify-content:space-between;
+      padding:16px 22px;border:1px solid var(--border);border-radius:32px;
+      background:linear-gradient(135deg,rgba(241,247,255,.94),rgba(219,234,254,.72));
+      box-shadow:var(--shadow);
+    }
+    .brand{display:flex;align-items:center;gap:14px}
+    .logo{
+      width:54px;height:54px;border-radius:18px;display:grid;place-items:center;
+      background:linear-gradient(135deg,var(--blue),#7c3aed);color:#fff;font-size:25px;
+      box-shadow:0 12px 28px rgba(29,78,216,.24);
+    }
+    h1{font-size:clamp(24px,3.2vw,44px);line-height:1;margin:0;font-weight:950;letter-spacing:0}
+    .sub{font-size:14px;color:var(--muted);font-weight:800;margin-top:6px}
+    .timer{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-start}
+    .pill{
+      border:1px solid var(--border);border-radius:99px;background:#e3f2fd;color:var(--blue);
+      padding:8px 14px;font-weight:900;font-size:13px;white-space:nowrap;
+    }
+    .pill.green{background:#dcfce7;color:var(--green)}
+    .pill.orange{background:#fff7ed;color:var(--orange)}
+    .stage{
+      position:relative;min-height:0;border:1px solid var(--border);border-radius:32px;
+      background:var(--card);box-shadow:var(--shadow);overflow:hidden;
+    }
+    .slide{
+      position:absolute;inset:0;padding:26px;display:none;grid-template-columns:1fr 1fr;gap:22px;
+      overflow:auto;
+    }
+    .slide.active{display:grid}
+    .wide{grid-template-columns:1fr}
+    .panel{
+      border:1px solid var(--border);border-radius:24px;background:rgba(255,255,255,.68);
+      padding:22px;box-shadow:0 10px 24px rgba(15,31,56,.06);
+    }
+    .hero{
+      min-height:100%;display:grid;place-items:center;text-align:center;
+      background:linear-gradient(135deg,rgba(37,99,235,.1),rgba(124,58,237,.08));
+    }
+    .hero h2{font-size:clamp(32px,5vw,62px);margin:0 0 14px;font-weight:950}
+    .hero p{font-size:clamp(17px,2vw,25px);line-height:1.5;margin:0;color:var(--muted);font-weight:850}
+    .roles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:22px}
+    .role-btn{
+      cursor:pointer;border:2px solid transparent;border-radius:20px;background:#f1f7ff;
+      padding:18px 12px;color:var(--text);font-weight:950;font-size:17px;box-shadow:0 8px 20px rgba(29,78,216,.08);
+    }
+    .role-btn:hover,.role-btn.selected{border-color:var(--light-blue);background:#dbeafe;transform:translateY(-1px)}
+    .role-btn small{display:block;color:var(--muted);font-size:12px;margin-top:7px;font-weight:800}
+    h2{font-size:clamp(26px,3.6vw,46px);margin:0 0 12px;font-weight:950;letter-spacing:0}
+    h3{font-size:20px;margin:0 0 14px;font-weight:950;color:var(--text)}
+    .lead{font-size:21px;line-height:1.45;color:var(--muted);font-weight:850;margin:0 0 16px}
+    .steps{display:grid;gap:12px;margin-top:14px}
+    .step{
+      display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center;
+      padding:14px;border:1px solid var(--border);border-radius:18px;background:#f5f9ff;
+    }
+    .num{
+      width:42px;height:42px;border-radius:16px;background:linear-gradient(135deg,var(--blue),var(--light-blue));
+      color:#fff;display:grid;place-items:center;font-weight:950;font-size:20px;
+    }
+    .step b{font-size:18px}
+    .step span{display:block;color:var(--muted);font-size:14px;font-weight:800;margin-top:4px}
+    .app-card{
+      border:1px solid var(--border);border-radius:24px;background:rgba(241,247,255,.9);
+      padding:18px;box-shadow:0 12px 32px rgba(15,31,56,.08);
+    }
+    .app-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px}
+    .app-title{font-size:22px;font-weight:950}
+    .app-mini{font-size:12px;color:var(--muted);font-weight:900;margin-top:4px}
+    .badge{
+      border-radius:99px;padding:6px 12px;font-weight:950;font-size:12px;border:1px solid transparent;white-space:nowrap;
+    }
+    .badge.green{background:#dcfce7;color:var(--green);border-color:#bbf7d0}
+    .badge.blue{background:#dbeafe;color:var(--blue);border-color:#bfdbfe}
+    .badge.orange{background:#ffedd5;color:var(--orange);border-color:#fed7aa}
+    .badge.red{background:#fee2e2;color:var(--red);border-color:#fecaca}
+    .mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}
+    .mini{
+      min-height:84px;border:1px solid var(--border);border-radius:18px;background:#eef6ff;
+      padding:12px;text-align:center;display:grid;place-items:center;gap:5px;
+    }
+    .mini strong{font-size:18px}
+    .mini span{font-size:12px;color:var(--muted);font-weight:850}
+    .row{
+      display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;
+      padding:12px;border:1px solid var(--border);border-radius:18px;background:#fff;margin-top:10px;
+    }
+    .circle{width:44px;height:44px;border-radius:16px;background:#dbeafe;color:var(--blue);font-weight:950;display:grid;place-items:center;font-size:20px;border:1px solid #bfdbfe}
+    .row-title{font-size:17px;font-weight:950}
+    .row-sub{font-size:13px;color:var(--muted);font-weight:800;margin-top:3px}
+    .action{
+      border:0;border-radius:16px;background:linear-gradient(135deg,var(--blue),var(--light-blue));
+      color:#fff;padding:12px 18px;font-weight:950;box-shadow:0 10px 22px rgba(29,78,216,.22);
+    }
+    .ghost{background:#e3f2fd;color:var(--blue);border:1px solid var(--border);box-shadow:none}
+    .note{
+      border-radius:18px;border:1px solid #bbf7d0;background:#ecfdf5;color:var(--green);
+      padding:13px 16px;font-weight:900;line-height:1.45;margin-top:12px;
+    }
+    .warn{border-color:#fed7aa;background:#fff7ed;color:var(--orange)}
+    .screen{
+      border:1px solid var(--border);border-radius:26px;background:#e8f1fd;padding:18px;
+      min-height:420px;display:flex;flex-direction:column;gap:12px;
+    }
+    .screen-title{display:flex;justify-content:space-between;align-items:center}
+    .big-stat{font-size:42px;font-weight:950;color:var(--blue);line-height:1}
+    .bar{height:14px;background:#cbd5e1;border-radius:99px;overflow:hidden}
+    .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--light-blue));border-radius:99px}
+    .callout{
+      background:#fff;border:1px solid var(--border);border-radius:22px;padding:18px;
+      font-size:23px;font-weight:950;line-height:1.42;text-align:center;
+    }
+    .nav{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px}
+    .nav button{
+      cursor:pointer;border:0;border-radius:18px;padding:14px 20px;font-weight:950;font-size:16px;
+      color:#fff;background:linear-gradient(135deg,var(--blue),var(--light-blue));
+    }
+    .nav button.secondary{background:#e3f2fd;color:var(--blue);border:1px solid var(--border)}
+    .progress{height:12px;background:#cbd5e1;border-radius:99px;overflow:hidden}
+    .progress i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--light-blue));width:0%}
+    .dots{display:flex;justify-content:center;gap:6px;margin-top:8px}
+    .dot{width:9px;height:9px;border-radius:50%;background:#bfdbfe}
+    .dot.active{background:var(--blue)}
+    .only{display:none}
+    .only.show{display:block}
+    @media (max-width:900px){
+      body{overflow:auto}
+      .deck{height:auto;min-height:100vh}
+      .slide,.slide.active{position:relative;display:none;grid-template-columns:1fr}
+      .slide.active{display:grid}
+      .roles,.mini-grid{grid-template-columns:1fr 1fr}
+      .top{border-radius:24px;align-items:flex-start;flex-direction:column}
+      .stage{overflow:visible}
+    }
+    @media (max-width:560px){
+      .deck{padding:12px}
+      .slide{padding:14px}
+      .roles,.mini-grid{grid-template-columns:1fr}
+      .row{grid-template-columns:1fr}
+      .nav{grid-template-columns:1fr;gap:8px}
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <header class="top">
+      <div class="brand">
+        <div class="logo">📋</div>
+        <div>
+          <h1>גליליאו — תפעול יום עבודה</h1>
+          <div class="sub">מצגת קצרה לצוות: מה כל תפקיד עושה, לפי סדר היום האמיתי</div>
+        </div>
+      </div>
+      <div class="timer">
+        <span class="pill green">זמן מומלץ: 7 דקות</span>
+        <span class="pill" id="rolePill">כל התפקידים</span>
+        <span class="pill orange" id="clock">00:00</span>
+      </div>
+    </header>
+
+    <section class="stage" id="stage">
+      <article class="slide active wide" data-title="פתיחה">
+        <div class="hero panel">
+          <div>
+            <h2>מה קורה באפליקציה ביום רגיל?</h2>
+            <p>אדמין מחלק עבודה. מפעיל מקבל סדר. עוזר מפעיל עוזר. דוחות ותקלות חוזרים לאדמין.</p>
+            <div class="roles" id="roleChooser">
+              <button class="role-btn selected" data-role="all">כולם<small>מעבר על כל הזרימה</small></button>
+              <button class="role-btn" data-role="admin">אדמין<small>חלוקה, אישורים ובקרה</small></button>
+              <button class="role-btn" data-role="operator">מפעיל<small>סדר יום, טיפול ודוח</small></button>
+              <button class="role-btn" data-role="sub">עוזר מפעיל<small>שיתוף וסיוע בשטח</small></button>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="slide" data-title="מפת יום">
+        <div class="panel">
+          <h2>זרימת היום בקצרה</h2>
+          <p class="lead">כל פעולה באה אחרי הפעולה הקודמת. המטרה: שלא צריך לנחש מה עושים עכשיו.</p>
+          <div class="steps">
+            <div class="step"><div class="num">1</div><div><b>אדמין בוחר תאריך ומפעיל</b><span>מסדר את הבריכות לפי סדר ביקור.</span></div></div>
+            <div class="step"><div class="num">2</div><div><b>המפעיל רואה סדר יום</b><span>לקוחות, הערות, בדיקות מים ומשימות.</span></div></div>
+            <div class="step"><div class="num">3</div><div><b>בשטח ממלאים דוח</b><span>מדידות, מלח, תמונות, הערות ותזכורות.</span></div></div>
+            <div class="step"><div class="num">4</div><div><b>אדמין מקבל תמונת מצב</b><span>מה בוצע, מה ממתין ומה צריך טיפול.</span></div></div>
+          </div>
+        </div>
+        <div class="screen">
+          <div class="screen-title"><h3>מסך מחוונים</h3><span class="badge green">פעיל</span></div>
+          <div class="mini-grid">
+            <div class="mini"><strong>25</strong><span>בריכות לאור מוסה</span></div>
+            <div class="mini"><strong>20</strong><span>בוצעו</span></div>
+            <div class="mini"><strong>0</strong><span>ממתינות</span></div>
+          </div>
+          <div class="row"><div class="circle">1</div><div><div class="row-title">רני</div><div class="row-sub">בדיקת מים: שני, רביעי</div></div><span class="badge blue">בסדר היום</span></div>
+          <div class="row"><div class="circle">2</div><div><div class="row-title">יוסי חי</div><div class="row-sub">הערה למפעיל</div></div><span class="badge orange">ממתין</span></div>
+        </div>
+      </article>
+
+      <article class="slide only" data-role="admin" data-title="אדמין">
+        <div class="panel">
+          <h2>אדמין: מחלק עבודה</h2>
+          <p class="lead">האדמין בוחר מפעיל, מסדר לקוחות, משייך עוזר מפעיל ושומר סדר לשליחה.</p>
+          <div class="steps">
+            <div class="step"><div class="num">1</div><div><b>בחר מפעיל ותאריך</b><span>לדוגמה: אור מוסה, 19/06/2026.</span></div></div>
+            <div class="step"><div class="num">2</div><div><b>גרור או הסר לקוחות</b><span>מה שלא נבחר נשאר באזור “לא נבחרו לסדר היום”.</span></div></div>
+            <div class="step"><div class="num">3</div><div><b>שמור ושלח למפעיל</b><span>המפעיל מקבל את הסדר המעודכן.</span></div></div>
+          </div>
+          <div class="note">מה לזכור: אדמין לא צריך להסביר בטלפון. ההערה והסדר עוברים בתוך האפליקציה.</div>
+        </div>
+        <div class="app-card">
+          <div class="app-head">
+            <div><div class="app-title">חלוקת סדר יומי</div><div class="app-mini">סדר עבודה: אור מוסה</div></div>
+            <span class="badge blue">מחוונים</span>
+          </div>
+          <div class="row"><div class="circle">1</div><div><div class="row-title">בדיקות</div><div class="row-sub">רני — הערה למפעיל לבריכה זו</div></div><button class="action ghost">הסר</button></div>
+          <div class="row"><div class="circle">2</div><div><div class="row-title">יוסי חי</div><div class="row-sub">הוסר מהסדר ולא יישלח למפעיל</div></div><span class="badge orange">לא נבחר</span></div>
+          <button class="action" style="width:100%;margin-top:14px">שמור סדר ושלח למפעיל</button>
+        </div>
+      </article>
+
+      <article class="slide only" data-role="operator" data-title="מפעיל">
+        <div class="panel">
+          <h2>מפעיל: עובד לפי הסדר</h2>
+          <p class="lead">המפעיל לא צריך לחפש. הוא פותח את היום, רואה מי ראשון, ומתקדם לקוח אחרי לקוח.</p>
+          <div class="steps">
+            <div class="step"><div class="num">1</div><div><b>פותחים סדר יום</b><span>רואים לקוחות, הערות, בדיקות ומשימות.</span></div></div>
+            <div class="step"><div class="num">2</div><div><b>נכנסים לדוח טיפול</b><span>ממלאים מדידות, מלח, פעולות ותמונות.</span></div></div>
+            <div class="step"><div class="num">3</div><div><b>שולחים דוח</b><span>אם הודעת וואטסאפ דלוקה, מאשרים לפני שליחה.</span></div></div>
+          </div>
+          <div class="note">מה לזכור: עובדים מלמעלה למטה. אם יש בעיה, מדווחים לאדמין מתוך האפליקציה.</div>
+        </div>
+        <div class="screen">
+          <div class="screen-title"><h3>סדר היום שלי</h3><span class="badge blue">1/5 טיפולים</span></div>
+          <div class="row"><div class="circle">1</div><div><div class="row-title">רני</div><div class="row-sub">בדיקת מים: שני, רביעי</div></div><button class="action">פתח דוח</button></div>
+          <div class="row"><div class="circle">2</div><div><div class="row-title">רוחם</div><div class="row-sub">הערה: לבדוק מלח</div></div><span class="badge orange">ממתין</span></div>
+          <div class="bar"><i style="width:20%"></i></div>
+          <div class="big-stat">20%</div>
+        </div>
+      </article>
+
+      <article class="slide only" data-role="sub" data-title="עוזר מפעיל">
+        <div class="panel">
+          <h2>עוזר מפעיל: עוזר בשטח</h2>
+          <p class="lead">האדמין משייך עוזר למפעיל. העוזר רואה מה ששותף אליו וממלא דוחות רק אם אושר.</p>
+          <div class="steps">
+            <div class="step"><div class="num">1</div><div><b>מקבל שיוך</b><span>לדוגמה: תום הווארד משויך לאור מוסה.</span></div></div>
+            <div class="step"><div class="num">2</div><div><b>רואה סדר משותף</b><span>הסדר מגיע מהמפעיל או מהאדמין.</span></div></div>
+            <div class="step"><div class="num">3</div><div><b>ממלא דוחות רק עם הרשאה</b><span>בלי הרשאה אין מילוי דוחות.</span></div></div>
+          </div>
+          <div class="note warn">מה לזכור: עוזר מפעיל לא מחליף את המפעיל. הוא מסייע לפי השיוך של אותו יום.</div>
+        </div>
+        <div class="app-card">
+          <div class="app-head">
+            <div><div class="app-title">שיוך עוזר מפעיל</div><div class="app-mini">לתאריך ולמפעיל הנבחר</div></div>
+            <span class="badge green">מאושר</span>
+          </div>
+          <div class="row"><div class="circle">👤</div><div><div class="row-title">תום הווארד</div><div class="row-sub">משויך לאור מוסה</div></div><span class="badge blue">היום</span></div>
+          <div class="row"><div class="circle">✓</div><div><div class="row-title">הרשאת דוחות</div><div class="row-sub">אושר למילוי דוחות עבור היום</div></div><span class="badge green">פעיל</span></div>
+        </div>
+      </article>
+
+      <article class="slide" data-title="דוח טיפול">
+        <div class="panel">
+          <h2>דוח טיפול: מה ממלאים?</h2>
+          <p class="lead">הדוח הוא הסיכום הרשמי של הביקור. הוא עובר לאדמין ונשמר בגיליון.</p>
+          <div class="steps">
+            <div class="step"><div class="num">1</div><div><b>פרטי לקוח</b><span>שם, מפעיל, תאריך וטלפון לחיוג מהיר.</span></div></div>
+            <div class="step"><div class="num">2</div><div><b>מדידות</b><span>כלור, חומציות, מלח, מצב בריכה וחומרים.</span></div></div>
+            <div class="step"><div class="num">3</div><div><b>שליחה</b><span>הדוח נשמר ומעדכן את תמונת המצב.</span></div></div>
+          </div>
+        </div>
+        <div class="screen">
+          <div class="screen-title"><h3>דוח טיפול</h3><span class="badge green">דיווח פעיל</span></div>
+          <div class="row"><div class="circle">📋</div><div><div class="row-title">רני</div><div class="row-sub">מפעיל: אור מוסה · ימים: רביעי</div></div><button class="action ghost">לחץ לחיוג</button></div>
+          <div class="mini-grid">
+            <div class="mini"><strong>1.8</strong><span>כלור</span></div>
+            <div class="mini"><strong>7.3</strong><span>חומציות</span></div>
+            <div class="mini"><strong>2500</strong><span>מלח</span></div>
+          </div>
+          <button class="action">שלח דוח</button>
+        </div>
+      </article>
+
+      <article class="slide" data-title="משימות ותקלות">
+        <div class="panel">
+          <h2>משימות ותקלות</h2>
+          <p class="lead">לא כל דבר הוא טיפול רגיל. יש משימות שאדמין שולח, משימות שמפעיל מבקש, ותקלות שדורשות מעקב.</p>
+          <div class="steps">
+            <div class="step"><div class="num">1</div><div><b>משימה חדשה</b><span>אפשר לשייך ללקוח ולמפעיל.</span></div></div>
+            <div class="step"><div class="num">2</div><div><b>אישור אדמין</b><span>משימת מפעיל ממתינה עד שאדמין מאשר.</span></div></div>
+            <div class="step"><div class="num">3</div><div><b>מעקב</b><span>הכרטיסייה מציגה מי עדכן ומתי.</span></div></div>
+          </div>
+        </div>
+        <div class="app-card">
+          <div class="app-head">
+            <div><div class="app-title">משימות היום</div><div class="app-mini">מופרד לפי מפעיל</div></div>
+            <span class="badge red">3 ממתינות</span>
+          </div>
+          <div class="row"><div class="circle">✎</div><div><div class="row-title">בדיקות</div><div class="row-sub">הערת מפעיל: לבדוק מלח ולצלם</div></div><button class="action">אשר ושלח</button></div>
+          <div class="row"><div class="circle">!</div><div><div class="row-title">תקלה קריטית</div><div class="row-sub">ממתינה לסנכרון או טיפול אדמין</div></div><span class="badge orange">פתוח</span></div>
+        </div>
+      </article>
+
+      <article class="slide" data-title="מסכים לפי תפקיד">
+        <div class="panel">
+          <h2>מה כל אחד רואה?</h2>
+          <p class="lead">אותה מערכת, אבל כל תפקיד רואה את מה שהוא צריך בשביל היום שלו.</p>
+          <div class="steps">
+            <div class="step"><div class="num">א</div><div><b>אדמין</b><span>מחוונים, חלוקה, משימות, לקוחות, דוחות ותקלות.</span></div></div>
+            <div class="step"><div class="num">מ</div><div><b>מפעיל</b><span>סדר יום, דוח טיפול, משימות והשלמת יום.</span></div></div>
+            <div class="step"><div class="num">ע</div><div><b>עוזר מפעיל</b><span>סדר משותף ודוחות רק בהרשאה.</span></div></div>
+            <div class="step"><div class="num">ס</div><div><b>סופר אדמין</b><span>רישיונות, הודעות ובקרה כללית.</span></div></div>
+          </div>
+        </div>
+        <div class="screen">
+          <div class="screen-title"><h3>בחירת תפקיד</h3><span class="badge blue">הדגמה</span></div>
+          <div class="roles" style="grid-template-columns:1fr 1fr;margin-top:0">
+            <button class="role-btn" data-jump-role="admin">אדמין<small>חלוקת עבודה</small></button>
+            <button class="role-btn" data-jump-role="operator">מפעיל<small>ביצוע בשטח</small></button>
+            <button class="role-btn" data-jump-role="sub">עוזר מפעיל<small>סיוע יומי</small></button>
+            <button class="role-btn" data-jump-role="all">כולם<small>זרימה מלאה</small></button>
+          </div>
+          <div class="callout">בחרו תפקיד, ואז עוברים רק על המסכים הרלוונטיים לו.</div>
+        </div>
+      </article>
+
+      <article class="slide wide" data-title="סיום">
+        <div class="hero panel">
+          <div>
+            <h2>השורה התחתונה</h2>
+            <p>האפליקציה מחליפה ניחושים: מי עושה, איפה, מה נשאר, ומה כבר דווח.</p>
+            <div class="mini-grid" style="max-width:760px;margin:28px auto 0">
+              <div class="mini"><strong>אדמין</strong><span>מחלק ובודק</span></div>
+              <div class="mini"><strong>מפעיל</strong><span>מבצע ומדווח</span></div>
+              <div class="mini"><strong>עוזר</strong><span>מסייע בהרשאה</span></div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <footer class="nav">
+      <button id="prev" class="secondary">חזרה</button>
+      <div>
+        <div class="progress"><i id="progress"></i></div>
+        <div class="dots" id="dots"></div>
+      </div>
+      <button id="next">המשך</button>
+    </footer>
+  </main>
+
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    const roleButtons = [...document.querySelectorAll("[data-role]")];
+    const jumpButtons = [...document.querySelectorAll("[data-jump-role]")];
+    const progress = document.querySelector("#progress");
+    const dots = document.querySelector("#dots");
+    const next = document.querySelector("#next");
+    const prev = document.querySelector("#prev");
+    const rolePill = document.querySelector("#rolePill");
+    const clock = document.querySelector("#clock");
+    let role = "all";
+    let index = 0;
+    let started = Date.now();
+
+    function visibleSlides(){
+      return slides.filter(s => !s.classList.contains("only") || role === "all" || s.dataset.role === role);
+    }
+
+    function roleName(value){
+      return ({all:"כל התפקידים",admin:"אדמין",operator:"מפעיל",sub:"עוזר מפעיל"})[value] || "כל התפקידים";
+    }
+
+    function renderDots(list){
+      dots.innerHTML = "";
+      list.forEach((_,i)=>{
+        const dot = document.createElement("span");
+        dot.className = "dot" + (i === index ? " active" : "");
+        dot.addEventListener("click",()=>{index=i;render()});
+        dots.appendChild(dot);
+      });
+    }
+
+    function render(){
+      const list = visibleSlides();
+      if(index < 0) index = 0;
+      if(index >= list.length) index = list.length - 1;
+      slides.forEach(s=>s.classList.remove("active"));
+      list[index].classList.add("active");
+      progress.style.width = `${((index + 1) / list.length) * 100}%`;
+      prev.disabled = index === 0;
+      next.textContent = index === list.length - 1 ? "סיום" : "המשך";
+      rolePill.textContent = roleName(role);
+      roleButtons.forEach(b=>b.classList.toggle("selected", b.dataset.role === role));
+      renderDots(list);
+    }
+
+    function setRole(nextRole){
+      role = nextRole;
+      index = 0;
+      render();
+    }
+
+    roleButtons.forEach(b=>b.addEventListener("click",()=>setRole(b.dataset.role)));
+    jumpButtons.forEach(b=>b.addEventListener("click",()=>setRole(b.dataset.jumpRole)));
+    next.addEventListener("click",()=>{const list=visibleSlides(); if(index < list.length - 1){index++; render();}});
+    prev.addEventListener("click",()=>{index--; render();});
+    window.addEventListener("keydown",(e)=>{
+      if(e.key === "ArrowLeft") next.click();
+      if(e.key === "ArrowRight") prev.click();
+      if(e.key === "1") setRole("admin");
+      if(e.key === "2") setRole("operator");
+      if(e.key === "3") setRole("sub");
+      if(e.key === "0") setRole("all");
+    });
+    setInterval(()=>{
+      const sec = Math.floor((Date.now() - started) / 1000);
+      const m = String(Math.floor(sec / 60)).padStart(2,"0");
+      const s = String(sec % 60).padStart(2,"0");
+      clock.textContent = `${m}:${s}`;
+    },1000);
+    render();
+  </script>
+</body>
+</html>

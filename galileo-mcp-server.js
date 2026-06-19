@@ -25,6 +25,14 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
+// === Resilience: keep the stdio process alive on stray async errors (added) ===
+process.on("uncaughtException", (err) => {
+  console.error("[galileo] uncaughtException:", (err && err.stack) || err);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("[galileo] unhandledRejection:", (err && err.stack) || err);
+});
+
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const GAS_URL =
   "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
@@ -39,12 +47,16 @@ const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
 async function callGAS(action, extraParams = {}, sheetId = DEFAULT_SHEET_ID) {
   const body = JSON.stringify({ action, sheetId, ...extraParams });
 
-  const response = await fetch(GAS_URL, {
+    const _ctrl = new AbortController();
+  const _timer = setTimeout(() => _ctrl.abort(), 90000); // 90s timeout: fail a hung GAS call instead of hanging
+const response = await fetch(GAS_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain" }, // GAS requires text/plain
     body,
     redirect: "follow",
+    signal: _ctrl.signal,
   });
+  clearTimeout(_timer);
 
   if (!response.ok) {
     throw new Error(`GAS error: ${response.status} ${response.statusText}`);
@@ -57,6 +69,26 @@ async function callGAS(action, extraParams = {}, sheetId = DEFAULT_SHEET_ID) {
     return { raw: text };
   }
 }
+// === Response trimming: cap large arrays/object-maps so one call can't overflow the client ===
+function applyLimit(result, limit, offset) {
+  if (!result || typeof result !== "object" || !limit) return result;
+  if (Array.isArray(result)) return result.slice(offset, offset + limit);
+  const out = { ...result };
+  for (const key of Object.keys(out)) {
+    const v = out[key];
+    if (Array.isArray(v) && v.length > limit) {
+      out[key] = v.slice(offset, offset + limit);
+      out[key + "_total"] = v.length;
+      out[key + "_truncated"] = true;
+    } else if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length > limit) {
+      out[key] = Object.fromEntries(Object.entries(v).slice(offset, offset + limit));
+      out[key + "_total"] = Object.keys(v).length;
+      out[key + "_truncated"] = true;
+    }
+  }
+  return out;
+}
+
 
 // ─── TOOL DEFINITIONS ─────────────────────────────────────────────────────────
 const TOOLS = [
@@ -257,8 +289,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     const result = await tool.handler(args || {});
+    const limited = applyLimit(result, (args && args.limit) || 100, (args && args.offset) || 0);
     return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify(limited, null, 2) }],
     };
   } catch (err) {
     return {
