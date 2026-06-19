@@ -1082,6 +1082,22 @@ function IndicatorBubbles({red=0, blue=0}) {
   </>;
 }
 
+function TaskChangeInfo({log, operators=[]}) {
+  if (!log?.note && !log?.at && !log?.by) return null;
+  const pendingOperators = Array.isArray(operators) ? operators : [];
+  return <div style={{background:"#f8fafc",borderRadius:10,padding:"10px 12px",fontSize:14,color:"#0f172a",fontWeight:800,lineHeight:1.55,marginBottom:8,border:"1px solid rgba(15,23,42,0.12)"}}>
+    <div>🕐 {[log.at, log.note].filter(Boolean).join(" — ")}{log.by ? ` — ${log.by}` : ""}</div>
+    {log.needsAck&&pendingOperators.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:7}}>{pendingOperators.map(op=>{ const acked=(log.ackedBy||[]).includes(op); return <span key={op} style={{background:acked?"#e8f5e9":"#fff3e0",color:acked?"#166534":"#9a3412",borderRadius:99,padding:"4px 10px",fontSize:12,fontWeight:900,border:`1px solid ${acked?"#bbf7d0":"#fed7aa"}`}}>{acked?"✓":"⏳"} {op}</span>; })}</div>}
+  </div>;
+}
+function OperatorNoteBox({note}) {
+  const clean = String(note || "").trim();
+  if (!clean) return null;
+  return <div style={{background:"#eef6ff",borderRadius:12,padding:"10px 12px",fontSize:14,color:"#0f172a",fontWeight:800,lineHeight:1.55,marginBottom:8,border:"1px solid rgba(37,99,235,0.22)"}}>
+    <div style={{fontSize:12,fontWeight:900,color:"#1d4ed8",marginBottom:4}}>הערת מפעיל</div>
+    <div>{clean}</div>
+  </div>;
+}
 function Sec({icon,title,action,children}) {
   const displayTitle = String(title || "").includes("ציוד") && String(title || "").includes("טיפול") ? "חומרים לטיפול הבא" : title;
   return (
@@ -3111,10 +3127,22 @@ useEffect(() => {
   };
   const freeTaskLogNote = (task) => {
     const logs = Array.isArray(task?.changeLog) ? task.changeLog : [];
-    const closeWords = ["דוח הוגש", "בוצעה", "בוצע", "סומנה כבוצעה"];
+    const closeWords = ["דוח הוגש", "בוצעה", "בוצע", "סומנה כבוצעה", "אדמין אישר", "אדמין דחה", "משימה עודכנה", "סדר היום", "הוסר", "נוסף"];
     const notes = logs.map(log => String(log?.note || "").trim()).filter(Boolean);
     return [...notes].reverse().find(note => !closeWords.some(word => normalizeName(note).includes(normalizeName(word)))) ||
       String(task?.note || "").trim();
+  };
+  const extractOperatorTaskNote = (task) => {
+    const direct = String(task?.operatorNote || task?.requestNote || "").trim();
+    if (direct) return direct;
+    const logs = Array.isArray(task?.changeLog) ? task.changeLog : [];
+    const blockedWords = ["אדמין", "מנהל", "סדר היום", "משימה עודכנה", "דוח הוגש", "בוצעה", "בוצע", "סומנה", "הוסר", "נוסף"];
+    const defaultNotes = ["משימה אישית ממתינה לאישור", "משימה ממתינה לאישור ושליחה"];
+    return logs.map(log => String(log?.note || "").trim()).find(note =>
+      note &&
+      !blockedWords.some(word => normalizeName(note).includes(normalizeName(word))) &&
+      !defaultNotes.some(word => normalizeName(note) === normalizeName(word))
+    ) || "";
   };
   const isLowPhValue = (value) => ["hp נמוך", "ph נמוך", "pH נמוך"].some(x => normalizeName(value) === normalizeName(x));
   const toggleSuppliedEquipment = (name) => {
@@ -5881,16 +5909,18 @@ useEffect(() => {
     const info = pendingReportQueueInfo(item);
     const retryKey = `retryPending:${pendingReportStorageId(item)}`;
     return (
-      <div key={r.id||i} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto auto auto",alignItems:"center",gap:8,padding:"6px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+      <div key={r.id||i} style={{display:"grid",gridTemplateColumns:"auto minmax(0,1fr) auto",alignItems:"center",gap:10,padding:"6px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+        <Press onClick={(e)=>deletePendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#ffebee",color:C.red,fontSize:11,fontWeight:900}}>מחק</Press>
         <div style={{minWidth:0}}>
           <div style={{fontSize:12,fontWeight:900,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.client||"לקוח ללא שם"}</div>
           <div style={{display:"inline-flex",marginTop:4,padding:"3px 8px",borderRadius:99,fontSize:10,fontWeight:900,...pendingReportToneStyle(info.tone)}}>{info.label}</div>
         </div>
-        <Press onClick={(e)=>retryPendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:actionStatus[retryKey]==="success"?C.green:actionStatus[retryKey]==="error"?C.orange:"#e8f5e9",color:actionStatus[retryKey]==="success"?"#fff":C.green,fontSize:11,fontWeight:900}}>
-          {actionLabel(retryKey,{idle:"נסה",loading:"שולח...",success:"בוצע",error:"נכשל"})}
-        </Press>
-        <Press onClick={(e)=>openPendingReportForEdit(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#e3f2fd",color:C.blue,fontSize:11,fontWeight:900}}>טען</Press>
-        <Press onClick={(e)=>deletePendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#ffebee",color:C.red,fontSize:11,fontWeight:900}}>מחק</Press>
+        <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
+          <Press onClick={(e)=>retryPendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:actionStatus[retryKey]==="success"?C.green:actionStatus[retryKey]==="error"?C.orange:"#e8f5e9",color:actionStatus[retryKey]==="success"?"#fff":C.green,fontSize:11,fontWeight:900}}>
+            {actionLabel(retryKey,{idle:"נסה",loading:"שולח...",success:"בוצע",error:"נכשל"})}
+          </Press>
+          <Press onClick={(e)=>openPendingReportForEdit(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#e3f2fd",color:C.blue,fontSize:11,fontWeight:900}}>טען</Press>
+        </div>
       </div>
     );
   });
@@ -6330,8 +6360,8 @@ useEffect(() => {
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <RefreshTopButton compact/>
-              {isAdminPanelRole(user?.role)&&<Press onClick={()=>{setScreen("admin");haptic("medium");}} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.blue,fontSize:12,fontWeight:900,whiteSpace:"nowrap",boxShadow:"0 10px 26px rgba(30,64,175,0.12)"}}>פאנל ניהול</Press>}
-              <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
+              {isAdminPanelRole(user?.role)&&<Press onClick={()=>{setScreen("admin");setAdminTab("dashboard");window.scrollTo(0,0);haptic("medium");}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,whiteSpace:"nowrap",boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>מחוונים</Press>}
+              {!isAdminPanelRole(user?.role)&&<Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>}
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1.35fr 1fr 1fr",gap:10,position:"relative"}}>
@@ -6679,8 +6709,7 @@ useEffect(() => {
                 )}
                 {needsAck&&(
                   <div style={{background:"#fff8e1",borderRadius:10,padding:"10px 12px",marginBottom:10,border:"1px solid #ffe082"}}>
-                    <div style={{fontSize:12,fontWeight:800,color:"#e65100",marginBottom:4}}>🔔 {lastLog.note}</div>
-                    <div style={{fontSize:10,color:"#bf6900",marginBottom:8}}>{lastLog.at} · {lastLog.by}</div>
+                    <TaskChangeInfo log={lastLog} operators={t.operators} />
                     <Press onClick={()=>{ackChange(t.id,logIdx);haptic("success");}} style={{padding:"8px 16px",borderRadius:99,background:"#e65100",color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>קיבלתי ✓</Press>
                   </div>
                 )}
@@ -6861,13 +6890,13 @@ useEffect(() => {
                     <Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/>
                   </div>
                   {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
-                  {(t.changeLog?.[t.changeLog.length-1]?.note)&&<div style={{background:"#fff8e1",borderRadius:8,padding:"6px 10px",fontSize:12,color:C.orange,fontWeight:600,marginBottom:8}}>📝 {t.changeLog[t.changeLog.length-1].note}</div>}
+                  <TaskChangeInfo log={t.changeLog?.[t.changeLog.length-1]} operators={t.operators} />
                   {t.status!=="done"&&t.adminApproval!=="pending"&&t.adminApproval!=="rejected"&&(
                     <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                       {freeTaskActionId===t.id ? (
                         <Press onClick={async()=>{await markDone(t.id);setFreeTaskActionId(null);showToast("✓ משימה סומנה כבוצעה");haptic("success");}} style={{padding:"8px 16px",borderRadius:10,background:C.green,color:"#fff",fontWeight:900,fontSize:12,display:"inline-block"}}>בוצע</Press>
                       ) : (
-                        <Press onClick={()=>{setFreeTaskActionId(t.id);haptic();}} style={{padding:"8px 14px",borderRadius:10,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontWeight:900,fontSize:12,display:"inline-block"}}>משימה חופשית</Press>
+                        <Press onClick={()=>{setFreeTaskActionId(t.id);haptic();}} style={{padding:"8px 14px",borderRadius:10,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontWeight:900,fontSize:12,display:"inline-block"}}>מאשר</Press>
                       )}
                       {freeTaskActionId!==t.id&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setNavTab(0);setScreen("form");haptic();}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>📝 פתח דוח</Press>}
                     </div>
@@ -6921,7 +6950,7 @@ useEffect(() => {
                     <div key={t.id} style={{...card({marginBottom:8})}}>
                       <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:4}}>{t.client.split(" - ")[0]}</div>
                       {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
-                      {(t.changeLog?.[t.changeLog.length-1]?.note)&&<div style={{background:"#fff8e1",borderRadius:8,padding:"6px 10px",fontSize:12,color:C.orange,fontWeight:600}}>📝 {t.changeLog[t.changeLog.length-1].note}</div>}
+                      <TaskChangeInfo log={t.changeLog?.[t.changeLog.length-1]} operators={t.operators} />
                       {clientAddress(t.client)&&<a href={wazeUrl(clientAddress(t.client))} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:8,padding:"6px 12px",background:"#e8f5e9",borderRadius:8,color:C.green,fontSize:12,fontWeight:700,textDecoration:"none"}}>🗺️ נווט</a>}
                     </div>
                   ))}
@@ -7207,10 +7236,14 @@ useEffect(() => {
       return {op,total,done,pending:Math.max(0,total-done),entries};
     });
     const activeAdminOperator = selectedAdminOperator || operatorUsers[0]?.name || "";
-    const adminOrderList = adminOrderDraft.length || selectedAdminOperator ? adminOrderDraft : (activeAdminOperator ? getAdminOrderEntries(taskDate, activeAdminOperator) : []);
+    const adminOrderHasDraftContext = adminOrderDraft.length > 0 || !!selectedAdminOperator || adminOrderRemovedClients.length > 0;
+    const adminOrderList = adminOrderHasDraftContext ? adminOrderDraft : (activeAdminOperator ? getAdminOrderEntries(taskDate, activeAdminOperator) : []);
+    const adminOrderClientKey = (value = {}) => String(value?.clientId || value?.id || clientIdByName(value?.client || value?.name || value) || value?.client || value?.name || value || "").trim();
     const adminOrderNames = new Set(adminOrderList.map(x=>x.client));
+    const adminOrderKeys = new Set(adminOrderList.map(adminOrderClientKey));
     const allOrderClients = [...clients, ...unassignedClients.filter(uc=>!clients.find(c=>c.name===uc.name))];
     const adminOrderClientMap = new Map(allOrderClients.map(c=>[c.name,c]));
+    const adminOrderClientByKey = new Map(allOrderClients.map(c=>[adminOrderClientKey(c),c]));
     const adminOrderEligibleMap = new Map();
     allOrderClients.forEach(c => {
       if (activeAdminOperator && clientAssignedToOperatorDate(c, taskDate, activeAdminOperator)) adminOrderEligibleMap.set(c.name, c);
@@ -7241,23 +7274,33 @@ useEffect(() => {
       .sort((a,b)=>Number(a.orderIndex || 9999)-Number(b.orderIndex || 9999));
     const adminOrderWaterCheckClients = sortByClientName(allOrderClients)
       .filter(c => activeAdminOperator && clientWaterCheckAssigned(c, taskDate, activeAdminOperator));
-    const unselectedAdminOrderClientsBase = adminOrderEligibleClients.filter(c=>!adminOrderNames.has(c.name));
+    const unselectedAdminOrderClientsBase = adminOrderEligibleClients.filter(c=>!adminOrderKeys.has(adminOrderClientKey(c)) && !adminOrderNames.has(c.name));
     const removedVisibleClients = adminOrderRemovedClients
-      .map(name => adminOrderClientMap.get(name) || {name})
-      .filter(c => c?.name && !adminOrderNames.has(c.name));
+      .map(item => {
+        const removed = typeof item === "object" && item !== null ? item : {name:item};
+        const key = adminOrderClientKey(removed);
+        const mapped = adminOrderClientByKey.get(key) || adminOrderClientMap.get(removed.name || removed.client) || {};
+        return {...mapped, ...removed, name:removed.name || removed.client || mapped.name || ""};
+      })
+      .filter(c => c?.name && !adminOrderKeys.has(adminOrderClientKey(c)) && !adminOrderNames.has(c.name));
     const unselectedAdminOrderClients = sortByClientName([
       ...unselectedAdminOrderClientsBase,
-      ...removedVisibleClients.filter(c=>!unselectedAdminOrderClientsBase.some(x=>x.name===c.name))
+      ...removedVisibleClients.filter(c=>!unselectedAdminOrderClientsBase.some(x=>adminOrderClientKey(x)===adminOrderClientKey(c) || x.name===c.name))
     ]);
     const addClientToAdminOrder = (clientName) => {
-      setAdminOrderDraft(prev=>[...adminOrderList,{client:clientName,note:"",orderIndex:adminOrderList.length+1}]);
-      setAdminOrderRemovedClients(prev=>prev.filter(name=>name!==clientName));
+      const source = adminOrderClientMap.get(clientName) || {name:clientName};
+      const key = adminOrderClientKey(source);
+      setAdminOrderDraft(prev=>[...adminOrderList,{client:clientName,clientId:source.clientId || source.id || clientIdByName(clientName),note:"",orderIndex:adminOrderList.length+1}]);
+      setAdminOrderRemovedClients(prev=>prev.filter(item=>adminOrderClientKey(item)!==key && item!==clientName));
       setAdminOrderClientSearch("");
       haptic();
     };
-    const removeClientFromAdminOrder = (entry, index) => {
-      setAdminOrderRemovedClients(prev=>prev.includes(entry.client) ? prev : [...prev, entry.client]);
-      setAdminOrderDraft(adminOrderList.filter((_,idx)=>idx!==index).map((x,idx)=>({...x,orderIndex:idx+1})));
+    const removeClientFromAdminOrder = (entry) => {
+      const source = adminOrderClientMap.get(entry.client) || {name:entry.client};
+      const removedClient = {...source, name:entry.client, clientId:entry.clientId || source.clientId || source.id || clientIdByName(entry.client)};
+      const key = adminOrderClientKey(removedClient);
+      setAdminOrderRemovedClients(prev=>prev.some(item=>adminOrderClientKey(item)===key || item===entry.client) ? prev : [...prev, removedClient]);
+      setAdminOrderDraft(adminOrderList.filter(x=>adminOrderClientKey(x)!==key && x.client!==entry.client).map((x,idx)=>({...x,orderIndex:idx+1})));
     };
     const updateAdminOrderIndex = (index, value) => {
       setAdminOrderDraft(adminOrderList.map((x, idx)=>idx===index?{...x,orderIndex:value === "" ? "" : Math.max(1, Number(value) || 1)}:x));
@@ -7523,8 +7566,11 @@ useEffect(() => {
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <RefreshTopButton compact/>
-              <Press onClick={()=>{setAdminTab("dashboard");window.scrollTo(0,0);haptic();}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>מחוונים</Press>
-              <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
+              {adminTab==="dashboard" ? (
+                <Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>
+              ) : (
+                <Press onClick={()=>{setAdminTab("dashboard");window.scrollTo(0,0);haptic();}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>מחוונים</Press>
+              )}
             </div>
           </div>
         </div>
@@ -7771,7 +7817,7 @@ useEffect(() => {
                     )}
                     {selectedAdminOrderEntries.length===0&&<div style={{padding:18,borderRadius:12,background:"#f5f9ff",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700,marginBottom:10}}>אין בריכות שנבחרו לסדר היום</div>}
                     {selectedAdminOrderEntries.map((entry)=>{
-                      const i = adminOrderList.findIndex(x=>x.client===entry.client);
+                      const i = adminOrderList.findIndex(x=>adminOrderClientKey(x)===adminOrderClientKey(entry) || x.client===entry.client);
                       const lowSaltWarning = hasLowSaltLight(entry.client);
                       const waterCheckDaysText = formatWaterCheckDays((adminOrderClientMap.get(entry.client) || {}).waterCheckDays);
                       return (
@@ -7781,7 +7827,7 @@ useEffect(() => {
                           <div style={{flex:1,minWidth:0,fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{entry.client.split(" - ")[0]}</div>
                           {waterCheckDaysText&&<span style={{padding:"5px 10px",borderRadius:999,background:"#e8f5e9",border:"1px solid #c8e6c9",color:C.green,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>בדיקת מים: {waterCheckDaysText}</span>}
                           {lowSaltWarning&&<span style={{padding:"5px 10px",borderRadius:999,background:"#fff7ed",border:"1px solid #fdba74",color:C.orange,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>מלח נמוך</span>}
-                          <Press onClick={()=>removeClientFromAdminOrder(entry, i)} style={{padding:"5px 9px",borderRadius:8,background:"#ffebee",color:C.red,fontSize:12,fontWeight:900}}>הסר</Press>
+                          <Press onClick={(e)=>{e.stopPropagation();removeClientFromAdminOrder(entry);}} style={{padding:"5px 9px",borderRadius:8,background:"#ffebee",color:C.red,fontSize:12,fontWeight:900}}>הסר</Press>
                         </div>
                         <input value={entry.note || ""} onChange={e=>setAdminOrderDraft(adminOrderList.map((x,idx)=>idx===i?{...x,note:e.target.value}:x))} placeholder="הערה למפעיל לבריכה זו..." style={{...inp,fontSize:12,padding:"8px 10px",margin:0}}/>
                       </div>
@@ -7791,7 +7837,7 @@ useEffect(() => {
                     </div>
                     {unselectedAdminOrderClients.length===0&&<div style={{padding:16,borderRadius:12,background:"#f8fafc",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700}}>אין בריכות נוספות ליום הזה</div>}
                     {unselectedAdminOrderClients.map(c=>{
-                      const removed = adminOrderRemovedClients.includes(c.name);
+                      const removed = adminOrderRemovedClients.some(item=>adminOrderClientKey(item)===adminOrderClientKey(c) || item===c.name);
                       const waterCheckDaysText = formatWaterCheckDays(c.waterCheckDays);
                       return (
                       <Press key={c.name} onClick={()=>addClientToAdminOrder(c.name)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",border:`1px solid ${removed?"#fbbf24":C.border}`,borderRadius:12,background:removed?"#fffbeb":"#fff",marginBottom:8}}>
@@ -7897,6 +7943,7 @@ useEffect(() => {
               {dayTasks.length===0&&<div style={{...card({textAlign:"center"}),padding:24,color:C.muted,fontSize:14}}>אין משימות לתאריך זה</div>}
               {dayTasks.map((t,i)=>{
                 const lastLog=t.changeLog?.[t.changeLog.length-1];
+                const operatorNote = extractOperatorTaskNote(t);
                 const primaryOp = String((t.operators || [])[0] || "");
                 const prevPrimaryOp = i > 0 ? String((dayTasks[i-1]?.operators || [])[0] || "") : "";
                 return (
@@ -7908,9 +7955,9 @@ useEffect(() => {
                         <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.client.split(" - ")[0]}</div>
                         <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{t.operators.map(op=>(<span key={op} style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700,display:"inline-flex",alignItems:"center",gap:4}}>{op}<span onClick={()=>removeOp(t.id,op)} style={{cursor:"pointer",opacity:0.7,fontSize:12}}>✕</span></span>))}</div>
                       </div>
-                      <div style={{display:"grid",gridTemplateColumns:"minmax(54px,auto) 34px 92px",gap:6,alignItems:"start",justifyItems:"stretch"}}>
+                      <div style={{display:"grid",gridTemplateColumns:"minmax(54px,auto) 42px 92px",gap:6,alignItems:"start",justifyItems:"stretch"}}>
                         <div style={{minWidth:54,display:"flex",justifyContent:"center",paddingTop:4}}><Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/></div>
-                        <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}} style={{width:34,height:32,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:9,background:"#e3f2fd",color:C.blue,fontSize:14,fontWeight:900}}>✏️</Press>
+                        <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}} style={{width:42,height:32,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:17,fontWeight:900,border:`1px solid ${C.border}`}}>✏️</Press>
                         <div style={{width:92,minHeight:58,display:"flex",flexDirection:"column",gap:4}}>
                             <Press onClick={()=>approveOperatorTaskRequest(t.id,true)} style={{width:"100%",height:32,padding:"0 8px",borderRadius:9,background:actionStatus[`approveTask:${t.id}`]==="success"?C.green:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontSize:11,fontWeight:900,whiteSpace:"nowrap",display:"flex",alignItems:"center",justifyContent:"center"}}>
                               {actionLabel(`approveTask:${t.id}`,{idle:"אשר ושלח",loading:"שולח...",success:"נשלח",error:"נסה שוב"})}
@@ -7923,12 +7970,8 @@ useEffect(() => {
                       <select defaultValue="" onChange={e=>{if(e.target.value){addOp(t.id,e.target.value);e.target.value="";}}} style={{...sel,flex:1,fontSize:12,padding:"7px 10px"}}><option value="">+ הוסף מפעיל</option>{opNames.filter(n=>!t.operators.includes(n)).map(n=><option key={n}>{n}</option>)}</select>
                       <Press onClick={()=>{ if(!window.confirm("למחוק?"))return; const deletedTask=t; const n=tasks.filter(x=>x.id!==t.id); setTasks(n); showToast("🗑️ משימה נמחקה"); void (async()=>{ try { if(sheetId) await sheetCall("saveTasks",{tasks:n}); await sendNotificationToOperators(deletedTask.operators||[], "🗑️ משימה נמחקה", `${deletedTask.client?.split(" - ")[0] || ""} — ${fmtDate(deletedTask.date)}`); } catch(e) { console.warn("Delete task background sync failed", e); } })(); }} style={{padding:"7px 14px",borderRadius:10,background:"#ffebee",color:C.red,fontSize:12,fontWeight:700}}>🗑️</Press>
                     </div>
-                    {lastLog&&(
-                      <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>
-                        🕐 {lastLog.at} — {lastLog.note}
-                        {lastLog.needsAck&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:4}}>{t.operators.map(op=>{ const acked=(lastLog.ackedBy||[]).includes(op); return <span key={op} style={{background:acked?"#e8f5e9":"#fff3e0",color:acked?C.green:C.orange,borderRadius:99,padding:"2px 8px",fontSize:10,fontWeight:700}}>{acked?"✓":"⏳"} {op}</span>; })}</div>}
-                      </div>
-                    )}
+                    {operatorNote&&<OperatorNoteBox note={operatorNote} />}
+                    {lastLog&&<div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`}}><TaskChangeInfo log={lastLog} operators={t.operators} /></div>}
                   </div>
                   </Fragment>
                 );
@@ -8075,7 +8118,7 @@ useEffect(() => {
                       </div>
                       <Badge label={`נותרו ${balance}`} col={balance===0?C.green:C.blue}/>
                     </div>
-                    <PBar done={Math.min(doneCount,quota)} total={quota || 1}/>
+                    <PBar done={Math.min(doneCount,quota)} total={quota || 1} label="טיפולים"/>
                   </div>
                 );
               })}
