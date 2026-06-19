@@ -6891,7 +6891,7 @@ useEffect(() => {
                       {freeTaskActionId===t.id ? (
                         <Press onClick={async()=>{await markDone(t.id);setFreeTaskActionId(null);showToast("✓ משימה סומנה כבוצעה");haptic("success");}} style={{padding:"8px 16px",borderRadius:10,background:C.green,color:"#fff",fontWeight:900,fontSize:12,display:"inline-block"}}>בוצע</Press>
                       ) : (
-                        <Press onClick={()=>{setFreeTaskActionId(t.id);haptic();}} style={{padding:"8px 14px",borderRadius:10,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontWeight:900,fontSize:12,display:"inline-block"}}>מאשר</Press>
+                        <Press onClick={async()=>{setFreeTaskActionId(t.id);haptic();const receiptLogIndex=(t.changeLog||[]).length-1;const receiptLog=t.changeLog?.[receiptLogIndex];try{if(receiptLogIndex>=0&&receiptLog?.needsAck&&!(receiptLog.ackedBy||[]).includes(user?.name)){await ackChange(t.id,receiptLogIndex);}else if((receiptLog?.ackedBy||[]).includes(user?.name)){showToast("האישור כבר נשלח לאדמין");}else{await sendNotificationToAdmins("✅ מפעיל אישר קבלת משימה",`${user?.name||"מפעיל"} אישר קבלת משימה: ${t.client?.split(" - ")[0]||"משימה"}`);showToast("האישור נשלח לאדמין");}}catch(e){console.warn("Task receipt admin notification failed",e);setFreeTaskActionId(null);showToast("שליחת האישור לאדמין נכשלה");}}} style={{padding:"8px 14px",borderRadius:10,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontWeight:900,fontSize:12,display:"inline-block"}}>מאשר</Press>
                       )}
                       {freeTaskActionId!==t.id&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setNavTab(0);setScreen("form");haptic();}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>📝 פתח דוח</Press>}
                     </div>
@@ -7372,7 +7372,7 @@ useEffect(() => {
       haptic("success");
     };
     const taskClientOptions = sortByClientName(clients);
-    const dayTasks = tasks.filter(t=>normalizeDate(t.date)===taskDate && !t.createdByAdminOrder && Number(t.orderIndex || 0) <= 0).sort((a,b)=>String((a.operators||[])[0]||"").localeCompare(String((b.operators||[])[0]||""), "he") || normalizeName(a.client).localeCompare(normalizeName(b.client)));
+    const dayTasks = tasks.filter(t=>normalizeDate(t.date)===taskDate && t.status!=="done" && !t.createdByAdminOrder && Number(t.orderIndex || 0) <= 0).sort((a,b)=>String((a.operators||[])[0]||"").localeCompare(String((b.operators||[])[0]||""), "he") || normalizeName(a.client).localeCompare(normalizeName(b.client)));
     const criticalAdminIssueIndex = operatorIssues.findIndex(iss => isCriticalIssue(iss[4]) && !isIssueInProgress(iss[5]) && !isIssueDone(iss[5]) && !dismissedCriticalIssueIds.includes(String(iss[0])));
     const criticalAdminIssue = criticalAdminIssueIndex >= 0 ? operatorIssues[criticalAdminIssueIndex] : null;
     const activeOperatorDoneAlert = operatorDoneAlerts[0] || null;
