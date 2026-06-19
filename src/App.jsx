@@ -1094,7 +1094,7 @@ function OperatorNoteBox({note}) {
   const clean = String(note || "").trim();
   if (!clean) return null;
   return <div style={{background:"#eef6ff",borderRadius:12,padding:"10px 12px",fontSize:14,color:"#0f172a",fontWeight:800,lineHeight:1.55,marginBottom:8,border:"1px solid rgba(37,99,235,0.22)"}}>
-    <div style={{fontSize:12,fontWeight:900,color:"#1d4ed8",marginBottom:4}}>הערת מפעיל</div>
+    <div style={{fontSize:12,fontWeight:900,color:"#1d4ed8",marginBottom:4}}>הערות משימה</div>
     <div>{clean}</div>
   </div>;
 }
