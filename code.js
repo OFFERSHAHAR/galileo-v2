@@ -629,7 +629,7 @@
         const reports = dataRows.map((r,i) => ({
           id: reportIdCell_(r),
           _fromSheet: true,
-          reportDate: reportCell_(r,0) instanceof Date ? Utilities.formatDate(reportCell_(r,0),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,0)).slice(0,10),
+          reportDate: normalizeSheetDate_(reportCell_(r,0)) || String(reportCell_(r,0)).slice(0,10),
           operator: String(reportCell_(r,1)),
           client: String(reportCell_(r,2)),
           chlorine: reportCell_(r,3),

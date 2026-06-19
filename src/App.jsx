@@ -938,7 +938,7 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
         </div>
         {linkedSubs.length>0&&(
           <div style={{background:"#eef6ff",border:`1px solid ${C.border}`,borderRadius:14,padding:"10px 12px",marginBottom:12}}>
-            <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:6}}>SUB_OPERATOR משויך להיום</div>
+            <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:6}}>עוזר מפעיל משויך להיום</div>
             {linkedSubs.map((sub,i)=>(
               <div key={sub.username || sub.name || i} style={{fontSize:12,fontWeight:800,color:C.blue,padding:"3px 0"}}>
                 {sub.name || sub.username}
@@ -1072,6 +1072,14 @@ const card = (extra={}) => ({background:C.card,backdropFilter:"blur(18px)",Webki
 
 function Badge({label,col="#1565c0",bg}) {
   return <span style={{minWidth:52,minHeight:24,display:"inline-flex",alignItems:"center",justifyContent:"center",background:bg||col+"18",color:col,border:`1px solid ${col}33`,borderRadius:99,padding:"0 11px",fontSize:11,fontWeight:800,lineHeight:1,whiteSpace:"nowrap"}}>{label}</span>;
+}
+
+function IndicatorBubbles({red=0, blue=0}) {
+  const countStyle = (bg, side) => ({position:"absolute",top:4,[side]:7,minWidth:18,height:18,padding:"0 5px",borderRadius:99,display:"inline-flex",alignItems:"center",justifyContent:"center",background:bg,color:"#fff",fontSize:10,fontWeight:900,lineHeight:1,boxShadow:"0 0 0 2px rgba(255,255,255,0.92), 0 6px 14px rgba(15,23,42,0.18)",border:"1px solid rgba(255,255,255,0.9)",pointerEvents:"none",zIndex:3});
+  return <>
+    {Number(red) > 0 && <span style={countStyle("#dc2626", "right")}>{red}</span>}
+    {Number(blue) > 0 && <span style={countStyle("#2563eb", "left")}>{blue}</span>}
+  </>;
 }
 
 function Sec({icon,title,action,children}) {
@@ -2726,7 +2734,7 @@ useEffect(() => {
   const [saltSearch,setSaltSearch] = useState("");
   const [lowSaltSearch,setLowSaltSearch] = useState("");
   const [selectedSaltReport,setSelectedSaltReport] = useState(null);
-  const [reportDateFilter,setReportDateFilter] = useState(()=>todayStr());
+  const [reportDateFilter,setReportDateFilter] = useState("");
   const [reportDateToFilter,setReportDateToFilter] = useState("");
   const [sheetReports,setSheetReports] = useState([]);
   const [treatmentCounts,setTreatmentCounts] = useState([]);
@@ -4555,7 +4563,7 @@ useEffect(() => {
         if(adminTab==="reports" || adminTab==="supply"){
           const rep = await sheetCall("getReports",{
             fromDate:reportDateFilter || "",
-            toDate:reportDateToFilter || reportDateFilter || "",
+            toDate:reportDateToFilter || (reportDateFilter ? reportDateFilter : ""),
             query:reportFilter || "",
             limit:reportDateFilter || reportDateToFilter || reportFilter ? 500 : 250
           }).catch(()=>null);
@@ -4645,7 +4653,7 @@ useEffect(() => {
         const refreshReportDate = adminTab === "daily" ? taskDate : adminTab === "progress" ? dailyDate : reportDateFilter;
         const [rep, maR] = await Promise.all([sheetCall("getReports",{
           fromDate:refreshReportDate || "",
-          toDate:adminTab === "reports" ? (reportDateToFilter || refreshReportDate || "") : (refreshReportDate || ""),
+          toDate:adminTab === "reports" ? (reportDateToFilter || (refreshReportDate ? refreshReportDate : "")) : (refreshReportDate || ""),
           query:adminTab === "reports" ? (reportFilter || "") : "",
           limit:adminTab === "reports" ? (refreshReportDate || reportDateToFilter || reportFilter ? 500 : 250) : 300
         }).catch(()=>null), sheetCall("getMaterialApprovals").catch(()=>null)]);
@@ -4889,12 +4897,101 @@ useEffect(() => {
   const approveOperatorTaskRequest = async (id, approved = true) => {
     const target = tasks.find(t=>t.id===id);
     if (!target) return;
-    const next = tasks.map(t=>t.id===id ? {...t, adminApproval:approved ? "approved" : "rejected", status:approved ? (t.status || "pending") : "rejected", changeLog:[...(t.changeLog||[]), {at:nowStr(),note:approved ? "\u05d0\u05d3\u05de\u05d9\u05df \u05d0\u05d9\u05e9\u05e8 \u05d0\u05ea \u05d4\u05de\u05e9\u05d9\u05de\u05d4" : "\u05d0\u05d3\u05de\u05d9\u05df \u05d3\u05d7\u05d4 \u05d0\u05ea \u05d4\u05de\u05e9\u05d9\u05de\u05d4",by:user?.name,needsAck:true,ackedBy:[]}]} : t);
-    setTasks(next);
-    if (sheetId) await sheetCall("saveTasks", {tasks:next});
-    await sendNotificationToOperators(target.operators || [], approved ? "\u05de\u05e9\u05d9\u05de\u05d4 \u05d0\u05d5\u05e9\u05e8\u05d4" : "\u05de\u05e9\u05d9\u05de\u05d4 \u05e0\u05d3\u05d7\u05ea\u05d4", `${target.client?.split(" - ")[0] || ""} \u2014 ${fmtDate(target.date)}`).catch(e => console.warn("Operator task approval notification failed", e));
-    showToast(approved ? "\u05d4\u05de\u05e9\u05d9\u05de\u05d4 \u05d0\u05d5\u05e9\u05e8\u05d4" : "\u05d4\u05de\u05e9\u05d9\u05de\u05d4 \u05e0\u05d3\u05d7\u05ea\u05d4");
-    haptic("success");
+    const actionKey = `approveTask:${id}`;
+    if (isActionLoading(actionKey)) return;
+    const assignedOperators = [...new Set((target.operators || []).map(value=>String(value || "").trim()).filter(Boolean))];
+    if (approved && !assignedOperators.length) {
+      showToast("יש לשייך מפעיל לפני אישור");
+      haptic("medium");
+      return;
+    }
+
+    setAction(actionKey, "loading");
+    const approvalLog = {
+      at:nowStr(),
+      note:approved ? "אדמין אישר ושלח את המשימה לסדר היום" : "אדמין דחה את המשימה",
+      by:user?.name,
+      needsAck:approved,
+      ackedBy:[]
+    };
+    const nextTasks = tasks.map(t=>t.id===id ? {
+      ...t,
+      adminApproval:approved ? "approved" : "rejected",
+      status:approved ? (t.status === "rejected" ? "pending" : (t.status || "pending")) : "rejected",
+      changeLog:[...(t.changeLog||[]), approvalLog]
+    } : t);
+
+    let nextOrders = adminOrders;
+    if (approved) {
+      const taskDateValue = normalizeDate(target.date);
+      const taskNote = String(target.adminNote || target.changeLog?.[target.changeLog.length - 1]?.note || "").trim();
+      assignedOperators.forEach(opName => {
+        const existingIndex = nextOrders.findIndex(order =>
+          normalizeDate(order.date) === taskDateValue &&
+          normalizeName(order.operator) === normalizeName(opName) &&
+          normalizeName(order.client) === normalizeName(target.client)
+        );
+        if (existingIndex >= 0) {
+          nextOrders = nextOrders.map((order, index) => index === existingIndex ? {
+            ...order,
+            clientId:order.clientId || target.clientId || clientIdByName(target.client),
+            adminNote:taskNote || order.adminNote || "",
+            status:order.status || "pending"
+          } : order);
+          return;
+        }
+        const nextOrderIndex = nextOrders
+          .filter(order => normalizeDate(order.date) === taskDateValue && normalizeName(order.operator) === normalizeName(opName))
+          .reduce((max, order) => Math.max(max, Number(order.orderIndex || 0)), 0) + 1;
+        nextOrders = [...nextOrders, {
+          id:`admin-order-${taskDateValue}-${normalizeName(opName)}-${normalizeName(target.client)}`,
+          date:taskDateValue,
+          operator:opName,
+          client:target.client,
+          clientId:target.clientId || clientIdByName(target.client),
+          status:"pending",
+          changeLog:[approvalLog],
+          orderIndex:nextOrderIndex,
+          adminNote:taskNote
+        }];
+      });
+      nextOrders = dedupeAdminOrders(nextOrders);
+    }
+
+    try {
+      if (sheetId) {
+        const taskResult = await sheetCall("saveTasks", {tasks:nextTasks});
+        if (!taskResult?.success) throw new Error(taskResult?.error || "saveTasks failed");
+        if (approved) {
+          const orderResult = await sheetCall("saveAdminOrders", {adminOrders:nextOrders});
+          if (!orderResult?.success) {
+            await sheetCall("saveTasks", {tasks}).catch(()=>null);
+            throw new Error(orderResult?.error || "saveAdminOrders failed");
+          }
+        }
+      }
+      setTasks(nextTasks);
+      if (approved) {
+        setAdminOrders(nextOrders);
+        assignedOperators.forEach(opName => {
+          const entries = nextOrders
+            .filter(order => normalizeDate(order.date) === normalizeDate(target.date) && normalizeName(order.operator) === normalizeName(opName))
+            .map(order => ({client:order.client, clientId:order.clientId, note:order.adminNote || "", orderIndex:order.orderIndex}));
+          writeLocalArray(adminOrderKey(normalizeDate(target.date), opName), prepareAdminOrderEntries(entries));
+        });
+        setSubOperatorRefresh(x=>x+1);
+      }
+      setAction(actionKey, "success", 1600);
+      void sendNotificationToOperators(assignedOperators, approved ? "משימה אושרה ונוספה לסדר היום" : "משימה נדחתה", `${target.client?.split(" - ")[0] || ""} — ${fmtDate(target.date)}`)
+        .catch(error => console.warn("Operator task approval notification failed", error));
+      showToast(approved ? "המשימה אושרה ונשלחה לסדר היום" : "המשימה נדחתה");
+      haptic("success");
+    } catch(error) {
+      console.warn("Operator task approval save failed", error);
+      setAction(actionKey, "error", 2400);
+      showToast("האישור לא נשמר - נסה שוב");
+      haptic("medium");
+    }
   };
   const timeToMinutes = (value) => {
     const [h,m] = String(value || "").split(":").map(Number);
@@ -5320,7 +5417,6 @@ useEffect(() => {
       const match=tasks.find(t=>t.date===reportDate&&t.client===client&&t.operators.includes(reportOperatorName)&&t.status!=="done"); if(match)markDone(match.id);
     }
     let photosBase64 = [];
-    const lowSaltActive = isLowSaltReportValue(salt) || (!!form.lowSaltLight && !isNormalSaltLevelValue(salt));
     const report = {
   id: editingReport?.localId || crypto.randomUUID(),
   reportDate,
@@ -5329,7 +5425,7 @@ useEffect(() => {
   clientId: clientIdByName(client),
   chlorine,
   ph: form.phLowConfirmed && Number(ph) === 0 ? "PH נמוך" : ph,
-  salt: lowSaltActive ? LOW_SALT_REPORT_TEXT : salt,
+  salt,
   chlora:form.chlora>0?form.chlora:undefined,
   hth:form.hth>0?form.hth:undefined,
   phUp:form.phUp>0?form.phUp:undefined,
@@ -5998,10 +6094,10 @@ useEffect(() => {
     const allDailyWhatsAppDisabled = dailyWhatsAppClients.length > 0 && dailyWhatsAppClients.every(clientName => isWhatsAppDisabledForClient(clientName));
     const toggleDailyWhatsAppClients = () => setWhatsAppForClients(dailyWhatsAppClients, !allDailyWhatsAppDisabled);
     const dailySupplyTasks = orderedDayTasks.filter(t=>explicitSupplyClients.has(normalizeName(t.client)) && isSupplyDueForDate(t.client, dailyDate));
-    const hasTaskChanges = orderedDayTasks.some(t => {
+    const taskChangesCount = orderedDayTasks.filter(t => {
       const lastLog = t.changeLog?.[t.changeLog.length - 1];
       return !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy || []).includes(user?.name);
-    });
+    }).length;
     const shareOrderWithSubOperators = async () => {
       if (isSubOperator) return;
       const subs = assignedSubOperators || [];
@@ -6169,7 +6265,7 @@ useEffect(() => {
           <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
             <div style={{width:"100%",maxWidth:420,background:"rgba(255,255,255,0.96)",borderRadius:24,padding:18,boxShadow:"0 28px 90px rgba(15,23,42,0.34)",border:"1px solid rgba(148,163,184,0.32)"}}>
               <div style={{fontSize:18,fontWeight:900,color:C.text,marginBottom:4}}>דוח ממתין לאישור</div>
-              <div style={{fontSize:12,fontWeight:800,color:C.muted,marginBottom:12}}>נשלח על ידי {item.subName || item.subUsername || "SUB_OPERATOR"}</div>
+              <div style={{fontSize:12,fontWeight:800,color:C.muted,marginBottom:12}}>נשלח על ידי {item.subName || item.subUsername || "עוזר מפעיל"}</div>
               <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:16,padding:12,display:"grid",gap:8,marginBottom:12}}>
                 <div style={{fontSize:15,fontWeight:900,color:C.text}}>{String(r.client||"").split(" - ")[0]}</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -6719,7 +6815,7 @@ useEffect(() => {
         <div style={{position:"fixed",right:12,left:12,bottom:"calc(12px + env(safe-area-inset-bottom, 0px))",zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px calc(9px + env(safe-area-inset-bottom, 0px))",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",justifyContent:"space-around",gap:8,boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
           {[["\uD83C\uDFE0","\u05D1\u05D9\u05EA",0],["\uD83D\uDCCB","\u05DE\u05E9\u05D9\u05DE\u05D5\u05EA",1],["\uD83D\uDCCA","\u05D4\u05EA\u05E7\u05D3\u05DE\u05D5\u05EA",3],["\uD83D\uDCC5","\u05E2\u05EA\u05D9\u05D3\u05D9",2]].map(([ic,lb,idx])=>(
             <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"7px 12px",borderRadius:18,background:navTab===idx?operatorPrimaryGradient:"rgba(241,245,249,0.50)",boxShadow:navTab===idx?"0 12px 28px rgba(79,70,229,0.22)":"none"}}>
-              {idx===1&&hasTaskChanges&&<span style={{position:"absolute",top:5,right:12,width:10,height:10,borderRadius:99,background:C.red,boxShadow:"0 0 0 3px rgba(255,255,255,0.86)",border:"1px solid rgba(255,255,255,0.95)"}}/>}
+              <IndicatorBubbles red={idx===1 ? taskChangesCount : 0} />
               <span style={{fontSize:22}}>{ic}</span>
               <span style={{fontSize:10,fontWeight:900,color:navTab===idx?"#fff":C.muted}}>{lb}</span>
             </Press>
@@ -7309,6 +7405,16 @@ useEffect(() => {
       : [["daily","📋 חלוקת עבודה"],["tasks","📌 משימות"],["adminreport","📝 דוח ידני"],["progress","📊 התקדמות"],["hours","⏱️ שעות"],["clients","👥 לקוחות"],["treatments","🔢 מספר טיפולים"],["reports","📄 דוחות"],["opissues","🔧 תקלות מפעיל"],["supply","📦 חומרים"],["users","👤 משתמשים"]];
     adminTabs.unshift(["dashboard","מחוונים"]);
     if (!isSubAdminPanel) adminTabs.push(["settings","⚙️ הגדרות"]);
+    const pendingAdminTaskApprovals = tasks.filter(t=>t.adminApproval==="pending").length;
+    const pendingSubReportApprovals = pendingSubReports.filter(item=>item?.status==="pending").length;
+    const pendingLocalReportsCount = pending.filter(shouldKeepPendingReport).length;
+    const adminIndicatorCounts = {
+      daily: {red: pendingSubReportApprovals},
+      tasks: {red: pendingAdminTaskApprovals},
+      reports: {red: pendingLocalReportsCount},
+      opissues: {red: dashboardCriticalIssues},
+      supply: {blue: dailySupplyRows.length}
+    };
     const adminDashboardBubbles = [
       {tab:"daily", icon:"📋", title:"חלוקת עבודה", value:operatorUsers.length, meta:"יצירת סדר יום למפעיל", tone:"#2563eb"},
       {tab:"tasks", icon:"📌", title:"משימות", value:dashboardOpenTasks, meta:"פתוחות לטיפול", tone:"#7c3aed", hidden:isSubAdminPanel},
@@ -7430,6 +7536,7 @@ useEffect(() => {
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(148px,1fr))",gap:12,marginBottom:14}}>
                 {adminDashboardBubbles.map((b,i)=>(
                   <Press key={b.tab} onClick={()=>goAdminBubble(b.tab)} style={{position:"relative",minHeight:148,aspectRatio:"1 / 1",borderRadius:18,padding:16,background:`linear-gradient(145deg,rgba(255,255,255,0.94),${b.tone}18)`,border:`1px solid ${b.tone}30`,boxShadow:`0 18px 38px ${b.tone}16, 0 1px 0 rgba(255,255,255,0.90) inset`,display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",textAlign:"center",overflow:"hidden"}}>
+                    <IndicatorBubbles red={adminIndicatorCounts[b.tab]?.red || 0} blue={adminIndicatorCounts[b.tab]?.blue || 0} />
                     <div style={{position:"absolute",inset:9,borderRadius:14,border:`1px solid ${b.tone}18`,pointerEvents:"none"}}/>
                     <div style={{width:42,height:42,borderRadius:"50%",background:`${b.tone}16`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,marginBottom:8}}>{b.icon}</div>
                     <div style={{fontSize:24,fontWeight:900,color:b.tone,lineHeight:1}}>{b.value}</div>
@@ -7638,7 +7745,7 @@ useEffect(() => {
                       </div>
                     </div>
                     {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
-                      <label style={{fontSize:11,fontWeight:900,color:C.muted,display:"block",marginBottom:6}}>שיוך SUB_OPERATOR למפעיל זה</label>
+                      <label style={{fontSize:11,fontWeight:900,color:C.muted,display:"block",marginBottom:6}}>שיוך עוזר מפעיל למפעיל זה</label>
                       <select value={getAssignedSubOperator(taskDate, activeAdminOperator)} onChange={e=>{void setAssignedSubOperator(taskDate, activeAdminOperator, e.target.value); showToast(e.target.value?"✅ עוזר מפעיל שויך":"שיוך עוזר מפעיל הוסר"); haptic("medium");}} style={{...sel,fontSize:12,margin:0}}>
                         <option value="">ללא עוזר מפעיל</option>
                         {subOperatorUsers.map((su,i)=><option key={`${su.username || ""}-${su.name || ""}-${i}`} value={su.username}>{su.name || su.username}</option>)}
@@ -7773,36 +7880,17 @@ useEffect(() => {
                     setAction("saveTasks", "success", 1500);
                   } else {
                     if(!taskClients.length||!taskOps.length) { setAction("saveTasks", "idle"); return; }
-                    const newTasksBatch = taskClients.map(tc=>({id:Date.now()+Math.floor(Math.random()*100000),date:taskDate.slice(0,10),client:tc.name,clientId:tc.clientId||clientIdByName(tc.name),operators:[...taskOps],status:"pending",changeLog:[{at:nowStr(),note:tc.note||taskNote||"📋 משימה חדשה הוקצתה לך",by:user?.name,needsAck:true,ackedBy:[]}]}));
+                    const newTasksBatch = taskClients.map(tc=>({id:Date.now()+Math.floor(Math.random()*100000),date:taskDate.slice(0,10),client:tc.name,clientId:tc.clientId||clientIdByName(tc.name),operators:[...taskOps],status:"pending",adminApproval:"pending",requestedBy:user?.name||"",changeLog:[{at:nowStr(),note:tc.note||taskNote||"משימה ממתינה לאישור ושליחה",by:user?.name,needsAck:false,ackedBy:[]}]}));
                     const newTasks = [...tasks, ...newTasksBatch];
                     setTasks(newTasks); setTaskClients([]); setTaskClientSearch(""); setTaskOps([]); setTaskNote("");
                     if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
                     setAction("saveTasks", "success", 1500);
-                    showToast(`✅ ${newTasksBatch.length} משימות נוצרו`);
+                    showToast(`✅ ${newTasksBatch.length} משימות נוצרו וממתינות לאישור`);
                     haptic("success");
 
-                    const notifyOps = [...taskOps];
-                    const notifyClients = [...taskClients];
-                    const notifyDate = taskDate;
-                    setTimeout(async () => {
-                      const clientList = notifyClients.map(c=>c.name.split(" - ")[0]).join(", ");
-                      const targets = notifyOps.map(opName => {
-                        const opUser = findPushUser(opName);
-                        if (!opUser?.username) {
-                          console.warn("Notification target user not found or missing username", opName, opUser);
-                          return null;
-                        }
-                        return opUser;
-                      }).filter(Boolean);
-                      const missingCount = notifyOps.length - targets.length;
-                      const sentCount = (await Promise.all(targets.map(opUser => sendAppNotificationToUser(`📋 משימות חדשות`, `${clientList} — ${fmtDate(notifyDate)}`, opUser.username)))).filter(Boolean).length;
-                      if (sentCount === notifyOps.length) showToast(`✅ ההתראות נשלחו`);
-                      else if (missingCount) showToast(`⚠️ חסר שם משתמש ל-${missingCount} מפעילים`);
-                      else showToast(`⚠️ ${sentCount}/${notifyOps.length} התראות נשלחו`);
-                    }, 0);
                   }
                 }} disabled={isActionLoading("saveTasks")||(editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length))} style={{padding:"13px",borderRadius:14,background:actionStatus.saveTasks==="success"?C.green:actionStatus.saveTasks==="warning"?C.orange:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:`0 4px 14px rgba(21,101,192,0.3)`,opacity:(editTaskId?(!taskClient||!taskOps.length):(!taskClients.length||!taskOps.length))?0.5:1}}>
-                  {actionStatus.saveTasks==="loading"?"⏳ שומר ושולח...":actionStatus.saveTasks==="success"?"✅ נשמר ונשלח":actionStatus.saveTasks==="warning"?"⚠️ נשמר, בדוק התראות":editTaskId?"💾 שמור שינויים":taskClients.length>1?`➕ צור ${taskClients.length} משימות`:"➕ הוסף משימה"}
+                  {actionStatus.saveTasks==="loading"?"⏳ שומר ושולח...":actionStatus.saveTasks==="success"?"✅ נשמר ונשלח":actionStatus.saveTasks==="warning"?"⚠️ נשמר, בדוק התראות":editTaskId?"אשר ושלח":taskClients.length>1?`➕ צור ${taskClients.length} משימות`:"➕ הוסף משימה"}
                 </Press>
               </div>
               <h3 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:"0 0 12px"}}>משימות — {fmtDate(taskDate)}</h3>
@@ -7815,22 +7903,26 @@ useEffect(() => {
                   <Fragment key={t.id}>
                     {primaryOp!==prevPrimaryOp&&<div style={{fontSize:12,fontWeight:900,color:C.blue,margin:"12px 0 8px",padding:"0 4px"}}>{primaryOp || "\u05dc\u05dc\u05d0 \u05de\u05e4\u05e2\u05d9\u05dc"}</div>}
                   <div style={{...card({marginBottom:10})}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                      <div>
-                        <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:3}}>{t.client.split(" - ")[0]}</div>
+                    <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto auto",alignItems:"start",gap:8,marginBottom:8}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.client.split(" - ")[0]}</div>
                         <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{t.operators.map(op=>(<span key={op} style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700,display:"inline-flex",alignItems:"center",gap:4}}>{op}<span onClick={()=>removeOp(t.id,op)} style={{cursor:"pointer",opacity:0.7,fontSize:12}}>✕</span></span>))}</div>
+                      </div>
+                      <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center",flexWrap:"wrap"}}>
+                        <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}} style={{width:34,height:32,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:9,background:"#e3f2fd",color:C.blue,fontSize:14,fontWeight:900}}>✏️</Press>
+                        {t.status!=="done"&&t.adminApproval!=="approved"&&(
+                          <Press onClick={()=>approveOperatorTaskRequest(t.id,true)} style={{minHeight:32,padding:"0 12px",borderRadius:9,background:actionStatus[`approveTask:${t.id}`]==="success"?C.green:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>
+                            {actionLabel(`approveTask:${t.id}`,{idle:"אשר ושלח",loading:"שולח...",success:"נשלח",error:"נסה שוב"})}
+                          </Press>
+                        )}
+                        {t.adminApproval==="pending"&&(
+                          <Press onClick={()=>approveOperatorTaskRequest(t.id,false)} style={{minHeight:32,padding:"0 10px",borderRadius:9,background:"#ffebee",color:C.red,fontSize:11,fontWeight:900,border:"1px solid #ffcdd2"}}>דחה</Press>
+                        )}
                       </div>
                       <Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/>
                     </div>
-                    {t.adminApproval==="pending"&&(
-                      <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-                        <Press onClick={()=>approveOperatorTaskRequest(t.id,true)} style={{padding:"8px 14px",borderRadius:10,background:C.green,color:"#fff",fontSize:12,fontWeight:900}}>{"\u05d0\u05e9\u05e8"}</Press>
-                        <Press onClick={()=>approveOperatorTaskRequest(t.id,false)} style={{padding:"8px 14px",borderRadius:10,background:"#ffebee",color:C.red,fontSize:12,fontWeight:900,border:"1px solid #ffcdd2"}}>{"\u05d3\u05d7\u05d4"}</Press>
-                      </div>
-                    )}
                     <div style={{display:"flex",gap:8}}>
                       <select defaultValue="" onChange={e=>{if(e.target.value){addOp(t.id,e.target.value);e.target.value="";}}} style={{...sel,flex:1,fontSize:12,padding:"7px 10px"}}><option value="">+ הוסף מפעיל</option>{opNames.filter(n=>!t.operators.includes(n)).map(n=><option key={n}>{n}</option>)}</select>
-                      <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}} style={{padding:"7px 14px",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:12,fontWeight:700}}>✏️</Press>
                       <Press onClick={()=>{ if(!window.confirm("למחוק?"))return; const deletedTask=t; const n=tasks.filter(x=>x.id!==t.id); setTasks(n); showToast("🗑️ משימה נמחקה"); void (async()=>{ try { if(sheetId) await sheetCall("saveTasks",{tasks:n}); await sendNotificationToOperators(deletedTask.operators||[], "🗑️ משימה נמחקה", `${deletedTask.client?.split(" - ")[0] || ""} — ${fmtDate(deletedTask.date)}`); } catch(e) { console.warn("Delete task background sync failed", e); } })(); }} style={{padding:"7px 14px",borderRadius:10,background:"#ffebee",color:C.red,fontSize:12,fontWeight:700}}>🗑️</Press>
                     </div>
                     {lastLog&&(
@@ -8051,7 +8143,7 @@ useEffect(() => {
                             <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(r.client||"").split(" - ")[0]}</div>
                             <div style={{fontSize:11,fontWeight:800,color:C.muted}}>👤 {r.operator || "-"} · 📅 {fmtDate(r.reportDate)}</div>
                           </div>
-                          <span style={{padding:"5px 10px",borderRadius:999,background:"#ffebee",border:"1px solid #ffcdd2",color:C.red,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>מלח נמוך</span>
+                          <span style={{padding:"5px 10px",borderRadius:999,background:"#ffebee",border:"1px solid #ffcdd2",color:C.red,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>{Number.isFinite(numericSaltPpm(r.salt)) ? `מלח נמוך · ${numericSaltPpm(r.salt)} PPM` : "מלח נמוך"}</span>
                         </Press>
                       ))}
                     </div>;
@@ -8063,14 +8155,14 @@ useEffect(() => {
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                     <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>מתאריך</label><input type="date" value={reportDateFilter} onChange={e=>setReportDateFilter(e.target.value)} style={inp}/></div>
                     <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>עד תאריך</label><input type="date" value={reportDateToFilter} onChange={e=>setReportDateToFilter(e.target.value)} style={inp}/></div>
-                    <div style={{display:"flex",alignItems:"flex-end"}}><Press onClick={async()=>{ showToast("⏳ טוען דוחות..."); const res = await sheetCall("getReports",{fromDate:reportDateFilter || "",toDate:reportDateToFilter || reportDateFilter || "",query:reportFilter || "",limit:reportDateFilter || reportDateToFilter || reportFilter ? 500 : 250}); if(res?.reports?.length){setSheetReports(res.reports);showToast(`✅ ${res.reports.length} דוחות נטענו`);}else{showToast("⚠️ לא נמצאו דוחות");} }} style={{width:"100%",padding:"12px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:13,textAlign:"center"}}>🔄 טען מגיליון</Press></div>
+                    <div style={{display:"flex",alignItems:"flex-end"}}><Press onClick={async()=>{ showToast("⏳ טוען דוחות..."); const res = await sheetCall("getReports",{fromDate:reportDateFilter || "",toDate:reportDateToFilter || (reportDateFilter ? reportDateFilter : ""),query:reportFilter || "",limit:reportDateFilter || reportDateToFilter || reportFilter ? 500 : 250}); if(res?.reports?.length){setSheetReports(res.reports);showToast(`✅ ${res.reports.length} דוחות נטענו`);}else{showToast("⚠️ לא נמצאו דוחות");} }} style={{width:"100%",padding:"12px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:13,textAlign:"center"}}>🔄 טען מגיליון</Press></div>
                   </div>
                 </div>
               </div>
               {(()=>{
                 const allReports = [...sheetReports, ...reports.filter(r=>!r._fromSheet)];
                 const unique = allReports.filter((r, idx, arr)=>arr.findIndex(x=>sameReportIdentity(x, r))===idx);
-                const filtered = unique.reverse().filter(r=>{ const d=String(r.reportDate||"").slice(0,10); const q=reportFilter.trim().toLowerCase(); const matchText = !q || String(r.client||"").toLowerCase().includes(q) || String(r.operator||"").toLowerCase().includes(q); const matchFrom = !reportDateFilter || d>=reportDateFilter; const matchTo = !reportDateToFilter || d<=reportDateToFilter; return matchText && matchFrom && matchTo; });
+                const filtered = unique.reverse().filter(r=>{ const d=toISODate(r.reportDate) || normalizeDate(r.reportDate); const q=reportFilter.trim().toLowerCase(); const matchText = !q || String(r.client||"").toLowerCase().includes(q) || String(r.operator||"").toLowerCase().includes(q); const matchFrom = !reportDateFilter || d>=reportDateFilter; const matchTo = !reportDateToFilter || d<=reportDateToFilter; return matchText && matchFrom && matchTo; });
                 if(filtered.length===0) return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted,fontSize:14}}>אין דוחות — לחץ "טען מגיליון"</div>;
                 return filtered.map((r,i)=>(
                   <div key={i} style={{...card({marginBottom:12})}}>
@@ -8149,7 +8241,7 @@ useEffect(() => {
                   </div>
                 ))}
               </div>
-              {(()=>{ const allRep=[...sheetReports,...reports]; const unique=allRep.filter((r, idx, arr)=>arr.findIndex(x=>sameReportIdentity(x, r))===idx); const filtered=unique.filter(r=>{ const d=String(r.reportDate||"").slice(0,10); if(supplySearch.date&&d<supplySearch.date)return false; if(supplySearch.dateTo&&d>supplySearch.dateTo)return false; return reportHasAllowedSupply(r) && reportMatchesSupplyType(r, supplySearch.type); }).sort((a,b)=>b.reportDate?.localeCompare(a.reportDate)); if(filtered.length===0)return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תוצאות — לחץ "טען מגיליון" בטאב דוחות</div>; return filtered.map((r,i)=>{ const labelText=allowedSupplyLabelParts(r.supplyLabel).join(", "); return (<div key={i} style={{...card({marginBottom:10})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{r.phUp>0&&<span style={{background:"#f3e5f5",color:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>מעלה pH כוסות: {r.phUp}</span>}{r.acidLiters>0&&<span style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>חומצת מלח L: {r.acidLiters}</span>}{labelText&&<span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>{labelText}</span>}</div></div>); }); })()}
+              {(()=>{ const allRep=[...sheetReports,...reports]; const unique=allRep.filter((r, idx, arr)=>arr.findIndex(x=>sameReportIdentity(x, r))===idx); const filtered=unique.filter(r=>{ const d=toISODate(r.reportDate) || normalizeDate(r.reportDate); if(supplySearch.date&&d<supplySearch.date)return false; if(supplySearch.dateTo&&d>supplySearch.dateTo)return false; return reportHasAllowedSupply(r) && reportMatchesSupplyType(r, supplySearch.type); }).sort((a,b)=>(toISODate(b.reportDate) || normalizeDate(b.reportDate)).localeCompare(toISODate(a.reportDate) || normalizeDate(a.reportDate))); if(filtered.length===0)return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תוצאות — לחץ "טען מגיליון" בטאב דוחות</div>; return filtered.map((r,i)=>{ const labelText=allowedSupplyLabelParts(r.supplyLabel).join(", "); return (<div key={i} style={{...card({marginBottom:10})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{r.phUp>0&&<span style={{background:"#f3e5f5",color:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>מעלה pH כוסות: {r.phUp}</span>}{r.acidLiters>0&&<span style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>חומצת מלח L: {r.acidLiters}</span>}{labelText&&<span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>{labelText}</span>}</div></div>); }); })()}
             </div>
           )}
           {adminTab==="users"&&(
