@@ -7912,12 +7912,10 @@ useEffect(() => {
                         <div style={{minWidth:54,display:"flex",justifyContent:"center",paddingTop:4}}><Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/></div>
                         <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}} style={{width:34,height:32,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:9,background:"#e3f2fd",color:C.blue,fontSize:14,fontWeight:900}}>✏️</Press>
                         <div style={{width:92,minHeight:58,display:"flex",flexDirection:"column",gap:4}}>
-                          {t.status!=="done"&&t.adminApproval!=="approved" ? <>
                             <Press onClick={()=>approveOperatorTaskRequest(t.id,true)} style={{width:"100%",height:32,padding:"0 8px",borderRadius:9,background:actionStatus[`approveTask:${t.id}`]==="success"?C.green:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontSize:11,fontWeight:900,whiteSpace:"nowrap",display:"flex",alignItems:"center",justifyContent:"center"}}>
                               {actionLabel(`approveTask:${t.id}`,{idle:"אשר ושלח",loading:"שולח...",success:"נשלח",error:"נסה שוב"})}
                             </Press>
                             {t.adminApproval==="pending"&&<Press onClick={()=>approveOperatorTaskRequest(t.id,false)} style={{width:"100%",height:22,padding:0,borderRadius:7,background:"#ffebee",color:C.red,fontSize:10,fontWeight:900,border:"1px solid #ffcdd2",display:"flex",alignItems:"center",justifyContent:"center"}}>דחה</Press>}
-                          </> : <span aria-hidden="true" style={{display:"block",width:"100%",height:32,visibility:"hidden"}} />}
                         </div>
                       </div>
                     </div>
