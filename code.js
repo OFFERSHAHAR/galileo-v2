@@ -608,8 +608,17 @@
         const fromDate = normalizeSheetDate_(data.fromDate || data.reportDate || data.dateFrom || "");
         const toDate = normalizeSheetDate_(data.toDate || data.dateTo || "");
         const query = String(data.query || data.search || "").trim().toLowerCase();
+        const wantedClient = String(data.client || data.clientName || "").trim().toLowerCase();
+        const wantedClientId = String(data.clientId || "").trim();
         const limit = Math.max(0, Number(data.limit || 0) || 0);
         let dataRows = allReportRows_(ss);
+        if (wantedClient || wantedClientId) {
+          dataRows = dataRows.filter(r => {
+            const rowClientId = String(reportCell_(r,24) || "").trim();
+            if (wantedClientId && rowClientId) return rowClientId === wantedClientId;
+            return wantedClient && String(reportCell_(r,2) || "").trim().toLowerCase() === wantedClient;
+          });
+        }
         if (fromDate) dataRows = dataRows.filter(r => normalizeSheetDate_(reportCell_(r,0)) >= fromDate);
         if (toDate) dataRows = dataRows.filter(r => normalizeSheetDate_(reportCell_(r,0)) <= toDate);
         if (query) {
@@ -4265,42 +4274,64 @@ function getSupplyDB_(ss) {
 
 function getLastReadings_(ss) {
   const readings = {};
+  const histories = {};
   const clientNotes = getClientInternalNotes_(ss);
   const reportRows = dedupeReportRows_(allReportRows_(ss));
   const lastReportNotes = {};
   reportRows.forEach(r => {
-    const client = String(reportCell_(r,2));
+    const client = String(reportCell_(r,2) || "").trim();
     const date = normalizeSheetDate_(reportCell_(r,0));
     const note = String(reportCell_(r,16)||"").trim();
-    if (note && (!lastReportNotes[client] || date >= lastReportNotes[client].date)) {
+    if (client && date && note && (!lastReportNotes[client] || date >= lastReportNotes[client].date)) {
       lastReportNotes[client] = { note:note, date:date };
     }
   });
   reportRows.forEach(r => {
-    const client = String(reportCell_(r,2));
+    const client = String(reportCell_(r,2) || "").trim();
     const date = normalizeSheetDate_(reportCell_(r,0));
-    if (!readings[client] || date > readings[client].date) {
-      const clientId = String(reportCell_(r,24)||"");
-      const clientNote = (clientId && clientNotes.byId[clientId]) || clientNotes.byClient[client] || null;
-      const reportNote = lastReportNotes[client] || null;
-      readings[client] = {
-        client, date, chlorine: reportCell_(r,3), ph: reportCell_(r,4),
-        clientId: clientId,
-        chlora: reportCell_(r,19)||0, hth: reportCell_(r,20)||0, phUp: reportCell_(r,21)||0, acidLiters: reportCell_(r,22)||0,
-        elModel: String(reportCell_(r,10)||""), elSerial: String(reportCell_(r,11)||""),
-        elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||""),
-        elNext: reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||""),
-        poolStatus: String(reportCell_(r,15)||""),
-        customStatusText: clientNote ? clientNote.note : (reportNote ? reportNote.note : String(reportCell_(r,16)||"")),
-        internalNoteDate: clientNote ? clientNote.date : "",
-        notes: String(reportCell_(r,18)||""),
-        missedTreatment: String(reportCell_(r,18)||"").trim() === "לא בוצע טיפול"
-      };
-    }
+    if (!client || !date) return;
+    const clientId = String(reportCell_(r,24)||"");
+    if (!histories[client]) histories[client] = {};
+    histories[client][date] = {
+      client, clientId, date, reportDate:date,
+      chlorine: reportCell_(r,3), ph: reportCell_(r,4), salt: reportCell_(r,5),
+      chlora: reportCell_(r,19)||0, hth: reportCell_(r,20)||0, phUp: reportCell_(r,21)||0, acidLiters: reportCell_(r,22)||0,
+      elModel: String(reportCell_(r,10)||""), elSerial: String(reportCell_(r,11)||""),
+      elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||""),
+      elNext: reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||""),
+      poolStatus: String(reportCell_(r,15)||""),
+      customStatusText: String(reportCell_(r,16)||""),
+      notes: String(reportCell_(r,18)||""),
+      missedTreatment: String(reportCell_(r,18)||"").trim() === "לא בוצע טיפול"
+    };
+  });
+  Object.keys(histories).forEach(client => {
+    const ordered = Object.keys(histories[client]).sort((a,b) => b.localeCompare(a)).map(date => histories[client][date]).slice(0,4);
+    if (!ordered.length) return;
+    const latest = ordered[0];
+    const clientNote = (latest.clientId && clientNotes.byId[latest.clientId]) || clientNotes.byClient[client] || null;
+    const reportNote = lastReportNotes[client] || null;
+    readings[client] = {
+      ...latest,
+      customStatusText: clientNote ? clientNote.note : (reportNote ? reportNote.note : latest.customStatusText),
+      internalNoteDate: clientNote ? clientNote.date : "",
+      previousMeasurements: ordered.slice(1,4).map(reading => ({
+        client: reading.client,
+        clientId: reading.clientId,
+        date: reading.date,
+        reportDate: reading.reportDate,
+        chlorine: reading.chlorine,
+        ph: reading.ph,
+        salt: reading.salt,
+        chlora: reading.chlora,
+        hth: reading.hth,
+        phUp: reading.phUp,
+        acidLiters: reading.acidLiters
+      }))
+    };
   });
   return readings;
 }
-
 function getUnassignedClients_(ss) {
   let sheet = ss.getSheetByName("לקוחות_ללא_שיוך");
   if(!sheet) {

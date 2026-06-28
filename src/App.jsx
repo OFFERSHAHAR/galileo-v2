@@ -2760,6 +2760,8 @@ useEffect(() => {
   const [openCompletedPools,setOpenCompletedPools] = useState(false);
   const [openTodayTasks,setOpenTodayTasks] = useState(false);
   const [openMeasurementHistory,setOpenMeasurementHistory] = useState({});
+  const [measurementHistoryByClient,setMeasurementHistoryByClient] = useState({});
+  const [measurementHistoryLoading,setMeasurementHistoryLoading] = useState({});
   const [allDailyCardsCollapsed,setAllDailyCardsCollapsed] = useState(false);
   const logoLongPress = useRef();
   const longPressTimers = useRef({});
@@ -3365,42 +3367,53 @@ useEffect(() => {
     const nameMatch = isAdminPanelRole(user?.role) || (t.operators||[]).some(op => normalizeName(op)===normalizeName(ownerName) || subValues.includes(normalizeName(op)));
     return dateMatch && nameMatch;
   });
-  const measurementTabValue = (value) => {
-    const text = String(value ?? "").trim();
-    return text === "" ? "0" : text;
-  };
-  const measurementIdentity = (source = {}) => [
-    normalizeDate(source.reportDate || source.date),
-    source.chlorine ?? "",
-    source.ph ?? "",
-    measurementTabValue(source.chlora)
-  ].join("|");
-  const isSameMeasurementReading = (report = {}, reading = {}) => {
-    const sameDate = normalizeDate(report.reportDate || report.date) === normalizeDate(reading.reportDate || reading.date);
-    const sameChlorine = String(report.chlorine ?? "") === String(reading.chlorine ?? "");
-    const samePh = String(report.ph ?? "") === String(reading.ph ?? "");
-    const sameTab = measurementTabValue(report.chlora) === measurementTabValue(reading.chlora);
-    return sameDate && sameChlorine && samePh && sameTab;
+  const measurementDate = (source = {}) => normalizeDate(source.reportDate || source.date);
+  const mergeLatestReading = (previous = {}, incoming = {}) => {
+    const byDate = new Map();
+    [...(Array.isArray(previous.previousMeasurements) ? previous.previousMeasurements : []), previous, incoming].forEach(reading => {
+      const date = measurementDate(reading);
+      if (!date) return;
+      byDate.set(date, {...reading, date, reportDate:date});
+    });
+    const ordered = [...byDate.values()].sort((a,b)=>measurementDate(b).localeCompare(measurementDate(a)));
+    if (!ordered.length) return {...previous, ...incoming};
+    const [latest, ...older] = ordered;
+    return {...latest, previousMeasurements:older.slice(0,3)};
   };
   const clientMeasurementHistory = (clientName, id = "", latestReading = null) => {
     const wantedId = String(id || clientIdByName(clientName) || "").trim();
     const wantedName = normalizeName(clientName);
-    const seen = new Set();
-    return [...sheetReports, ...reports]
+    const historyKey = wantedId || clientName;
+    const latestDate = measurementDate(latestReading || {});
+    const seenDates = new Set();
+    const serverHistory = Array.isArray(latestReading?.previousMeasurements) ? latestReading.previousMeasurements : [];
+    const fetchedHistory = Array.isArray(measurementHistoryByClient[historyKey]) ? measurementHistoryByClient[historyKey] : [];
+    return [...serverHistory, ...fetchedHistory, ...sheetReports, ...reports]
       .filter(r => {
         const reportClientId = String(r?.clientId || "").trim();
         if (wantedId && reportClientId) return reportClientId === wantedId;
         return normalizeName(r?.client) === wantedName;
       })
-      .sort((a,b)=>normalizeDate(b.reportDate).localeCompare(normalizeDate(a.reportDate)))
+      .sort((a,b)=>measurementDate(b).localeCompare(measurementDate(a)))
       .filter(r => {
-        const key = measurementIdentity(r);
-        if (latestReading && isSameMeasurementReading(r, latestReading)) return false;
-        if (seen.has(key)) return false;
-        seen.add(key);
+        const date = measurementDate(r);
+        if (!date || date === latestDate || seenDates.has(date)) return false;
+        seenDates.add(date);
         return true;
       })
-      .slice(0,4);
+      .slice(0,3);
+  };
+  const loadClientMeasurementHistory = async (clientName, id = "", historyKey = "") => {
+    const key = historyKey || String(id || clientIdByName(clientName) || clientName);
+    setMeasurementHistoryLoading(prev=>({...prev,[key]:true}));
+    try {
+      const result = await sheetCall("getReports", {client:clientName, clientId:id || clientIdByName(clientName), query:clientName});
+      if (Array.isArray(result?.reports)) setMeasurementHistoryByClient(prev=>({...prev,[key]:result.reports}));
+    } catch (error) {
+      console.warn("Measurement history load failed", error);
+    } finally {
+      setMeasurementHistoryLoading(prev=>({...prev,[key]:false}));
+    }
   };
   const supplyPartsFromLabel = (label) => String(label || "").split(",").map(x=>x.trim()).filter(Boolean);
   const suppliedListFrom = (value) => Array.isArray(value)
@@ -5335,17 +5348,24 @@ useEffect(() => {
       rememberCompletedReport(savedReport);
       setLastReadings(prev => ({
         ...prev,
-        [report.client]: {
-          ...(prev[report.client] || {}),
+        [report.client]: mergeLatestReading(prev[report.client] || {}, {
+          client: report.client,
+          clientId: report.clientId || clientIdByName(report.client),
           date: report.reportDate,
+          reportDate: report.reportDate,
           chlorine: report.chlorine,
           ph: report.ph,
           salt: report.salt,
+          chlora: report.chlora || 0,
+          hth: report.hth || 0,
+          phUp: report.phUp || 0,
+          acidLiters: report.acidLiters || 0,
           poolStatus: report.poolStatus,
           customStatusText: report.customStatusText,
+          internalNoteDate: report.internalNoteDate || report.reportDate,
           notes: report.notes,
           missedTreatment: false
-        }
+        })
       }));
       const match = tasks.find(t => t.date === report.reportDate && t.client === report.client && (t.operators || []).includes(report.operator) && t.status !== "done");
       if (match) markDone(match.id);
@@ -5534,11 +5554,11 @@ useEffect(() => {
         : "";
       return {
         ...prev,
-        [client]: {
-          ...previous,
+        [client]: mergeLatestReading(previous, {
           client,
           clientId: clientIdByName(client),
           date: reportDate,
+          reportDate,
           chlorine,
           ph: report.ph,
           salt,
@@ -5551,7 +5571,7 @@ useEffect(() => {
           internalNoteDate,
           notes,
           missedTreatment: false
-        }
+        })
       };
     });
 
@@ -6713,6 +6733,12 @@ useEffect(() => {
                     <Press onClick={()=>{ackChange(t.id,logIdx);haptic("success");}} style={{padding:"8px 16px",borderRadius:99,background:"#e65100",color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>קיבלתי ✓</Press>
                   </div>
                 )}
+                {String(t.adminNote||"").trim()&&(
+                  <div style={{background:"#fff8e1",borderRadius:10,padding:"9px 12px",marginBottom:10,border:"1px solid #ffe082",fontSize:12,color:C.text,fontWeight:800,lineHeight:1.5}}>
+                    <div style={{color:C.orange,fontWeight:900,marginBottom:2}}>📝 הערה לטיפול</div>
+                    <div>{t.adminNote}</div>
+                  </div>
+                )}
                 {hasFreeClientTasks&&(
                   <div style={{background:"#eef6ff",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`2px solid rgba(21,101,192,0.24)`,color:C.text,lineHeight:1.5}}>
                     <div style={{fontSize:17,fontWeight:900,color:C.blue,marginBottom:freeClientTaskNotes.length?4:0}}>משימה חופשית</div>
@@ -6736,7 +6762,7 @@ useEffect(() => {
                     <div style={{marginBottom:10}}>
                       {(()=>{ const historyKey = t.clientId || t.client; const history = clientMeasurementHistory(t.client, t.clientId, lr); const historyOpen = !!openMeasurementHistory[historyKey]; return (
                         <>
-                      <Press onClick={()=>{setOpenMeasurementHistory(x=>({...x,[historyKey]:!x[historyKey]}));haptic();}} style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",cursor:"pointer",width:"100%",border:historyOpen?`1px solid ${C.blue}`:"1px solid transparent"}}>
+                      <Press onClick={()=>{const opening=!historyOpen;setOpenMeasurementHistory(x=>({...x,[historyKey]:opening}));if(opening)void loadClientMeasurementHistory(t.client,t.clientId,historyKey);haptic();}} style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",cursor:"pointer",width:"100%",border:historyOpen?`1px solid ${C.blue}`:"1px solid transparent"}}>
                         <span style={{fontSize:12,fontWeight:700,color:C.blue}}>📊 מדידה אחרונה:</span>
                         <span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>Cl: {lr.chlorine}</span>
                         <span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph}</span>
@@ -6748,9 +6774,9 @@ useEffect(() => {
                       </Press>
                       {historyOpen&&(
                         <div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 10px",marginBottom:6,border:`1px solid ${C.border}`,display:"grid",gap:6}}>
-                          {history.length ? history.map((r,idx)=>(
+                          {measurementHistoryLoading[historyKey] ? <div style={{fontSize:11,fontWeight:800,color:C.muted,textAlign:"center"}}>טוען מדידות קודמות...</div> : history.length ? history.map((r,idx)=>(
                             <div key={`${r.id || r.reportDate || idx}-history`} style={{display:"grid",gridTemplateColumns:"82px 1fr",gap:8,alignItems:"center",padding:"6px 0",borderBottom:idx<history.length-1?`1px solid ${C.border}`:"none"}}>
-                              <span style={{fontSize:11,fontWeight:900,color:C.text}}>{fmtDate(normalizeDate(r.reportDate))}</span>
+                              <span style={{fontSize:11,fontWeight:900,color:C.text}}>{fmtDate(measurementDate(r))}</span>
                               <span style={{fontSize:11,fontWeight:800,color:C.muted,display:"flex",gap:8,flexWrap:"wrap"}}>
                                 <span style={{color:"#1565c0"}}>Cl: {r.chlorine ?? "-"}</span>
                                 <span style={{color:"#6a1b9a"}}>pH: {r.ph ?? "-"}</span>
