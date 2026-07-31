@@ -4,11 +4,13 @@ import { createPortal } from "react-dom";
 const DEMO_USERS = [];
 const DEMO_CLIENTS = [];
 const WA_TEMPLATE_STORAGE_KEY = "galileo_whatsapp_template";
-const WA_POLL_MESSAGE_STORAGE_KEY = "galileo_whatsapp_poll_message";
-const WA_POLL_OPTIONS_STORAGE_KEY = "galileo_whatsapp_poll_options";
+const WA_ACID_SUPPLY_MESSAGE_STORAGE_KEY = "galileo_whatsapp_acid_supply_message";
+const WA_PH_UP_SUPPLY_MESSAGE_STORAGE_KEY = "galileo_whatsapp_ph_up_supply_message";
+const WA_SALT_SUPPLY_MESSAGE_STORAGE_KEY = "galileo_whatsapp_salt_supply_message";
 const WA_TABLET_REMINDER_STORAGE_KEY = "galileo_whatsapp_tablet_reminder_message";
 const WA_WATER_LEVEL_NOTICE_STORAGE_KEY = "galileo_whatsapp_water_level_notice_message";
 const WA_DISABLED_CLIENTS_STORAGE_KEY = "galileo_whatsapp_disabled_clients";
+const PENDING_OPERATOR_ISSUES_STORAGE_KEY = "galileo_pending_operator_issues";
 const CHLORINE_TABLET_REMINDER_DAYS = 3;
 const DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE = "יש להוסיף טבלית כלור :)";
 const DEFAULT_WATER_LEVEL_NOTICE_MESSAGE = "⚠️ לתשומת ליבך - יש למלא מים עד לגובה הרצוי";
@@ -24,19 +26,14 @@ const DEFAULT_WA_MESSAGE_TEMPLATE = `*טיפול בריכה הושלם!*
 _צוות {company}_`;
 
 const normalizeWaMessageTemplate = (value) => String(value || "").trim() || DEFAULT_WA_MESSAGE_TEMPLATE;
-const DEFAULT_WA_POLL_MESSAGE = "האם מאושר לספק חומרים לאיזון המים?";
-const normalizeWaPollMessage = (value) => String(value || "").trim() || DEFAULT_WA_POLL_MESSAGE;
-const DEFAULT_WA_POLL_OPTIONS = ["מאשר אספקה", "לא מאשר"];
+const DEFAULT_ACID_SUPPLY_MESSAGE = "בטיפול הבא תסופק חומצת מלח לאיזון מי הבריכה.";
+const DEFAULT_PH_UP_SUPPLY_MESSAGE = "בטיפול הבא יסופק מעלה pH לאיזון מי הבריכה.";
+const DEFAULT_SALT_SUPPLY_MESSAGE = "בטיפול הבא יסופקו שקי מלח לבריכה בכמות {כמות}.";
+const normalizeAcidSupplyMessage = (value) => String(value || "").trim() || DEFAULT_ACID_SUPPLY_MESSAGE;
+const normalizePhUpSupplyMessage = (value) => String(value || "").trim() || DEFAULT_PH_UP_SUPPLY_MESSAGE;
+const normalizeSaltSupplyMessage = (value) => String(value || "").trim() || DEFAULT_SALT_SUPPLY_MESSAGE;
 const normalizeChlorineReminderMessage = (value) => String(value || "").trim() || DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE;
 const normalizeWaterLevelNoticeMessage = (value) => String(value || "").trim() || DEFAULT_WATER_LEVEL_NOTICE_MESSAGE;
-const normalizeWaPollOptions = (value) => {
-  let source = value;
-  if (typeof source === "string") {
-    try { source = JSON.parse(source); } catch { source = source.split(/\r?\n/); }
-  }
-  const options = Array.isArray(source) ? source.map(v => String(v || "").trim()).filter(Boolean) : [];
-  return [options[0] || DEFAULT_WA_POLL_OPTIONS[0], options[1] || DEFAULT_WA_POLL_OPTIONS[1]];
-};
 const DEFAULT_NEXT_SUPPLY_PRICES = {"חומצת מלח":100,"סודה אש":120};
 const NEXT_SUPPLY_PRICE_COLUMN = "מחיר_פר_חומר_לטיפול_הבא";
 const normalizeNextSupplyPrices = (value) => {
@@ -60,6 +57,20 @@ const nextSupplyPriceSummary = (supplyLabel, prices) => {
   const rows = [];
   if (label.includes("חומצת")) rows.push(`חומצת מלח - ${map["חומצת מלח"] || 0} שח`);
   if (label.includes("מעלה") || label.includes("סודה")) rows.push(`סודה אש - ${map["סודה אש"] || 0} שח`);
+  return rows.join("\n");
+};
+const supplyDeliveryMessage = (supplyLabel, messages = {}) => {
+  const label = String(supplyLabel || "");
+  const parts = label.split(",").map(part => part.trim()).filter(Boolean);
+  const rows = [];
+  if (parts.some(part => part.includes("חומצת"))) rows.push(normalizeAcidSupplyMessage(messages.acid));
+  if (parts.some(part => part.includes("מעלה") || part.includes("סודה"))) rows.push(normalizePhUpSupplyMessage(messages.phUp));
+  const saltPart = parts.find(part => /^(?:שקי\s+)?מלח(?:\s*[×xX]\s*\d+)?$/.test(part));
+  if (saltPart) {
+    const saltMatch = saltPart.match(/[×xX]\s*(\d+)/);
+    const quantity = String(saltMatch?.[1] || "").trim();
+    rows.push(normalizeSaltSupplyMessage(messages.salt).replaceAll("{כמות}", quantity || "שנבחרה בדוח"));
+  }
   return rows.join("\n");
 };
 const renderWaMessageTemplate = (template, values) => {
@@ -111,7 +122,15 @@ const getDailyGreeting = (username) => {
 
 const CITY = "ישראל";
 const wazeUrl = (a) => `https://waze.com/ul?q=${encodeURIComponent(a+", "+CITY)}&navigate=yes`;
-const todayStr = () => new Date().toISOString().slice(0,10);
+const localDayKey = (date = new Date()) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+const todayStr = () => localDayKey();
+const makeReportId = () => globalThis.crypto?.randomUUID?.() ||
+  `report-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 const isIOSDevice = () => {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent || "";
@@ -133,12 +152,6 @@ const IPhoneComfortLayer = () => (
   `}</style>
 );
 const LOGIN_DAY_KEY = "galileo_login_day";
-const localDayKey = (date = new Date()) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
 function getStoredUserForToday() {
   try {
     const saved = localStorage.getItem("galileo_user");
@@ -408,8 +421,8 @@ const SHEET_READ_ACTIONS = new Set([
   "getBootstrapData","getOperatorRefreshData","getTasks","getUsers","getAdminOrders",
   "getOperatorRefreshVersion",
   "getSubOperatorShares","getSubOperatorApprovals","getPendingSubReports","getLastReadings",
-  "getClientSettings","getReports","getMaterialApprovals","getReportStorageStatus",
-  "getClients","getUnassignedClients","getOperatorIssues","getTreatmentCounts","getOperatorDoneAlerts"
+  "getClientSettings","getReports","getReportStorageStatus",
+  "getClients","getOperatorIssues","getTreatmentCounts","getOperatorDoneAlerts"
 ]);
 async function sheetCall(action, payload={}) {
   const execute = async () => {
@@ -441,12 +454,57 @@ const PENDING_REPORT_STORE = "pending-reports";
 const PENDING_REPORT_SYNC_TAG = "galileo-pending-reports";
 
 function pendingReportStorageId(item = {}) {
+  const fixedId = String(item?.pendingStorageId || item?.queueId || "").trim();
+  if (fixedId) return fixedId;
   const report = item?.report || item || {};
   const id = String(report.id || "").trim();
   if (id) return id;
-  return [report.reportDate, report.operator, report.client]
+  return [report.reportDate, report.operator, report.clientId || report.client]
     .map(value => String(value || "").trim().toLowerCase())
     .join("|");
+}
+
+function pendingReportLegacyPayloadFingerprintValue(item) {
+  try {
+    const wrapped = item?.report ? item : { report:item || {} };
+    const report = {...(wrapped.report || {})};
+    delete report.id;
+    return JSON.stringify({
+      report,
+      supplyUpdate:wrapped.supplyUpdate || null,
+      deliveryDecision:wrapped.deliveryDecision || null,
+      updateOriginal:wrapped.updateOriginal || null,
+      sendWhatsAppOnSave:wrapped.sendWhatsAppOnSave
+    });
+  } catch {
+    return "";
+  }
+}
+
+function pendingReportPayloadFingerprintValue(item) {
+  const queueRevision = String(item?.queueRevision || "").trim();
+  return queueRevision
+    ? `revision:${queueRevision}`
+    : pendingReportLegacyPayloadFingerprintValue(item);
+}
+
+function pendingQueueRevisionHash(value) {
+  let hash = 2166136261;
+  const text = String(value || "");
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function ensurePendingReportQueueVersion(item, fallbackUpdatedAt = 0) {
+  const wrapped = item?.report ? item : { report:item || {} };
+  const pendingStorageId = String(wrapped.pendingStorageId || pendingReportStorageId(wrapped) || "").trim();
+  const queueRevision = String(wrapped.queueRevision || "").trim() ||
+    `legacy-${pendingQueueRevisionHash(`${pendingStorageId}|${pendingReportLegacyPayloadFingerprintValue(wrapped)}`)}`;
+  const queueUpdatedAt = Number(wrapped.queueUpdatedAt || fallbackUpdatedAt || 0) || Date.now();
+  return {...wrapped, pendingStorageId, queueRevision, queueUpdatedAt};
 }
 
 function openPendingReportDB() {
@@ -479,7 +537,9 @@ async function loadPendingReportsFromIndexedDB() {
   try {
     const transaction = db.transaction(PENDING_REPORT_STORE, "readonly");
     const records = await idbRequest(transaction.objectStore(PENDING_REPORT_STORE).getAll());
-    return records.map(record => record?.item).filter(Boolean);
+    return records
+      .map(record => record?.item ? ensurePendingReportQueueVersion(record.item, record.updatedAt) : null)
+      .filter(Boolean);
   } finally {
     db.close();
   }
@@ -487,10 +547,34 @@ async function loadPendingReportsFromIndexedDB() {
 
 function makePendingReportRecord(item, previous) {
   const company = getCompany();
-  const previousSaved = !!(previous?.item?.report && previous.item.savedToSheet);
+  const previousItem = previous?.item;
+  const wrappedItem = item?.report ? item : { report:item };
+  const wrappedPrevious = previousItem?.report ? previousItem : null;
+  const legacyMigration = !!wrappedPrevious &&
+    !wrappedPrevious.queueRevision &&
+    !!wrappedItem.queueRevision &&
+    pendingReportLegacyPayloadFingerprintValue(wrappedPrevious) ===
+      pendingReportLegacyPayloadFingerprintValue(wrappedItem);
+  const sameReportPayload = !wrappedPrevious ||
+    legacyMigration ||
+    pendingReportPayloadFingerprintValue(wrappedPrevious) === pendingReportPayloadFingerprintValue(wrappedItem);
+  const mergedItem = wrappedItem.replacePendingState
+    ? {...wrappedItem, replacePendingState:false}
+    : wrappedPrevious && sameReportPayload
+    ? {
+        ...wrappedPrevious,
+        ...wrappedItem,
+        report:wrappedItem.report || wrappedPrevious.report,
+        savedToSheet:!!(wrappedPrevious.savedToSheet || wrappedItem.savedToSheet),
+        whatsappSent:!!(wrappedPrevious.whatsappSent || wrappedItem.whatsappSent),
+        deliveryDecision:wrappedPrevious.deliveryDecision || wrappedItem.deliveryDecision
+      }
+    : wrappedPrevious
+    ? wrappedPrevious
+    : item;
   return {
     id:pendingReportStorageId(item),
-    item:previousSaved ? previous.item : item,
+    item:mergedItem,
     scriptUrl:getScriptUrl(),
     sheetId:company.sheetId || localStorage.getItem("galileo_sheet_id") || "",
     updatedAt:Date.now()
@@ -516,18 +600,31 @@ async function upsertPendingReportInIndexedDB(item) {
   }
 }
 
-async function deletePendingReportFromIndexedDB(item) {
+async function deletePendingReportFromIndexedDBIfUnchanged(item) {
   const id = pendingReportStorageId(item);
-  if (!id) return;
+  if (!id) return true;
   const db = await openPendingReportDB();
+  let deleted = false;
   try {
     const transaction = db.transaction(PENDING_REPORT_STORE, "readwrite");
-    transaction.objectStore(PENDING_REPORT_STORE).delete(id);
+    const store = transaction.objectStore(PENDING_REPORT_STORE);
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const current = request.result;
+      if (!current) {
+        deleted = true;
+        return;
+      }
+      if (pendingReportPayloadFingerprintValue(current.item) !== pendingReportPayloadFingerprintValue(item)) return;
+      store.delete(id);
+      deleted = true;
+    };
     await new Promise((resolve, reject) => {
       transaction.oncomplete = resolve;
       transaction.onerror = () => reject(transaction.error || new Error("indexeddb_delete_failed"));
       transaction.onabort = () => reject(transaction.error || new Error("indexeddb_delete_aborted"));
     });
+    return deleted;
   } finally {
     db.close();
   }
@@ -542,15 +639,10 @@ async function persistPendingReportsToIndexedDB(items = []) {
     request.onsuccess = () => {
       const existing = Array.isArray(request.result) ? request.result : [];
       const existingById = new Map(existing.map(record => [record.id, record]));
-      const wantedIds = new Set();
       items.forEach(item => {
         const id = pendingReportStorageId(item);
         if (!id) return;
-        wantedIds.add(id);
         store.put(makePendingReportRecord(item, existingById.get(id)));
-      });
-      existing.forEach(record => {
-        if (!wantedIds.has(record.id)) store.delete(record.id);
       });
     };
     await new Promise((resolve, reject) => {
@@ -571,8 +663,7 @@ async function requestPendingReportBackgroundSync() {
       await registration.sync.register(PENDING_REPORT_SYNC_TAG);
       return true;
     }
-    registration.active?.postMessage({ type:"PROCESS_PENDING_REPORTS" });
-    return !!registration.active;
+    return false;
   } catch (error) {
     console.warn("Pending report background sync registration failed", error);
     return false;
@@ -887,19 +978,39 @@ function checklistFromText(text) {
   return items.length ? [{group:"ציוד אישי", items}] : DAILY_EQUIPMENT_CHECKLIST;
 }
 
-function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[],equipmentChecklist=DAILY_EQUIPMENT_CHECKLIST,onStartWork,onConfirm,onClose}) {
+function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,supplyForPool,subOperators=[],equipmentChecklist=DAILY_EQUIPMENT_CHECKLIST,onStartWork,onConfirm,onClose,english=false}) {
   const list = Array.isArray(tasks) ? tasks : [];
   const materialList = Array.isArray(supplyTasks) ? supplyTasks : [];
   const linkedSubs = Array.isArray(subOperators) ? subOperators.filter(Boolean) : [];
   const checklist = normalizeEquipmentChecklist(equipmentChecklist);
+  const tx = (hebrew, englishText) => english ? englishText : hebrew;
+  const equipmentText = (value) => {
+    if (!english) return value;
+    const translations = {
+      "בדיקות":"Testing", "ניקוי":"Cleaning", "בטיחות":"Safety", "ציוד אישי":"Personal equipment",
+      "ערכת בדיקה":"Test kit", "מד מלח":"Salt meter", "כוס מדידה":"Measuring cup", "סוללות / טעינה":"Batteries / charging",
+      "רשת עלים":"Leaf net", "מברשת":"Brush", "מוט טלסקופי":"Telescopic pole", "שואב / ראש ניקוי":"Vacuum / cleaning head",
+      "כפפות":"Gloves", "משקפי מגן":"Safety glasses", "מים לשתייה":"Drinking water", "טלפון טעון":"Charged phone"
+    };
+    return translations[value] || value;
+  };
   const [openMaterial,setOpenMaterial] = useState(null);
   const [equipmentChecked,setEquipmentChecked] = useState({});
+  const supplyForTask = (task = {}) => {
+    if (typeof supplyForPool === "function") return supplyForPool(task.client, task.clientId);
+    const id = String(task.clientId || "").trim();
+    if (id && supplyDB?.[id]) return supplyDB[id];
+    if (id) {
+      return Object.values(supplyDB || {}).find(item => String(item?.clientId || "").trim() === id) || null;
+    }
+    return supplyDB?.[task.client] || null;
+  };
   const toggleEquipment = (group, item) => {
     const key = `${group}:${item}`;
     setEquipmentChecked(prev=>({...prev,[key]:!prev[key]}));
   };
   const materials = materialList.reduce((acc, task) => {
-    const supply = supplyDB?.[task.client];
+    const supply = supplyForTask(task);
     if (!supply) return acc;
     if (supply.acid) acc.acid += 1;
     if (supply.phUpSupply) acc.phUpSupply += 1;
@@ -907,7 +1018,7 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
     return acc;
   }, { acid: 0, phUpSupply: 0, saltBags: 0 });
   const materialRecipients = materialList.reduce((acc, task) => {
-    const supply = supplyDB?.[task.client];
+    const supply = supplyForTask(task);
     if (!supply) return acc;
     const client = String(task.client || "").split(" - ")[0];
     if (supply.acid) acc.acid.push(client);
@@ -917,28 +1028,28 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
   }, { acid: [], phUpSupply: [], saltBags: [] });
   const hasMaterials = materials.acid || materials.phUpSupply || materials.saltBags;
   return (
-    <div dir="rtl" style={{position:"fixed",inset:0,zIndex:1300,background:"rgba(15,23,42,0.38)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
+    <div dir={english?"ltr":"rtl"} style={{position:"fixed",inset:0,zIndex:1300,background:"rgba(15,23,42,0.38)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
       <div style={{width:"100%",maxWidth:420,maxHeight:"88vh",overflowY:"auto",background:"rgba(255,255,255,0.82)",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)",borderRadius:28,boxShadow:"0 28px 90px rgba(15,23,42,0.20), 0 1px 0 rgba(255,255,255,0.86) inset",border:"1px solid rgba(148,163,184,0.24)",padding:16}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
           <div>
-            <div style={{fontSize:18,fontWeight:900,color:C.text}}>פותחים יום</div>
-            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginTop:2}}>סדר היום שהוכן לך</div>
+            <div style={{fontSize:18,fontWeight:900,color:C.text}}>{tx("פותחים יום","Start your day")}</div>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginTop:2}}>{tx("סדר היום שהוכן לך","Your prepared route")}</div>
           </div>
           <Press onClick={onClose || onConfirm} style={{width:34,height:34,borderRadius:12,background:"rgba(241,245,249,0.84)",color:C.muted,fontWeight:900,fontSize:18,lineHeight:1,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
           <div style={{background:"#e3f2fd",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
             <div style={{fontSize:22,fontWeight:900,color:C.blue}}>{list.length}</div>
-            <div style={{fontSize:11,fontWeight:800,color:C.muted}}>בריכות היום</div>
+            <div style={{fontSize:11,fontWeight:800,color:C.muted}}>{tx("בריכות היום","Pools today")}</div>
           </div>
           <div style={{background:workStart?"#e8f5e9":"#fff8e1",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
             <div style={{fontSize:16,fontWeight:900,color:workStart?C.green:C.orange}}>{workStart || "--:--"}</div>
-            <div style={{fontSize:11,fontWeight:800,color:C.muted}}>שעון עבודה</div>
+            <div style={{fontSize:11,fontWeight:800,color:C.muted}}>{tx("שעון עבודה","Work clock")}</div>
           </div>
         </div>
         {linkedSubs.length>0&&(
           <div style={{background:"#eef6ff",border:`1px solid ${C.border}`,borderRadius:14,padding:"10px 12px",marginBottom:12}}>
-            <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:6}}>עוזר מפעיל משויך להיום</div>
+            <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:6}}>{tx("עוזר מפעיל משויך להיום","Assistant assigned today")}</div>
             {linkedSubs.map((sub,i)=>(
               <div key={sub.username || sub.name || i} style={{fontSize:12,fontWeight:800,color:C.blue,padding:"3px 0"}}>
                 {sub.name || sub.username}
@@ -948,20 +1059,20 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
         )}
         {!workStart&&(
           <Press onClick={onStartWork} style={{padding:"12px 14px",borderRadius:16,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",marginBottom:12,boxShadow:"0 14px 32px rgba(79,70,229,0.22)"}}>
-            הפעל שעון
+            {tx("הפעל שעון","Start clock")}
           </Press>
         )}
         <div style={{background:"#f8fbff",border:`1px solid ${C.border}`,borderRadius:14,padding:12,marginBottom:12}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
             <div>
-              <div style={{fontSize:12,fontWeight:900,color:C.text}}>צ׳ק ליסט ציוד יומי</div>
-              <div style={{fontSize:10,fontWeight:800,color:C.muted,marginTop:2}}>מתאפס בכל פתיחה של פותחים יום</div>
+              <div style={{fontSize:12,fontWeight:900,color:C.text}}>{tx("צ׳ק ליסט ציוד יומי","Daily equipment checklist")}</div>
+              <div style={{fontSize:10,fontWeight:800,color:C.muted,marginTop:2}}>{tx("מתאפס בכל פתיחה של פותחים יום","Resets whenever this screen opens")}</div>
             </div>
             <Badge label={`${Object.values(equipmentChecked).filter(Boolean).length}/${checklist.reduce((n,g)=>n+g.items.length,0)}`} col={C.blue}/>
           </div>
           {checklist.map(group=>(
             <div key={group.group} style={{marginTop:10}}>
-              <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>{group.group}</div>
+              <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>{equipmentText(group.group)}</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
                 {group.items.map(item=>{
                   const key = `${group.group}:${item}`;
@@ -969,7 +1080,7 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
                   return (
                     <Press key={key} onClick={()=>toggleEquipment(group.group,item)} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 10px",borderRadius:12,background:checked?"#e8f5e9":"#fff",border:`1px solid ${checked?"#c8e6c9":C.border}`,color:checked?C.green:C.text,textAlign:"right"}}>
                       <span style={{width:22,height:22,borderRadius:7,background:checked?C.green:"#f0f4f8",border:`1px solid ${checked?C.green:C.border}`,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,flexShrink:0}}>{checked?"✓":""}</span>
-                      <span style={{fontSize:12,fontWeight:900,lineHeight:1.2}}>{item}</span>
+                      <span style={{fontSize:12,fontWeight:900,lineHeight:1.2}}>{equipmentText(item)}</span>
                     </Press>
                   );
                 })}
@@ -978,27 +1089,27 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
           ))}
         </div>
         <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:14,padding:12,marginBottom:12}}>
-          <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>חומרים לסיפוק היום</div>
+          <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>{tx("חומרים לסיפוק היום","Materials to supply today")}</div>
           {hasMaterials ? (
             <>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                <Press onClick={()=>setOpenMaterial(openMaterial==="acid"?null:"acid")} style={{background:"#ffebee",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.red}}>{materials.acid}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>חומצה</div></Press>
-                <Press onClick={()=>setOpenMaterial(openMaterial==="phUpSupply"?null:"phUpSupply")} style={{background:"#f3e5f5",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:"#6a1b9a"}}>{materials.phUpSupply}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>מעלה pH</div></Press>
-                <Press onClick={()=>setOpenMaterial(openMaterial==="saltBags"?null:"saltBags")} style={{background:"#e8f5e9",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.green}}>{materials.saltBags}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>שקי מלח</div></Press>
+                <Press onClick={()=>setOpenMaterial(openMaterial==="acid"?null:"acid")} style={{background:"#ffebee",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.red}}>{materials.acid}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>{tx("חומצה","Acid")}</div></Press>
+                <Press onClick={()=>setOpenMaterial(openMaterial==="phUpSupply"?null:"phUpSupply")} style={{background:"#f3e5f5",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:"#6a1b9a"}}>{materials.phUpSupply}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>{tx("מעלה pH","pH increaser")}</div></Press>
+                <Press onClick={()=>setOpenMaterial(openMaterial==="saltBags"?null:"saltBags")} style={{background:"#e8f5e9",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.green}}>{materials.saltBags}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>{tx("שקי מלח","Salt bags")}</div></Press>
               </div>
               {openMaterial&&(
                 <div style={{marginTop:8,background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"9px 10px"}}>
-                  <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>מיועד ל:</div>
-                  {(materialRecipients[openMaterial] || []).length ? (materialRecipients[openMaterial] || []).map((name,i)=><div key={`${openMaterial}-${i}`} style={{fontSize:12,fontWeight:800,color:C.text,padding:"3px 0"}}>{name}</div>) : <div style={{fontSize:12,fontWeight:800,color:C.muted}}>אין נמענים לחומר הזה</div>}
+                  <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>{tx("מיועד ל:","For:")}</div>
+                  {(materialRecipients[openMaterial] || []).length ? (materialRecipients[openMaterial] || []).map((name,i)=><div key={`${openMaterial}-${i}`} style={{fontSize:12,fontWeight:800,color:C.text,padding:"3px 0"}}>{name}</div>) : <div style={{fontSize:12,fontWeight:800,color:C.muted}}>{tx("אין נמענים לחומר הזה","No recipients for this material")}</div>}
                 </div>
               )}
             </>
           ) : (
-            <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין חומרים מסומנים לסיפוק</div>
+            <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>{tx("אין חומרים מסומנים לסיפוק","No materials marked for supply")}</div>
           )}
         </div>
         <div style={{border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",marginBottom:14}}>
-          {list.length===0&&<div style={{padding:18,textAlign:"center",fontSize:13,fontWeight:800,color:C.muted,background:"#f5f9ff"}}>אין סדר יום לתאריך הזה</div>}
+          {list.length===0&&<div style={{padding:18,textAlign:"center",fontSize:13,fontWeight:800,color:C.muted,background:"#f5f9ff"}}>{tx("אין סדר יום לתאריך הזה","No route for this date")}</div>}
           {list.slice(0,12).map((t,i)=>(
             <div key={t.id || `${t.client}-${i}`} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:i%2?"#fff":"#f5f9ff",borderTop:i?`1px solid ${C.border}`:"none"}}>
               <div style={{width:28,height:28,borderRadius:"50%",background:"#e3f2fd",color:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:12,flexShrink:0}}>{i+1}</div>
@@ -1006,40 +1117,41 @@ function DailyBriefingModal({tasks,supplyTasks,workStart,supplyDB,subOperators=[
                 <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(t.client || "").split(" - ")[0]}</div>
                 {t.adminNote&&<div style={{fontSize:11,fontWeight:700,color:C.orange,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.adminNote}</div>}
               </div>
-              <Badge label={t.status==="done"?"\u2713 \u05d1\u05d5\u05e6\u05e2":"\u05de\u05de\u05ea\u05d9\u05df"} col={t.status==="done"?C.green:C.orange}/>
+              <Badge label={t.status==="done"?tx("\u2713 \u05d1\u05d5\u05e6\u05e2","\u2713 Done"):tx("\u05de\u05de\u05ea\u05d9\u05df","Pending")} col={t.status==="done"?C.green:C.orange}/>
             </div>
           ))}
-          {list.length>12&&<div style={{padding:10,textAlign:"center",fontSize:12,fontWeight:800,color:C.muted,background:"#f5f9ff"}}>ועוד {list.length-12} בריכות</div>}
+          {list.length>12&&<div style={{padding:10,textAlign:"center",fontSize:12,fontWeight:800,color:C.muted,background:"#f5f9ff"}}>{tx(`ועוד ${list.length-12} בריכות`,`${list.length-12} more pools`)}</div>}
         </div>
         <Press onClick={onConfirm} style={{padding:"13px 16px",borderRadius:16,background:"rgba(21,128,61,0.10)",color:C.green,fontWeight:900,fontSize:14,textAlign:"center",border:"1px solid rgba(21,128,61,0.18)"}}>
-          אישרתי, עבור לעמוד הבית
+          {tx("אישרתי, עבור לעמוד הבית","Confirmed, go to home")}
         </Press>
       </div>
     </div>
   );
 }
 
-function WorkClockReminderModal({workStart,onStop,onClose}) {
+function WorkClockReminderModal({workStart,onStop,onClose,english=false}) {
+  const t = (hebrew, englishText) => english ? englishText : hebrew;
   return (
-    <div dir="rtl" style={{position:"fixed",inset:0,zIndex:1350,background:"rgba(15,23,42,0.38)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
+    <div dir={english?"ltr":"rtl"} style={{position:"fixed",inset:0,zIndex:1350,background:"rgba(15,23,42,0.38)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
       <div style={{width:"100%",maxWidth:380,background:"rgba(255,255,255,0.82)",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)",borderRadius:28,boxShadow:"0 28px 90px rgba(15,23,42,0.20), 0 1px 0 rgba(255,255,255,0.86) inset",border:"1px solid rgba(148,163,184,0.24)",padding:18}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
           <div>
-            <div style={{fontSize:19,fontWeight:900,color:C.text}}>זוכר לסגור שעון?</div>
-            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginTop:3}}>השעה 12:30 והשעון עדיין פעיל</div>
+            <div style={{fontSize:19,fontWeight:900,color:C.text}}>{t("זוכר לסגור שעון?","Remember to stop the clock?")}</div>
+            <div style={{fontSize:12,fontWeight:700,color:C.muted,marginTop:3}}>{t("השעה 12:30 והשעון עדיין פעיל","It is 12:30 and the clock is still running")}</div>
           </div>
           <Press onClick={onClose} style={{width:34,height:34,borderRadius:12,background:"rgba(241,245,249,0.84)",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
         </div>
         <div style={{background:"#fff8e1",border:"1px solid #ffe082",borderRadius:14,padding:"12px 14px",marginBottom:14}}>
-          <div style={{fontSize:12,fontWeight:800,color:C.orange,marginBottom:4}}>שעון פעיל מ:</div>
+          <div style={{fontSize:12,fontWeight:800,color:C.orange,marginBottom:4}}>{t("שעון פעיל מ:","Clock active since:")}</div>
           <div style={{fontSize:24,fontWeight:900,color:C.orange}}>{workStart || "--:--"}</div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           <Press onClick={onStop} style={{padding:"13px 14px",borderRadius:16,background:`linear-gradient(135deg,#b91c1c,#ef4444)`,color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 14px 32px rgba(185,28,28,0.22)"}}>
-            עצור ושמור שעות
+            {t("עצור ושמור שעות","Stop and save hours")}
           </Press>
           <Press onClick={onClose} style={{padding:"13px 14px",borderRadius:16,background:"rgba(241,245,249,0.84)",color:C.muted,fontWeight:900,fontSize:14,textAlign:"center"}}>
-            אזכיר לעצמי
+            {t("אזכיר לעצמי","Remind me later")}
           </Press>
         </div>
       </div>
@@ -1068,7 +1180,7 @@ function BottomSheet({children,onClose,title}) {
 const C = {blue:"#1d4ed8",lightBlue:"#3b82f6",bg:"#dbeafe",white:"rgba(241,247,255,0.86)",card:"rgba(232,241,253,0.80)",text:"#0f1f38",muted:"#52657f",border:"rgba(100,116,139,0.28)",green:"#15803d",orange:"#c2410c",red:"#b91c1c"};
 const inp = {width:"100%",background:"rgba(226,237,250,0.78)",border:"1px solid rgba(148,163,184,0.24)",borderRadius:16,padding:"12px 14px",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"'Plus Jakarta Sans',sans-serif",color:C.text,boxShadow:"inset 0 1px 0 rgba(255,255,255,0.75)"};
 const sel = {...inp,background:"rgba(226,237,250,0.78)"};
-const card = (extra={}) => ({background:C.card,backdropFilter:"blur(18px)",WebkitBackdropFilter:"blur(18px)",borderRadius:22,padding:16,boxShadow:"0 18px 45px rgba(30,64,175,0.12), 0 1px 0 rgba(255,255,255,0.75) inset",border:"1px solid "+C.border,...extra});
+const card = (extra={}) => ({background:C.card,borderRadius:22,padding:16,boxShadow:"0 18px 45px rgba(30,64,175,0.12), 0 1px 0 rgba(255,255,255,0.75) inset",border:"1px solid "+C.border,...extra});
 
 function Badge({label,col="#1565c0",bg}) {
   return <span style={{minWidth:52,minHeight:24,display:"inline-flex",alignItems:"center",justifyContent:"center",background:bg||col+"18",color:col,border:`1px solid ${col}33`,borderRadius:99,padding:"0 11px",fontSize:11,fontWeight:800,lineHeight:1,whiteSpace:"nowrap"}}>{label}</span>;
@@ -1128,12 +1240,12 @@ function PBar({done,total,label="משימות"}) {
   );
 }
 
-function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warnAbove,warnBelow,large=false,disabled=false,disabledReason=""}) {
+function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warnAbove,warnBelow,large=false,disabled=false,disabledReason="",english=false}) {
   const pct=((value-min)/(max-min))*100;
-  let col=C.green,txt="תקין";
-  if(warnAbove&&value>warnAbove){col=C.red;txt="⚠️ גבוה";}
-  else if(warnBelow&&value<warnBelow){col=C.orange;txt="⚠️ נמוך";}
-  else if(optimal&&Math.abs(value-optimal)<0.3){col=C.blue;txt="✓ אופטימלי";}
+  let col=C.green,txt=english?"Normal":"תקין";
+  if(warnAbove&&value>warnAbove){col=C.red;txt=english?"⚠️ High":"⚠️ גבוה";}
+  else if(warnBelow&&value<warnBelow){col=C.orange;txt=english?"⚠️ Low":"⚠️ נמוך";}
+  else if(optimal&&Math.abs(value-optimal)<0.3){col=C.blue;txt=english?"✓ Optimal":"✓ אופטימלי";}
   const showStatus = !!(warnAbove||warnBelow||optimal);
   const trackH = large ? 28 : 8;
   const sliderRef = useRef();
@@ -1192,7 +1304,7 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
         </div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
-        {[[false,"\u05e1\u05dc\u05d9\u05d9\u05d3\u05e8"],[true,"\u05d4\u05e7\u05dc\u05d3\u05d4"]].map(([mode,labelText])=>(
+        {[[false,english?"Slider":"\u05e1\u05dc\u05d9\u05d9\u05d3\u05e8"],[true,english?"Manual input":"\u05d4\u05e7\u05dc\u05d3\u05d4"]].map(([mode,labelText])=>(
           <Press key={String(mode)} onClick={()=>!disabled&&setManualMode(mode)}
             style={{padding:"8px 10px",borderRadius:10,textAlign:"center",fontSize:12,fontWeight:800,background:manualMode===mode?C.blue:"#f0f4f8",color:manualMode===mode?"#fff":C.muted}}>
             {labelText}
@@ -1215,7 +1327,7 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
           style={{...inp,marginBottom:10,textAlign:"center",fontSize:large?24:18,fontWeight:900,color:C.blue}}
         />
       )}
-      {disabled&&<div style={{fontSize:11,fontWeight:800,color:C.muted,marginBottom:8}}>{disabledReason || "נעול לפי סיווג הבריכה"}</div>}
+      {disabled&&<div style={{fontSize:11,fontWeight:800,color:C.muted,marginBottom:8}}>{disabledReason || (english?"Locked for this pool type":"נעול לפי סיווג הבריכה")}</div>}
       <div ref={trackRef} dir="ltr" onPointerDown={startSlide} onPointerMove={moveSlide} onPointerUp={endSlide} onPointerCancel={endSlide} onPointerLeave={endSlide} style={{position:"relative",height:trackH,borderRadius:99,background:C.border,marginBottom:6,touchAction:"pan-y"}}>
         <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${pct}%`,borderRadius:99,background:`linear-gradient(90deg,${C.blue},${col})`,transition:"width 0.15s"}}/>
         {optimal&&<div style={{position:"absolute",top:-4,left:`${((optimal-min)/(max-min))*100}%`,width:large?3:2,height:large?36:16,background:C.blue,borderRadius:2,transform:"translateX(-50%)"}}/>}
@@ -1226,13 +1338,17 @@ function SliderField({label,min,max,step=0.1,value,onChange,optimal,unit="",warn
           style={{position:"absolute",top:large?-16:-8,left:0,width:"100%",opacity:0,cursor:"pointer",height:large?60:24,touchAction:"pan-y",pointerEvents:"none",WebkitAppearance:"none"}}/>
       </div>
       <div dir="ltr" style={{display:"flex",justifyContent:"space-between",fontSize:large?12:10,color:C.muted}}>
-        <span>{min}</span>{optimal&&<span style={{color:C.blue}}>אופטימלי {optimal}</span>}<span>{max}</span>
+        <span>{min}</span>{optimal&&<span style={{color:C.blue}}>{english?"Optimal":"אופטימלי"} {optimal}</span>}<span>{max}</span>
       </div>
     </div>
   );
 }
 
-const clientMetaLine = (c) => [c?.regularOperator && `מפעיל: ${c.regularOperator}`, c?.regularDays && `ימים: ${c.regularDays}`].filter(Boolean).join(" · ");
+const clientMetaLine = (c) => [
+  c?.poolType && `סוג: ${c.poolType}`,
+  c?.regularOperator && `מפעיל: ${c.regularOperator}`,
+  c?.regularDays && `ימים: ${c.regularDays}`
+].filter(Boolean).join(" · ");
 
 const LOW_SALT_REPORT_TEXT = "מלח נמוך";
 const numericSaltPpm = (value) => {
@@ -1243,6 +1359,11 @@ const numericSaltPpm = (value) => {
 const isLowSaltFlagValue = (value) => {
   const text = String(value || "");
   return text.includes("נורת מלח") || text.includes("מלח נמוך");
+};
+const measuredSaltPpm = (value) => {
+  if (value === null || value === undefined || String(value).trim() === "" || isLowSaltFlagValue(value)) return NaN;
+  const n = numericSaltPpm(value);
+  return Number.isFinite(n) && n > 0 ? n : NaN;
 };
 const isNormalSaltLevelValue = (value) => {
   const n = numericSaltPpm(value);
@@ -1257,7 +1378,7 @@ const isLowSaltReportValue = (value) => {
   return isLowSaltFlagValue(value) || isLowSaltLevelValue(value);
 };
 
-function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,val,fn,large,expandKey,form,sf,disabled=false,disabledReason="",zeroButtonLabel="",phLowButton=false,saltLowLightButton=false,required=false}) {
+function CollapsibleSlider({fieldKey="",label,min,max,step,unit,warnAbove,warnBelow,optimal,val,fn,large,expandKey,form,sf,disabled=false,disabledReason="",zeroButtonLabel="",phLowButton=false,saltLowLightButton=false,required=false,english=false}) {
   const isOpen = !!form[expandKey];
   const displayVal = Number(val) || 0;
   const zeroConfirmKey = `${expandKey}_zero`;
@@ -1274,8 +1395,8 @@ function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,
         style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0"}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontWeight:700,fontSize:14,color:C.text}}>{label}</span>
-          {required&&!disabled&&<span style={{background:"#ffebee",color:C.red,border:"1px solid #ffcdd2",borderRadius:99,padding:"2px 8px",fontSize:10,fontWeight:900}}>חובה</span>}
-          {hasValue&&!isOpen&&<span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"2px 10px",fontSize:12,fontWeight:800}}>{phLowButton&&form.phLowConfirmed?"PH נמוך":saltLowActive?LOW_SALT_REPORT_TEXT:`${displayVal}${unit}`}</span>}
+          {required&&!disabled&&<span style={{background:"#ffebee",color:C.red,border:"1px solid #ffcdd2",borderRadius:99,padding:"2px 8px",fontSize:10,fontWeight:900}}>{english?"Required":"חובה"}</span>}
+          {hasValue&&!isOpen&&<span style={{background:"#e3f2fd",color:C.blue,borderRadius:99,padding:"2px 10px",fontSize:12,fontWeight:800}}>{phLowButton&&form.phLowConfirmed?(english?"Low pH":"PH נמוך"):saltLowActive?(english?"Low salt":LOW_SALT_REPORT_TEXT):`${displayVal}${unit}`}</span>}
         </div>
         <span style={{fontSize:16,color:C.blue,display:"inline-block",transform:isOpen?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▾</span>
       </Press>
@@ -1286,37 +1407,41 @@ function CollapsibleSlider({label,min,max,step,unit,warnAbove,warnBelow,optimal,
               {zeroConfirmed?"✓ ":""}{zeroButtonLabel}
             </Press>
           )}
-          {label==="כלור"&&displayVal===0&&(
+          {fieldKey==="chlorine"&&displayVal===0&&(
             <Press onClick={()=>{sf("chlorineZeroConfirmed",true);haptic("success");}} style={{padding:"9px 12px",borderRadius:12,background:form.chlorineZeroConfirmed?"#e8f5e9":"#fff8e1",color:form.chlorineZeroConfirmed?C.green:C.orange,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${form.chlorineZeroConfirmed?"#c8e6c9":"#ffe082"}`}}>
-              {form.chlorineZeroConfirmed?"✓ ":""}רמת כלור 0
+              {form.chlorineZeroConfirmed?"✓ ":""}{english?"Chlorine level 0":"רמת כלור 0"}
             </Press>
           )}
           {phLowButton&&displayVal===0&&(
             <Press onClick={()=>{sf("phLowConfirmed",true);fn(0);haptic("success");}} style={{padding:"9px 12px",borderRadius:12,background:form.phLowConfirmed?"#e8f5e9":"#fff8e1",color:form.phLowConfirmed?C.green:C.orange,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${form.phLowConfirmed?"#c8e6c9":"#ffe082"}`}}>
-              {form.phLowConfirmed?"✓ ":""}PH נמוך
+              {form.phLowConfirmed?"✓ ":""}{english?"Low pH":"PH נמוך"}
             </Press>
           )}
           {saltLowLightButton&&(
             <Press onClick={()=>{ if(isNormalSaltLevelValue(val)){sf("lowSaltLight",false);haptic("light");return;} sf("lowSaltLight",!form.lowSaltLight);haptic(saltLowActive?"light":"success");}} style={{padding:"9px 12px",borderRadius:12,background:saltLowActive?"#fff8e1":"#f0f4f8",color:saltLowActive?C.orange:C.muted,fontWeight:900,fontSize:12,textAlign:"center",marginBottom:10,border:`1px solid ${saltLowActive?"#ffe082":C.border}`}}>
-              {saltLowActive?"✓ ":""}מלח נמוך
+              {saltLowActive?"✓ ":""}{english?"Low salt":"מלח נמוך"}
             </Press>
           )}
-          <SliderField label={label} min={min} max={max} step={step} value={displayVal} onChange={setSliderValue} unit={unit} warnAbove={warnAbove} warnBelow={warnBelow} optimal={optimal} large={large} disabled={disabled} disabledReason={disabledReason}/>
+          <SliderField label={label} min={min} max={max} step={step} value={displayVal} onChange={setSliderValue} unit={unit} warnAbove={warnAbove} warnBelow={warnBelow} optimal={optimal} large={large} disabled={disabled} disabledReason={disabledReason} english={english}/>
         </>
       )}
     </div>
   );
 }
 
-function ToggleField({label,value,onChange}) {
+function ToggleField({label,value,onChange,english=false}) {
+  const options = [
+    {value:"תקין",label:english?"Normal":"תקין"},
+    {value:"לא תקין",label:english?"Not normal":"לא תקין"}
+  ];
   return (
     <div style={{...card(),marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
       <span style={{fontWeight:700,fontSize:14,color:C.text}}>{label}</span>
       <div style={{display:"flex",gap:6}}>
-        {["תקין","לא תקין"].map(o=>(
-          <Press key={o} onClick={()=>onChange(o)}
-            style={{padding:"7px 14px",borderRadius:99,fontSize:12,fontWeight:800,background:value===o?(o==="תקין"?C.blue:C.red):"#f0f4f8",color:value===o?"#fff":C.muted,boxShadow:value===o?`0 4px 12px ${o==="תקין"?"rgba(21,101,192,0.3)":"rgba(198,40,40,0.3)"}`:  "none",transition:"all 0.2s"}}>
-            {o}
+        {options.map(option=>(
+          <Press key={option.value} onClick={()=>onChange(option.value)}
+            style={{padding:"7px 14px",borderRadius:99,fontSize:12,fontWeight:800,background:value===option.value?(option.value==="תקין"?C.blue:C.red):"#f0f4f8",color:value===option.value?"#fff":C.muted,boxShadow:value===option.value?`0 4px 12px ${option.value==="תקין"?"rgba(21,101,192,0.3)":"rgba(198,40,40,0.3)"}`:  "none",transition:"all 0.2s"}}>
+            {option.label}
           </Press>
         ))}
       </div>
@@ -1390,6 +1515,10 @@ function QRScanner({ onResult, onClose }) {
 
 function getLicense() { try { return JSON.parse(localStorage.getItem("galileo_license")||"{}"); } catch { return {}; } }
 function saveLicense(data) { localStorage.setItem("galileo_license", JSON.stringify(data)); }
+function subOperatorLanguageStorageKey(user = {}) {
+  const identity = String(user?.username || user?.name || "unknown").trim().toLowerCase();
+  return `galileo_sub_operator_language:${identity}`;
+}
 
 function companyFromLicenseResponse(res = {}) {
   const displayName = res.companyName || res.company || res.appName || DEFAULT_APP_NAME;
@@ -1464,10 +1593,10 @@ function LicenseScreen({ onDone, onSuperAdmin }) {
 }
 
 const blank = () => ({
-  reportDate:todayStr(),client:"",chlorine:0,ph:0,salt:0,chlora:0,hth:0,phUp:0,acidLiters:0,
+  reportDate:todayStr(),client:"",clientId:"",chlorine:0,ph:0,salt:0,chlora:0,hth:0,phUp:0,acidLiters:0,
   elModel:"",elSerial:"",elDate:"",waterLevel:"תקין",clarity:"תקין",fat:"תקין",flow:"",
   acid:false,phUpSupply:false,saltPkg:false,saltBags:0,supplyStatus:"",supplyNote:"",suppliedEquipment:[],chlorineZeroConfirmed:false,phLowConfirmed:false,poolStatus:"מאוזנת",customStatusText:"",restrictedUntil:"",
-  notes:"",photos:[],clientLocked:false,adminReport:false,lowSaltLight:false,sendReminder:false,chlorineReminderCreatedAt:"",chlorineReminderDueAt:"",chlorineReminderMessage:"",
+  notes:"",photos:[],clientLocked:false,adminReport:false,waterCheckOnly:false,lowSaltLight:false,sendReminder:false,chlorineReminderCreatedAt:"",chlorineReminderDueAt:"",chlorineReminderMessage:"",
 });
 
 function generateLicenseKey() {
@@ -2205,6 +2334,14 @@ export default function App() {
   });
   const [companyName, setCompanyName] = useState(company.name||DEFAULT_APP_NAME);
   const [user,setUser] = useState(()=>getStoredUserForToday());
+  const [subOperatorLanguage,setSubOperatorLanguage] = useState(()=>{
+    try {
+      return localStorage.getItem(subOperatorLanguageStorageKey(getStoredUserForToday())) === "en" ? "en" : "he";
+    } catch {
+      return "he";
+    }
+  });
+  const [showSubLanguagePrompt,setShowSubLanguagePrompt] = useState(false);
   const [welcomeMedia,setWelcomeMedia] = useState(null);
   const [showDailyBriefing,setShowDailyBriefing] = useState(false);
   const [showEquipmentChecklistEditor,setShowEquipmentChecklistEditor] = useState(false);
@@ -2224,23 +2361,32 @@ export default function App() {
   const [loginLoading,setLoginLoading] = useState(false);
   const [appUpdate,setAppUpdate] = useState({checking:false,available:false,latest:"",error:false});
   const [sheetId,setSheetId] = useState("");
+  const [dataConnectionStatus,setDataConnectionStatus] = useState(() =>
+    typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "checking"
+  );
   const [waMessageTemplate,setWaMessageTemplate] = useState(() => {
     try { return normalizeWaMessageTemplate(localStorage.getItem(WA_TEMPLATE_STORAGE_KEY)); } catch { return DEFAULT_WA_MESSAGE_TEMPLATE; }
   });
   const [waTemplateDraft,setWaTemplateDraft] = useState(() => {
     try { return normalizeWaMessageTemplate(localStorage.getItem(WA_TEMPLATE_STORAGE_KEY)); } catch { return DEFAULT_WA_MESSAGE_TEMPLATE; }
   });
-  const [waPollMessage,setWaPollMessage] = useState(() => {
-    try { return normalizeWaPollMessage(localStorage.getItem(WA_POLL_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_MESSAGE; }
+  const [acidSupplyMessage,setAcidSupplyMessage] = useState(() => {
+    try { return normalizeAcidSupplyMessage(localStorage.getItem(WA_ACID_SUPPLY_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_ACID_SUPPLY_MESSAGE; }
   });
-  const [waPollMessageDraft,setWaPollMessageDraft] = useState(() => {
-    try { return normalizeWaPollMessage(localStorage.getItem(WA_POLL_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_MESSAGE; }
+  const [acidSupplyMessageDraft,setAcidSupplyMessageDraft] = useState(() => {
+    try { return normalizeAcidSupplyMessage(localStorage.getItem(WA_ACID_SUPPLY_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_ACID_SUPPLY_MESSAGE; }
   });
-  const [waPollOptions,setWaPollOptions] = useState(() => {
-    try { return normalizeWaPollOptions(localStorage.getItem(WA_POLL_OPTIONS_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_OPTIONS; }
+  const [phUpSupplyMessage,setPhUpSupplyMessage] = useState(() => {
+    try { return normalizePhUpSupplyMessage(localStorage.getItem(WA_PH_UP_SUPPLY_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_PH_UP_SUPPLY_MESSAGE; }
   });
-  const [waPollOptionsDraft,setWaPollOptionsDraft] = useState(() => {
-    try { return normalizeWaPollOptions(localStorage.getItem(WA_POLL_OPTIONS_STORAGE_KEY)); } catch { return DEFAULT_WA_POLL_OPTIONS; }
+  const [phUpSupplyMessageDraft,setPhUpSupplyMessageDraft] = useState(() => {
+    try { return normalizePhUpSupplyMessage(localStorage.getItem(WA_PH_UP_SUPPLY_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_PH_UP_SUPPLY_MESSAGE; }
+  });
+  const [saltSupplyMessage,setSaltSupplyMessage] = useState(() => {
+    try { return normalizeSaltSupplyMessage(localStorage.getItem(WA_SALT_SUPPLY_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_SALT_SUPPLY_MESSAGE; }
+  });
+  const [saltSupplyMessageDraft,setSaltSupplyMessageDraft] = useState(() => {
+    try { return normalizeSaltSupplyMessage(localStorage.getItem(WA_SALT_SUPPLY_MESSAGE_STORAGE_KEY)); } catch { return DEFAULT_SALT_SUPPLY_MESSAGE; }
   });
   const [chlorineReminderMessage,setChlorineReminderMessage] = useState(() => {
     try { return normalizeChlorineReminderMessage(localStorage.getItem(WA_TABLET_REMINDER_STORAGE_KEY)); } catch { return DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE; }
@@ -2257,7 +2403,9 @@ export default function App() {
   const [waDisabledClients,setWaDisabledClients] = useState(() => {
     try {
       const value = JSON.parse(localStorage.getItem(WA_DISABLED_CLIENTS_STORAGE_KEY) || "[]");
-      return Array.isArray(value) ? value : [];
+      return Array.isArray(value)
+        ? value.map(item => String(item || "").trim()).filter(Boolean)
+        : [];
     } catch {
       return [];
     }
@@ -2266,11 +2414,11 @@ export default function App() {
   const [allUsers,setAllUsers] = useState(DEMO_USERS);
   const [clients,setClients] = useState(DEMO_CLIENTS);
   const [tasks,setTasks] = useState([]);
+  const tasksRef = useRef(tasks);
   const [adminOrders,setAdminOrders] = useState([]);
   const [sharedSubOrders,setSharedSubOrders] = useState([]);
   const [subOperatorApprovals,setSubOperatorApprovals] = useState([]);
   const [supplyDB,setSupplyDB] = useState({});
-  const [materialApprovals,setMaterialApprovals] = useState([]);
   const [lastReadings,setLastReadings] = useState({});
 const [reports,setReports] = useState([]);
 const [completedReports,setCompletedReports] = useState(() => {
@@ -2285,12 +2433,16 @@ const [pending, setPending] = useState([]);
 const [pendingStoreReady, setPendingStoreReady] = useState(false);
 const [pendingOperatorIssues, setPendingOperatorIssues] = useState(() => {
   try {
-    const value = JSON.parse(localStorage.getItem("galileo_pending_operator_issues") || "[]");
+    const value = JSON.parse(localStorage.getItem(PENDING_OPERATOR_ISSUES_STORAGE_KEY) || "[]");
     return Array.isArray(value) ? value : [];
   } catch {
     return [];
   }
 });
+const pendingRef = useRef(pending);
+const pendingOperatorIssuesRef = useRef(pendingOperatorIssues);
+const pendingReportSyncRunnerRef = useRef(null);
+const pendingIssueSyncRunnerRef = useRef(null);
 const [pendingSubReports, setPendingSubReports] = useState(() => {
   try {
     const value = JSON.parse(localStorage.getItem("galileo_sub_operator_pending_reports") || "[]");
@@ -2311,7 +2463,23 @@ const [activeSubReportApprovalId, setActiveSubReportApprovalId] = useState("");
 const [approvalEditId, setApprovalEditId] = useState("");
 
 useEffect(() => {
-  localStorage.setItem("galileo_pending_operator_issues", JSON.stringify(pendingOperatorIssues));
+  tasksRef.current = tasks;
+}, [tasks]);
+
+useEffect(() => {
+  pendingRef.current = pending;
+}, [pending]);
+
+useEffect(() => {
+  pendingOperatorIssuesRef.current = pendingOperatorIssues;
+}, [pendingOperatorIssues]);
+
+useEffect(() => {
+  try {
+    localStorage.setItem(PENDING_OPERATOR_ISSUES_STORAGE_KEY, JSON.stringify(pendingOperatorIssues));
+  } catch (error) {
+    console.warn("Pending operator issue persistence failed", error);
+  }
 }, [pendingOperatorIssues]);
 
 useEffect(() => {
@@ -2333,74 +2501,238 @@ const isCompletedTreatmentReport = (report = {}) =>
   String(report?.ph ?? "").trim() !== "" &&
   String(report?.flow ?? "").trim() !== "";
 const shouldSendEditedReportToCustomer = (original, report) =>
-  !!original?.sendWhatsAppOnSave || (isNoTreatmentReport(original) && isCompletedTreatmentReport(report));
-const shouldSendPendingReportWhatsApp = (item, report) => {
+  !report?.waterCheckOnly &&
+  (!!original?.sendWhatsAppOnSave || (isNoTreatmentReport(original) && isCompletedTreatmentReport(report)));
+const pendingReportWantsWhatsApp = (item, report) => {
+  if (report?.waterCheckOnly) return false;
   if (!item?.report) return true;
+  if (item.deliveryDecision?.version) return item.deliveryDecision.shouldSend === true;
+  if (["disabled","not_requested","missing_phone","already_sent"].includes(item.whatsappSkipReason)) return false;
   if (item.sendWhatsAppOnSave === false) return false;
   if (item.sendWhatsAppOnSave === true) return true;
   if (item.updateOriginal) return shouldSendEditedReportToCustomer(item.updateOriginal, report) || item.sendWhatsAppOnSave !== false;
   return true;
 };
+const shouldSendPendingReportWhatsApp = (item, report) =>
+  !item?.whatsappSent && pendingReportWantsWhatsApp(item, report);
+const pendingReportNeedsTaskCompletion = (item) =>
+  !!item?.taskCompletion?.required && item.taskCompletion.synced !== true;
 const pendingReportQueueInfo = (item) => {
   const report = getPendingReportPayload(item) || {};
   const savedToSheet = isPendingReportSavedToSheet(item);
+  const wantsWhatsApp = pendingReportWantsWhatsApp(item, report);
+  const whatsAppDisabled = item?.deliveryDecision?.version
+    ? item.deliveryDecision.skipReason === "disabled"
+    : isWhatsAppDisabledForClient(report);
+  const clientRecord = findClientByName(report.client, report.clientId);
+  const phoneMissing = item?.deliveryDecision?.version
+    ? item.deliveryDecision.skipReason === "missing_phone"
+    : !!clientRecord && !normalizeWhatsAppPhone(clientRecord.phone);
+  const whatsAppSent = !!item?.whatsappSent;
+  const deliveryUnknown = item?.lastError === "delivery_status_unknown";
+
+  if (item?.editingPaused) {
+    return {
+      stage:"editing",
+      keep:true,
+      label:"פתוח לעריכה · הסנכרון מושהה",
+      tone:"warning"
+    };
+  }
+
   if (!savedToSheet) {
-    return { stage:"sheetPending", keep:true, label:"ממתין לשמירה בשיטס", tone:"error" };
+    if (whatsAppSent) {
+      return { stage:"sheetPendingMessageSent", keep:true, label:"הודעה נשלחה · ממתין לשמירה בשיטס", tone:"warning" };
+    }
+    if (whatsAppDisabled) {
+      return { stage:"sheetPendingWhatsAppDisabled", keep:true, label:"ווטסאפ כבוי · ממתין לשמירה בשיטס", tone:"warning" };
+    }
+    if (phoneMissing) {
+      return { stage:"sheetPendingMissingPhone", keep:true, label:"אין טלפון · ממתין לשמירה בשיטס", tone:"warning" };
+    }
+    if (!wantsWhatsApp) {
+      return { stage:"sheetPendingNoMessage", keep:true, label:"ללא הודעה · ממתין לשמירה בשיטס", tone:"warning" };
+    }
+    if (deliveryUnknown) {
+      return {
+        stage:"sheetPendingMessageUnknown",
+        keep:true,
+        label:"לא ניתן לוודא אם ההודעה נשלחה · ממתין לשמירה בשיטס",
+        tone:"error"
+      };
+    }
+    if (item?.lastError === "whatsapp_send_failed") {
+      return { stage:"sheetPendingMessageFailed", keep:true, label:"הודעת ווטסאפ נכשלה · ממתין לשמירה בשיטס", tone:"error" };
+    }
+    return {
+      stage:"sheetPending",
+      keep:true,
+      label:item?.whatsappSending ? "נשמר מקומית · שולח הודעה" : "נשמר מקומית · ממתין לשליחת הודעה",
+      tone:"warning"
+    };
   }
-  const shouldSend = shouldSendPendingReportWhatsApp(item, report);
-  if (!shouldSend) {
-    return { stage:"sheetSaved", keep:false, label:"נשמר בשיטס - ללא הודעה", tone:"success" };
+  if (report.flow === "לא תקין" && item?.criticalIssueQueued !== true) {
+    return {
+      stage:"adminIssuePending",
+      keep:true,
+      label:"נשמר בשיטס · ממתין לשמירת התקלה לאדמין",
+      tone:"error"
+    };
   }
-  if (isWhatsAppDisabledForClient(report)) {
+  if (pendingReportNeedsTaskCompletion(item)) {
+    return {
+      stage:"taskPending",
+      keep:true,
+      label:"נשמר בשיטס · מעדכן את המשימה",
+      tone:item?.taskCompletion?.lastError ? "error" : "warning"
+    };
+  }
+  if (whatsAppSent) {
+    return { stage:"complete", keep:false, label:"נשמר בשיטס · הודעה נשלחה", tone:"success" };
+  }
+  if (whatsAppDisabled) {
     return { stage:"whatsappDisabled", keep:false, label:"נשמר בשיטס - ווצאפ כבוי", tone:"success" };
   }
-  const clientRecord = findClientByName(report.client);
+  if (phoneMissing && item?.deliveryDecision?.version) {
+    return { stage:"missingPhone", keep:false, label:"נשמר בשיטס - אין טלפון", tone:"success" };
+  }
+  if (!wantsWhatsApp) {
+    return { stage:"sheetSaved", keep:false, label:"נשמר בשיטס - ללא הודעה", tone:"success" };
+  }
+  if (deliveryUnknown) {
+    return {
+      stage:"messageUnknown",
+      keep:true,
+      label:"נשמר בשיטס · לא ניתן לוודא אם ההודעה נשלחה",
+      tone:"error"
+    };
+  }
   if (!clientRecord) {
     return { stage:"clientLoading", keep:true, label:"נשמר בשיטס - ממתין לנתוני לקוח", tone:"warning" };
   }
-  if (!normalizeWhatsAppPhone(clientRecord.phone)) {
+  if (phoneMissing) {
     return { stage:"missingPhone", keep:false, label:"נשמר בשיטס - אין טלפון", tone:"success" };
   }
   return {
     stage:"messagePending",
     keep:true,
-    label:item?.lastError ? "נשמר בשיטס - הודעה נכשלה" : "נשמר בשיטס - ממתין לווצאפ",
-    tone:item?.lastError ? "error" : "warning"
+    label:item?.lastError === "whatsapp_send_failed" ? "נשמר בשיטס · הודעת ווטסאפ נכשלה" : "נשמר בשיטס · ממתין לשליחת הודעה",
+    tone:item?.lastError === "whatsapp_send_failed" ? "error" : "warning"
   };
 };
 const shouldKeepPendingReport = (item) => pendingReportQueueInfo(item).keep;
+const poolIdentityKey = (value = {}, fallbackName = "") => {
+  const source = value && typeof value === "object" ? value : {};
+  const nameValue = String(source.client || source.name || fallbackName || value || "").trim();
+  const id = String(source.clientId || clientIdByName(nameValue) || "").trim();
+  if (id) return `id:${id}`;
+  const recordId = String(source.id || source.localId || source.reportId || "").trim();
+  const name = String(source.client || source.name || fallbackName || value || "").trim().toLowerCase();
+  return recordId ? `unresolved:${name}:${recordId}` : `unresolved:${name}`;
+};
+const samePoolIdentity = (left = {}, right = {}) => {
+  const leftName = String(left?.client || left?.name || "").trim();
+  const rightName = String(right?.client || right?.name || "").trim();
+  const leftId = String(left?.clientId || clientIdByName(leftName) || "").trim();
+  const rightId = String(right?.clientId || clientIdByName(rightName) || "").trim();
+  if (leftId || rightId) return !!leftId && !!rightId && leftId === rightId;
+  const leftRecordId = String(left?.id || left?.localId || left?.reportId || "").trim();
+  const rightRecordId = String(right?.id || right?.localId || right?.reportId || "").trim();
+  return !!leftRecordId && leftRecordId === rightRecordId &&
+    leftName.toLowerCase() === rightName.toLowerCase();
+};
 const samePendingReport = (a, b) => {
+  const leftStorageId = String(a?.pendingStorageId || a?.queueId || "").trim();
+  const rightStorageId = String(b?.pendingStorageId || b?.queueId || "").trim();
+  if (leftStorageId || rightStorageId) {
+    return !!leftStorageId && !!rightStorageId && leftStorageId === rightStorageId;
+  }
   const left = getPendingReportPayload(a) || {};
   const right = getPendingReportPayload(b) || {};
-  if (left.id && right.id && String(left.id) === String(right.id)) return true;
+  if (left.id || right.id) return !!left.id && !!right.id && String(left.id) === String(right.id);
   return (
     normalizeDate(left.reportDate) === normalizeDate(right.reportDate) &&
     normalizeName(left.operator) === normalizeName(right.operator) &&
-    normalizeName(left.client) === normalizeName(right.client)
+    samePoolIdentity(left, right)
   );
 };
-const makePendingReportItem = (report, supplyUpdate, meta = {}) => {
-  const shouldWrap = supplyUpdate || Object.keys(meta || {}).length > 0;
-  return shouldWrap ? { report, supplyUpdate, ...meta } : report;
+const pendingReportPayloadFingerprint = (item) => {
+  return pendingReportPayloadFingerprintValue(item);
 };
-const addPendingReport = (report, supplyUpdate, meta = {}) => {
-  const item = makePendingReportItem(report, supplyUpdate, meta);
-  if (!shouldKeepPendingReport(item)) {
-    void deletePendingReportFromIndexedDB(item)
-      .catch(error => console.warn("Skipped pending report cleanup failed", error));
-    setPending(prev => prev.filter(x => !samePendingReport(x, item)));
-    return;
+const makePendingReportItem = (report, supplyUpdate, meta = {}) => {
+  const pendingStorageId = String(meta?.pendingStorageId || pendingReportStorageId(report) || "").trim();
+  const queueRevision = String(meta?.queueRevision || "").trim() ||
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const queueUpdatedAt = Number(meta?.queueUpdatedAt || 0) || Date.now();
+  return { report, supplyUpdate, ...meta, pendingStorageId, queueRevision, queueUpdatedAt };
+};
+const nextPendingQueueMeta = (item = {}) => ({
+  queueRevision:`${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+  queueUpdatedAt:Math.max(Date.now(), Number(item?.queueUpdatedAt || 0) + 1)
+});
+const setPendingEditingPaused = (item, editingPaused) => makePendingReportItem(
+  getPendingReportPayload(item),
+  getPendingSupplyUpdate(item),
+  {
+    ...item,
+    ...nextPendingQueueMeta(item),
+    editingPaused:!!editingPaused,
+    replacePendingState:true
   }
-  void upsertPendingReportInIndexedDB(item)
-    .then(() => requestPendingReportBackgroundSync())
-    .catch(error => console.warn("Immediate pending report persistence failed", error));
+);
+const mergePendingReportItems = (existing, incoming) => {
+  if (incoming?.replacePendingState) return {...incoming, replacePendingState:false};
+  if (!existing?.report || !incoming?.report) return incoming;
+  if (pendingReportPayloadFingerprint(existing) !== pendingReportPayloadFingerprint(incoming)) return existing;
+  return {
+    ...existing,
+    ...incoming,
+    report:incoming.report || existing.report,
+    savedToSheet:!!(existing.savedToSheet || incoming.savedToSheet),
+    whatsappSent:!!(existing.whatsappSent || incoming.whatsappSent),
+    deliveryDecision:existing.deliveryDecision || incoming.deliveryDecision
+  };
+};
+const setPendingReportItem = (item) => {
   setPending(prev => {
     const idx = prev.findIndex(x => samePendingReport(x, item));
-    if (idx < 0) return [...prev, item];
-    const next = [...prev];
-    next[idx] = item;
+    const next = idx < 0 ? [...prev, item] : [...prev];
+    if (idx >= 0) next[idx] = mergePendingReportItems(next[idx], item);
+    pendingRef.current = next;
     return next;
   });
+};
+const persistPendingReportItem = async (item, options = {}) => {
+  if (!shouldKeepPendingReport(item)) {
+    const deleted = await deletePendingReportFromIndexedDBIfUnchanged(item).catch(error => {
+      console.warn("Completed pending report cleanup failed", error);
+      return false;
+    });
+    if (deleted) {
+      setPending(prev => {
+        const next = prev.filter(x =>
+          !samePendingReport(x, item) ||
+          pendingReportPayloadFingerprint(x) !== pendingReportPayloadFingerprint(item)
+        );
+        pendingRef.current = next;
+        return next;
+      });
+    }
+    return item;
+  }
+  if (options.durableFirst) {
+    await upsertPendingReportInIndexedDB(item);
+    setPendingReportItem(item);
+  } else {
+    setPendingReportItem(item);
+    await upsertPendingReportInIndexedDB(item);
+  }
+  void requestPendingReportBackgroundSync();
+  return item;
+};
+const persistPendingReportBeforeSend = async (report, supplyUpdate, meta = {}) => {
+  const item = makePendingReportItem(report, supplyUpdate, meta);
+  return persistPendingReportItem(item, {durableFirst:true});
 };
 const isPendingReportDeletedLocally = (item) => {
   const id = pendingReportStorageId(item);
@@ -2410,11 +2742,26 @@ const markPendingReportDeletedLocally = (item) => {
   const id = pendingReportStorageId(item);
   if (id) deletedPendingReportIdsRef.current.add(id);
 };
-const removePendingReport = (item) => {
+const removePendingReport = async (item) => {
+  const id = pendingReportStorageId(item);
   markPendingReportDeletedLocally(item);
-  void deletePendingReportFromIndexedDB(item)
-    .catch(error => console.warn("Immediate pending report deletion failed", error));
-  setPending(prev => prev.filter(x => !samePendingReport(x, item)));
+  const deleted = await deletePendingReportFromIndexedDBIfUnchanged(item).catch(error => {
+    console.warn("Immediate pending report deletion failed", error);
+    return false;
+  });
+  if (!deleted) {
+    if (id) deletedPendingReportIdsRef.current.delete(id);
+    return false;
+  }
+  setPending(prev => {
+    const next = prev.filter(x =>
+      !samePendingReport(x, item) ||
+      pendingReportPayloadFingerprint(x) !== pendingReportPayloadFingerprint(item)
+    );
+    pendingRef.current = next;
+    return next;
+  });
+  return true;
 };
 
 useEffect(() => {
@@ -2422,25 +2769,43 @@ useEffect(() => {
   const legacyPending = (() => {
     try {
       const value = JSON.parse(localStorage.getItem("galileo_pending_reports") || "[]");
-      return Array.isArray(value) ? value : [];
+      return Array.isArray(value)
+        ? value.map(item => ensurePendingReportQueueVersion(item))
+        : [];
     } catch {
       return [];
     }
   })();
-  loadPendingReportsFromIndexedDB()
-    .then(storedItems => {
-      const sourceItems = storedItems.length ? storedItems : legacyPending;
-      if (!active || !sourceItems.length) return;
-      setPending(previous => sourceItems.reduce((items, storedItem) => {
+  const restorePendingItems = (storedItems = []) => {
+    if (!active) return;
+    const sourceItems = [...legacyPending, ...(storedItems || [])].map(item =>
+      item?.editingPaused ? setPendingEditingPaused(item, false) : item
+    );
+    if (!sourceItems.length) return;
+    setPending(previous => {
+      const nextPending = sourceItems.reduce((items, storedItem) => {
         const index = items.findIndex(item => samePendingReport(item, storedItem));
         if (index < 0) return [...items, storedItem];
         const next = [...items];
-        const storedSaved = !!(storedItem?.report && storedItem.savedToSheet);
-        next[index] = storedSaved ? storedItem : next[index];
+        if (pendingReportPayloadFingerprint(next[index]) === pendingReportPayloadFingerprint(storedItem)) {
+          next[index] = mergePendingReportItems(next[index], storedItem);
+          return next;
+        }
+        const existingUpdatedAt = Number(next[index]?.queueUpdatedAt || 0);
+        const storedUpdatedAt = Number(storedItem?.queueUpdatedAt || 0);
+        if (storedUpdatedAt >= existingUpdatedAt) next[index] = storedItem;
         return next;
-      }, previous));
+      }, previous);
+      pendingRef.current = nextPending;
+      return nextPending;
+    });
+  };
+  loadPendingReportsFromIndexedDB()
+    .then(storedItems => restorePendingItems(storedItems))
+    .catch(error => {
+      console.warn("Pending report IndexedDB restore failed", error);
+      restorePendingItems();
     })
-    .catch(error => console.warn("Pending report IndexedDB restore failed", error))
     .finally(() => {
       if (active) setPendingStoreReady(true);
     });
@@ -2460,13 +2825,31 @@ useEffect(() => {
   const onServiceWorkerMessage = event => {
     const message = event?.data || {};
     if (message.type !== "GALILEO_REPORT_SAVED_TO_SHEET" || !message.item) return;
-    if (!shouldKeepPendingReport(message.item)) {
-      removePendingReport(message.item);
-      return;
-    }
-    setPending(previous => previous.map(item =>
-      samePendingReport(item, message.item) ? message.item : item
-    ));
+    setPending(previous => {
+      const next = previous.flatMap(item => {
+        if (!samePendingReport(item, message.item)) return [item];
+        if (pendingReportPayloadFingerprint(item) !== pendingReportPayloadFingerprint(message.item)) return [item];
+        if (!shouldKeepPendingReport(message.item)) {
+          void deletePendingReportFromIndexedDBIfUnchanged(message.item)
+            .then(deleted => {
+              if (!deleted) return;
+              setPending(current => {
+                const cleaned = current.filter(candidate =>
+                  !samePendingReport(candidate, message.item) ||
+                  pendingReportPayloadFingerprint(candidate) !== pendingReportPayloadFingerprint(message.item)
+                );
+                pendingRef.current = cleaned;
+                return cleaned;
+              });
+            })
+            .catch(error => console.warn("Background pending report cleanup failed", error));
+          return [mergePendingReportItems(item, message.item)];
+        }
+        return [mergePendingReportItems(item, message.item)];
+      });
+      pendingRef.current = next;
+      return next;
+    });
   };
   navigator.serviceWorker.addEventListener("message", onServiceWorkerMessage);
   return () => navigator.serviceWorker.removeEventListener("message", onServiceWorkerMessage);
@@ -2475,27 +2858,70 @@ const makePendingOperatorIssue = (issue = {}) => ({
   localId: issue.localId || `opissue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   operator: issue.operator || "",
   client: issue.client || "",
+  clientId: issue.clientId || "",
   desc: issue.desc || "",
   priority: issue.priority || "רגיל",
-  date: issue.date || todayStr()
+  date: issue.date || todayStr(),
+  createdAt: issue.createdAt || new Date().toISOString(),
+  lastAttemptAt: issue.lastAttemptAt || "",
+  attemptCount: Number(issue.attemptCount || 0),
+  lastError: issue.lastError || ""
 });
 const pendingOperatorIssueKey = (issue = {}) => String(issue.localId || [issue.operator, issue.client, issue.desc, issue.priority, issue.date].map(normalizeName).join("|"));
 const samePendingOperatorIssue = (a = {}, b = {}) => pendingOperatorIssueKey(a) === pendingOperatorIssueKey(b);
-const operatorIssueToRow = (issue = {}) => [issue.localId || Date.now(), issue.operator || "", issue.client || "", issue.desc || "", issue.priority || "רגיל", "פתוח", "", issue.date || todayStr()];
-const addPendingOperatorIssue = (issue) => {
-  const item = makePendingOperatorIssue(issue);
-  setPendingOperatorIssues(prev => prev.some(x => samePendingOperatorIssue(x, item)) ? prev : [...prev, item]);
-  return item;
+const samePendingOperatorIssueContent = (a = {}, b = {}) => {
+  const aClientId = String(a.clientId || "").trim();
+  const bClientId = String(b.clientId || "").trim();
+  const samePool = aClientId || bClientId
+    ? !!aClientId && !!bClientId && aClientId === bClientId
+    : normalizeName(a.client) === normalizeName(b.client);
+  return samePool &&
+    normalizeName(a.operator) === normalizeName(b.operator) &&
+    normalizeName(a.desc) === normalizeName(b.desc) &&
+    normalizeName(a.priority) === normalizeName(b.priority) &&
+    normalizeDate(a.date) === normalizeDate(b.date);
 };
-const removePendingOperatorIssue = (issue) => {
-  setPendingOperatorIssues(prev => prev.filter(x => !samePendingOperatorIssue(x, issue)));
+const operatorIssueToRow = (issue = {}) => [issue.localId || Date.now(), issue.operator || "", issue.client || "", issue.desc || "", issue.priority || "רגיל", "פתוח", "", issue.date || todayStr()];
+const commitPendingOperatorIssues = (nextValue) => {
+  const current = pendingOperatorIssuesRef.current;
+  const next = typeof nextValue === "function" ? nextValue(current) : nextValue;
+  const normalized = Array.isArray(next) ? next.map(makePendingOperatorIssue) : [];
+  pendingOperatorIssuesRef.current = normalized;
+  let persisted = true;
+  try {
+    localStorage.setItem(PENDING_OPERATOR_ISSUES_STORAGE_KEY, JSON.stringify(normalized));
+  } catch (error) {
+    persisted = false;
+    console.warn("Pending operator issue persistence failed", error);
+  }
+  setPendingOperatorIssues(normalized);
+  return {issues:normalized, persisted};
+};
+const addPendingOperatorIssue = (issue) => {
+  const explicitLocalId = String(issue?.localId || "").trim();
+  const matchingQueuedIssue = pendingOperatorIssuesRef.current.find(item => explicitLocalId
+    ? samePendingOperatorIssue(item, issue)
+    : samePendingOperatorIssueContent(item, issue)
+  );
+  const item = matchingQueuedIssue || makePendingOperatorIssue(issue);
+  const result = commitPendingOperatorIssues(prev => prev.some(x => samePendingOperatorIssue(x, item)) ? prev : [...prev, item]);
+  return {...item, _localPersisted:result.persisted};
+};
+const updatePendingOperatorIssue = (issue, changes) => {
+  let updated = makePendingOperatorIssue({...issue, ...changes});
+  commitPendingOperatorIssues(prev => prev.map(item => {
+    if (!samePendingOperatorIssue(item, issue)) return item;
+    updated = makePendingOperatorIssue({...item, ...changes});
+    return updated;
+  }));
+  return updated;
 };
 const sameReportIdentity = (a = {}, b = {}) => {
   if (a.id && b.id) return String(a.id) === String(b.id);
   return (
     normalizeDate(a.reportDate) === normalizeDate(b.reportDate) &&
     normalizeName(a.operator) === normalizeName(b.operator) &&
-    normalizeName(a.client) === normalizeName(b.client)
+    samePoolIdentity(a, b)
   );
 };
 const reportWithServerId = (report, response) => {
@@ -2519,24 +2945,35 @@ const reportFoundInSheet = (sheetReport = {}, report = {}) => {
     : (
       normalizeDate(sheetReport.reportDate) === normalizeDate(report.reportDate) &&
       normalizeName(sheetReport.operator) === normalizeName(report.operator) &&
-      normalizeName(sheetReport.client) === normalizeName(report.client)
+      samePoolIdentity(sheetReport, report)
     );
   if (!identityMatches) return false;
-  const fields = ["chlorine","ph","salt","waterLevel","clarity","fat","flow","elModel","elSerial","elDate","elNext","supplyLabel","poolStatus","customStatusText","restrictedUntil","notes","chlora","hth","phUp","acidLiters","suppliedEquipment","clientId"];
+  const fields = ["chlorine","ph","salt","waterLevel","clarity","fat","flow","elModel","elSerial","elDate","elNext","supplyLabel","poolStatus","customStatusText","restrictedUntil","notes","chlora","hth","phUp","acidLiters","suppliedEquipment","clientId","waterCheckOnly"];
   return fields.every(field => normalizeName(sheetReport?.[field]) === normalizeName(report?.[field]));
 };
-const confirmReportSavedToSheet = async (report) => {
-  if (!sheetId || !report?.client || !report?.reportDate) return false;
+const getReportSheetStorageStatus = async (report) => {
+  if (!sheetId || !report?.client || !report?.reportDate) {
+    return {checked:false, confirmed:false, matches:[]};
+  }
   const res = await sheetCall("getReportStorageStatus", { report }).catch(() => null);
-  const matches = Array.isArray(res?.matches) ? res.matches : [];
-  const found = matches.some(match => match?.confirmed === true);
-  if (!found) console.warn("Report save was not confirmed in Sheets", {
+  if (!Array.isArray(res?.matches)) {
+    return {checked:false, confirmed:false, matches:[]};
+  }
+  return {
+    checked:true,
+    confirmed:res.matches.some(match => match?.confirmed === true),
+    matches:res.matches
+  };
+};
+const confirmReportSavedToSheet = async (report) => {
+  const status = await getReportSheetStorageStatus(report);
+  if (!status.confirmed) console.warn("Report save was not confirmed in Sheets", {
     id: report?.id,
     reportDate: report?.reportDate,
     operator: report?.operator,
     client: report?.client
   });
-  return found;
+  return status.confirmed;
 };
 
 useEffect(() => {
@@ -2584,14 +3021,19 @@ useEffect(() => {
 }, [waMessageTemplate]);
 
 useEffect(() => {
-  setWaPollMessageDraft(waPollMessage);
-  try { localStorage.setItem(WA_POLL_MESSAGE_STORAGE_KEY, waPollMessage); } catch {}
-}, [waPollMessage]);
+  setAcidSupplyMessageDraft(acidSupplyMessage);
+  try { localStorage.setItem(WA_ACID_SUPPLY_MESSAGE_STORAGE_KEY, acidSupplyMessage); } catch {}
+}, [acidSupplyMessage]);
 
 useEffect(() => {
-  setWaPollOptionsDraft(waPollOptions);
-  try { localStorage.setItem(WA_POLL_OPTIONS_STORAGE_KEY, JSON.stringify(normalizeWaPollOptions(waPollOptions))); } catch {}
-}, [waPollOptions]);
+  setPhUpSupplyMessageDraft(phUpSupplyMessage);
+  try { localStorage.setItem(WA_PH_UP_SUPPLY_MESSAGE_STORAGE_KEY, phUpSupplyMessage); } catch {}
+}, [phUpSupplyMessage]);
+
+useEffect(() => {
+  setSaltSupplyMessageDraft(saltSupplyMessage);
+  try { localStorage.setItem(WA_SALT_SUPPLY_MESSAGE_STORAGE_KEY, saltSupplyMessage); } catch {}
+}, [saltSupplyMessage]);
 
 useEffect(() => {
   setChlorineReminderMessageDraft(chlorineReminderMessage);
@@ -2683,9 +3125,11 @@ useEffect(() => {
     return window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator?.standalone === true;
   });
   const [form,setForm] = useState(blank());
+  const [submittedReport,setSubmittedReport] = useState(null);
   const [adminTab,setAdminTab] = useState("dashboard");
   const [taskDate,setTaskDate] = useState(todayStr());
   const [taskClient,setTaskClient] = useState("");
+  const [taskClientId,setTaskClientId] = useState("");
   const [taskClientSearch,setTaskClientSearch] = useState("");
   const [taskClients,setTaskClients] = useState([]);
   const [taskOps,setTaskOps] = useState([]);
@@ -2694,8 +3138,9 @@ useEffect(() => {
   const [dailyDate,setDailyDate] = useState(todayStr());
   const [showConv,setShowConv] = useState(false);
   const [navTab,setNavTab] = useState(0);
-  const [freeTaskActionId,setFreeTaskActionId] = useState(null);
+  const [additionalTaskActionId,setAdditionalTaskActionId] = useState(null);
   const [operatorTaskClient,setOperatorTaskClient] = useState("");
+  const [operatorTaskClientId,setOperatorTaskClientId] = useState("");
   const [operatorTaskClientSearch,setOperatorTaskClientSearch] = useState("");
   const [operatorTaskNote,setOperatorTaskNote] = useState("");
   const [openDoneTasks,setOpenDoneTasks] = useState({});
@@ -2708,6 +3153,7 @@ useEffect(() => {
   const [showQRCode,setShowQRCode] = useState(null);
   const [dismissed,setDismissed] = useState(false);
   const [showPendingReportNames,setShowPendingReportNames] = useState(false);
+  const [showPendingIssueDetails,setShowPendingIssueDetails] = useState(false);
   const [pendingBackgroundSync,setPendingBackgroundSync] = useState(false);
   const [showSuperAdmin,setShowSuperAdmin] = useState(false);
   const [showReportIssue,setShowReportIssue] = useState(false);
@@ -2719,21 +3165,22 @@ useEffect(() => {
   const [dismissedCriticalIssueIds,setDismissedCriticalIssueIds] = useState(()=>{ try{return JSON.parse(localStorage.getItem("galileo_dismissed_critical_issues")||"[]");}catch{return [];} });
   const [showOperatorIssue,setShowOperatorIssue] = useState(false);
   const [opIssueClient,setOpIssueClient] = useState("");
+  const [opIssueClientId,setOpIssueClientId] = useState("");
   const [opIssueDesc,setOpIssueDesc] = useState("");
   const [opIssuePriority,setOpIssuePriority] = useState("רגיל");
   const [internalNoteEdit,setInternalNoteEdit] = useState(null);
   const [clientSearch,setClientSearch] = useState("");
-  const [unassignedClients,setUnassignedClients] = useState([]);
   const [editingReport,setEditingReport] = useState(null);
   const [supplySearch,setSupplySearch] = useState({date:"",dateTo:"",type:""});
   const [adminIssueSearch,setAdminIssueSearch] = useState({date:"",client:""});
-  const [freeClients,setFreeClients] = useState([]);
+  const [poolSourcesReady,setPoolSourcesReady] = useState(false);
   const emptyAdminClient = {name:"",phone:"",address:"",gateCode:"",regularDays:"",regularOperator:"",poolType:"מלח",waterCheckDays:""};
   const [newClient,setNewClient] = useState(emptyAdminClient);
   const [editingAdminClient,setEditingAdminClient] = useState(null);
   const [clientListSearch,setClientListSearch] = useState("");
   const [adminClientSearch,setAdminClientSearch] = useState("");
   const [manualWaClient,setManualWaClient] = useState("");
+  const [manualWaClientId,setManualWaClientId] = useState("");
   const [manualWaClientSearch,setManualWaClientSearch] = useState("");
   const [manualWaMessage,setManualWaMessage] = useState("");
   const [manualWaSendAll,setManualWaSendAll] = useState(false);
@@ -2749,6 +3196,8 @@ useEffect(() => {
   const [reportFilter,setReportFilter] = useState("");
   const [saltSearch,setSaltSearch] = useState("");
   const [lowSaltSearch,setLowSaltSearch] = useState("");
+  const [saltMinimum,setSaltMinimum] = useState(2500);
+  const [applySaltMinimumToReports,setApplySaltMinimumToReports] = useState(false);
   const [selectedSaltReport,setSelectedSaltReport] = useState(null);
   const [reportDateFilter,setReportDateFilter] = useState("");
   const [reportDateToFilter,setReportDateToFilter] = useState("");
@@ -2769,8 +3218,10 @@ useEffect(() => {
   const toastTimer = useRef();
   const operatorIssueSendingRef = useRef(false);
   const operatorIssueSyncRef = useRef(false);
+  const operatorIssueInFlightIdsRef = useRef(new Set());
   const pendingSyncRef = useRef(false);
   const immediateReportIdsRef = useRef(new Set());
+  const editingPendingReportIdsRef = useRef(new Set());
   const deletedPendingReportIdsRef = useRef(new Set());
   const operatorRefreshRef = useRef(false);
   const operatorRefreshVersionRef = useRef("");
@@ -2812,7 +3263,7 @@ useEffect(() => {
   };
   const chlorineReminderDaysLeft = sendReminder ? daysUntilIso(form.chlorineReminderDueAt) : null;
   const fmtTime = (d) => d.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
-  const formatDateInput = (d) => d.toISOString().slice(0,10);
+  const formatDateInput = (d) => localDayKey(d);
   const normalizeDate = (d) => String(d||"").trim().slice(0,10);
   useEffect(() => {
     if (!client) {
@@ -2820,15 +3271,16 @@ useEffect(() => {
       return;
     }
     if (poolStatus !== "\u05de\u05d0\u05d5\u05d6\u05e0\u05ea") return;
-    if (internalNoteClientRef.current === client) return;
-    internalNoteClientRef.current = client;
-    const savedNote = String(lastReadingForClient(client)?.customStatusText || "").trim();
+    const currentPoolKey = poolIdentityKey({client, clientId:form.clientId});
+    if (internalNoteClientRef.current === currentPoolKey) return;
+    internalNoteClientRef.current = currentPoolKey;
+    const savedNote = String(lastReadingForClient(client, form.clientId)?.customStatusText || "").trim();
     setForm(f => (
-      f.client === client && f.poolStatus === "\u05de\u05d0\u05d5\u05d6\u05e0\u05ea"
+      samePoolIdentity(f, {client, clientId:form.clientId}) && f.poolStatus === "\u05de\u05d0\u05d5\u05d6\u05e0\u05ea"
         ? {...f, customStatusText: savedNote}
         : f
     ));
-  }, [client, poolStatus, lastReadings]);
+  }, [client, form.clientId, poolStatus, lastReadings]);
   const applyChemicalRestriction = (minutes) => {
     const start = new Date();
     const end = new Date(start.getTime() + minutes * 60000);
@@ -2844,11 +3296,31 @@ useEffect(() => {
     }
   };
   const clientLookupKey = (value) => String(value || "").split(" - ")[0].trim().toLowerCase();
-  const findClientByName = (name) => clients.find(c=>String(c.name||"")===String(name||"")) ||
-    clients.find(c=>clientLookupKey(c.name)===clientLookupKey(name));
-  const clientPhone = (n) => (findClientByName(n)||{}).phone||"";
-  const clientAddress = (n) => (findClientByName(n)||{}).address||"";
-  const clientGateCode = (n) => (findClientByName(n)||{}).gateCode||"";
+  const storedClientId = (c) => String(c?.clientId || c?.id || c?.["לקוח_ID"] || c?.["מזהה_לקוח"] || "").trim();
+  const allPoolRecords = () => {
+    const seenIds = new Set();
+    return clients.filter(c => {
+      const id = storedClientId(c);
+      if (!id) return true;
+      if (seenIds.has(id)) return false;
+      seenIds.add(id);
+      return true;
+    });
+  };
+  const findClientByName = (name, id = "") => {
+    const poolRecords = allPoolRecords();
+    const wantedId = String(id || "").trim();
+    if (wantedId) {
+      const byId = poolRecords.find(c => storedClientId(c) === wantedId);
+      return byId || null;
+    }
+    const exact = poolRecords.filter(c => String(c.name || "") === String(name || ""));
+    const matches = exact.length ? exact : poolRecords.filter(c => clientLookupKey(c.name) === clientLookupKey(name));
+    return matches.length === 1 ? matches[0] : null;
+  };
+  const clientPhone = (n, id = "") => (findClientByName(n, id)||{}).phone||"";
+  const clientAddress = (n, id = "") => (findClientByName(n, id)||{}).address||"";
+  const clientGateCode = (n, id = "") => (findClientByName(n, id)||{}).gateCode||"";
   const normalizeName = (n) => String(n||"").trim().toLowerCase();
   const findPushUser = (value) => {
     if (!value) return null;
@@ -2864,6 +3336,56 @@ useEffect(() => {
   const isAdminRole = (role) => ["admin", "מנהל", "אדמין"].includes(String(role || "").trim().toLowerCase());
   const isOperatorRole = (role) => ["operator", "op", "מפעיל", "מפעיל קבוע", "מפעיל_קבוע"].includes(String(role || "").trim().toLowerCase());
   const isSubOperatorRole = (role) => ["sub_operator", "sub operator", "sub-operator", "suboperator", "sub_admin", "sub admin", "sub-admin", "subadmin", "עוזר", "עוזר מפעיל", "עוזר_מפעיל", "עוזר-מפעיל"].includes(String(role || "").trim().toLowerCase());
+  const isSubOperatorUser = isSubOperatorRole(user?.role);
+  const isSubOperatorEnglish = isSubOperatorUser && subOperatorLanguage === "en";
+  const subText = (hebrew, english) => isSubOperatorEnglish ? english : hebrew;
+  const subPoolLabel = (label) => {
+    if (!isSubOperatorEnglish) return label;
+    return String(label || "")
+      .replace(/מלח/g, "Salt")
+      .replace(/כלור/g, "Chlorine")
+      .replace(/גלישה/g, "Overflow")
+      .replace(/סקימר/g, "Skimmer");
+  };
+  const subClientMetaLine = (client) => {
+    if (!isSubOperatorEnglish) return clientMetaLine(client);
+    return [
+      client?.poolType && `Pool: ${subPoolLabel(client.poolType)}`,
+      client?.regularOperator && `Operator: ${client.regularOperator}`,
+      client?.regularDays && `Days: ${client.regularDays}`
+    ].filter(Boolean).join(" · ");
+  };
+  const subPlanStatus = (status) => {
+    if (!isSubOperatorEnglish) return status;
+    return ({
+      "פעיל":"Active",
+      "לא פעיל":"Inactive",
+      "ניסיון":"Trial",
+      "חסום":"Blocked",
+      "בוטל":"Cancelled",
+      "פג תוקף":"Expired"
+    })[status] || status;
+  };
+  useEffect(()=>{
+    if (!isSubOperatorRole(user?.role)) {
+      setSubOperatorLanguage("he");
+      setShowSubLanguagePrompt(false);
+      return;
+    }
+    try {
+      setSubOperatorLanguage(localStorage.getItem(subOperatorLanguageStorageKey(user)) === "en" ? "en" : "he");
+    } catch {
+      setSubOperatorLanguage("he");
+    }
+  },[user?.username,user?.name,user?.role]);
+  const confirmSubOperatorLanguageChange = () => {
+    if (!isSubOperatorUser) return;
+    const nextLanguage = isSubOperatorEnglish ? "he" : "en";
+    try { localStorage.setItem(subOperatorLanguageStorageKey(user), nextLanguage); } catch {}
+    setSubOperatorLanguage(nextLanguage);
+    setShowSubLanguagePrompt(false);
+    haptic("success");
+  };
   const operatorUsers = allUsers.filter(u=>isOperatorRole(u.role));
   const opNames = operatorUsers.map(u=>u.name);
   const userIdentityKey = (u={}) => [
@@ -2924,6 +3446,7 @@ useEffect(() => {
         c?.address,
         c?.phone,
         c?.regularOperator,
+        c?.poolType,
       ].map(v=>String(v||"").toLowerCase());
       return fields.some(v=>v.includes(q));
     });
@@ -2931,33 +3454,75 @@ useEffect(() => {
   const clientIdSeed = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\u0590-\u05ff-]/gi, "").slice(0, 42);
   const makeClientId = () => `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const stableClientId = (c, index = 0) => `client-${clientIdSeed([c?.name || c, c?.phone, c?.address].filter(Boolean).join("-")) || "unknown"}${index ? `-${index + 1}` : ""}`;
-  const clientId = (c) => String(c?.clientId || c?.id || c?.["לקוח_ID"] || c?.["מזהה_לקוח"] || "").trim() || stableClientId(c);
-  const clientByName = (name) => clients.find(c => normalizeName(c.name) === normalizeName(name));
-  const clientIdByName = (name) => clientId(clientByName(name) || {name});
+  const clientId = (c) => storedClientId(c) || stableClientId(c);
+  const clientByName = (name, id = "") => findClientByName(name, id);
+  const clientIdByName = (name, id = "") => {
+    const wantedId = String(id || "").trim();
+    if (wantedId) return wantedId;
+    const poolRecords = allPoolRecords();
+    const exact = poolRecords.filter(c => String(c?.name || "") === String(name || ""));
+    const matches = exact.length ? exact : poolRecords.filter(c => clientLookupKey(c?.name) === clientLookupKey(name));
+    return matches.length === 1 ? clientId(matches[0]) : "";
+  };
+  const reportClientOptions = () => {
+    return { regular:clients, all:clients };
+  };
   const clientRecordFor = (value) => {
     const raw = typeof value === "object" && value !== null ? value : {name:value};
     const name = String(raw?.name || raw?.client || value || "").trim();
-    return {...(clientByName(name) || {}), ...raw, name:name || raw?.name || ""};
+    return {...(clientByName(name, raw?.clientId) || {}), ...raw, name:name || raw?.name || ""};
   };
   const whatsAppClientKeys = (value) => {
     const source = clientRecordFor(value);
     const name = String(source?.name || source?.client || value || "").trim();
-    const id = String(source?.clientId || source?.id || source?.["לקוח_ID"] || source?.["מזהה_לקוח"] || (name ? clientIdByName(name) : "") || "").trim();
-    return [
-      id && `id:${id}`,
-      name && `name:${normalizeName(name)}`
-    ].filter(Boolean);
+    const id = String(source?.clientId || source?.["לקוח_ID"] || source?.["מזהה_לקוח"] || (name ? clientIdByName(name) : "") || "").trim();
+    if (id) return [`id:${id}`];
+    return name ? [`name:${normalizeName(name)}`] : [];
+  };
+  const legacyWhatsAppClientKeys = (value) => {
+    const source = clientRecordFor(value);
+    const name = String(source?.name || source?.client || value || "").trim();
+    return name ? [`name:${normalizeName(name)}`, name, normalizeName(name)] : [];
+  };
+  const migrateWhatsAppDisabledKeys = (values = [], removeLegacy = false) => {
+    const next = new Set((values || []).map(value => String(value || "").trim()).filter(Boolean));
+    const records = allPoolRecords();
+    const legacyNames = new Set();
+    records.forEach(record => {
+      const name = String(record?.name || "").trim();
+      const normalizedName = normalizeName(name);
+      if (!normalizedName) return;
+      const legacyKeys = [`name:${normalizedName}`, name, normalizedName];
+      if (!legacyKeys.some(key => next.has(key))) return;
+      legacyNames.add(normalizedName);
+      whatsAppClientKeys(record).forEach(key => next.add(key));
+    });
+    if (removeLegacy) {
+      [...next].forEach(key => {
+        const normalizedKey = key.startsWith("name:") ? key.slice(5) : normalizeName(key);
+        if (!key.startsWith("id:") && legacyNames.has(normalizedKey)) next.delete(key);
+      });
+    }
+    return [...next];
   };
   const isWhatsAppDisabledForClient = (value) => {
     const disabled = new Set(waDisabledClients);
-    return whatsAppClientKeys(value).some(key => disabled.has(key));
+    return (
+      whatsAppClientKeys(value).some(key => disabled.has(key)) ||
+      legacyWhatsAppClientKeys(value).some(key => disabled.has(key))
+    );
   };
   const toggleWhatsAppForClient = (value) => {
     const keys = whatsAppClientKeys(value);
     if (!keys.length) return;
     const wasDisabled = isWhatsAppDisabledForClient(value);
+    const hasLegacyBlock = legacyWhatsAppClientKeys(value).some(key => waDisabledClients.includes(key));
+    if (wasDisabled && hasLegacyBlock && !poolSourcesReady) {
+      showToast("נתוני הבריכות עדיין נטענים. החסימה נשארה פעילה");
+      return;
+    }
     setWaDisabledClients(prev => {
-      const next = new Set(prev);
+      const next = new Set(migrateWhatsAppDisabledKeys(prev, poolSourcesReady));
       if (wasDisabled) keys.forEach(key => next.delete(key));
       else keys.forEach(key => next.add(key));
       return [...next];
@@ -2968,28 +3533,45 @@ useEffect(() => {
   const setWhatsAppForClients = (values = [], disabled = true, toastMessage = "") => {
     const keys = [...new Set((values || []).flatMap(value => whatsAppClientKeys(value)))];
     if (!keys.length) return;
+    const hasLegacyBlock = (values || []).some(value =>
+      legacyWhatsAppClientKeys(value).some(key => waDisabledClients.includes(key))
+    );
+    if (!disabled && hasLegacyBlock && !poolSourcesReady) {
+      showToast("נתוני הבריכות עדיין נטענים. החסימה נשארה פעילה");
+      return;
+    }
     setWaDisabledClients(prev => {
-      const next = new Set(prev);
+      const next = new Set(migrateWhatsAppDisabledKeys(prev, poolSourcesReady));
       keys.forEach(key => disabled ? next.add(key) : next.delete(key));
       return [...next];
     });
     showToast(toastMessage || (disabled ? "שליחת ווצאפ בוטלה לכל הלקוחות המשויכים" : "שליחת ווצאפ הופעלה לכל הלקוחות המשויכים"));
     haptic("medium");
   };
+  useEffect(() => {
+    if (!poolSourcesReady) return;
+    setWaDisabledClients(previous => {
+      const migrated = migrateWhatsAppDisabledKeys(previous, true);
+      if (migrated.length === previous.length && migrated.every(key => previous.includes(key))) {
+        return previous;
+      }
+      return migrated;
+    });
+  }, [clients, poolSourcesReady]);
   const toggleWhatsAppForAllClients = () => {
     if (!clients.length) return;
     const allDisabled = clients.every(c => isWhatsAppDisabledForClient(c));
     setWhatsAppForClients(clients, !allDisabled, allDisabled ? "שליחת ווצאפ הופעלה לכל הלקוחות" : "שליחת ווצאפ בוטלה לכל הלקוחות");
   };
-  const disabledWhatsAppClients = () => sortByClientName(clients.filter(c => isWhatsAppDisabledForClient(c.name)));
+  const disabledWhatsAppClients = () => sortByClientName(clients.filter(c => isWhatsAppDisabledForClient(c)));
   const manualWaBaseClients = () => {
     if (manualWaSendAll) return sortByClientName(clients);
-    const selected = manualWaClient ? findClientByName(manualWaClient) : null;
+    const selected = manualWaClient ? findClientByName(manualWaClient, manualWaClientId) : null;
     return selected ? [selected] : [];
   };
   const manualWaRecipients = () => manualWaBaseClients()
-    .map(c => ({...c, phone: normalizeWhatsAppPhone(c.phone || clientPhone(c.name))}))
-    .filter(c => c.phone && !isWhatsAppDisabledForClient(c.name));
+    .map(c => ({...c, phone: normalizeWhatsAppPhone(c.phone || clientPhone(c.name, clientId(c)))}))
+    .filter(c => c.phone && !isWhatsAppDisabledForClient(c));
   const WhatsAppClientToggle = ({client: clientValue, compact=false}) => {
     const disabled = isWhatsAppDisabledForClient(clientValue);
     return (
@@ -2998,7 +3580,7 @@ useEffect(() => {
         onPointerUp={e=>e.stopPropagation()}
         onClick={e=>e.stopPropagation()}
         style={{display:"inline-flex",alignItems:"center",height:24,flexShrink:0}}
-        title={disabled ? "שליחת ווצאפ כבויה ללקוח זה" : "שליחת ווצאפ פעילה ללקוח זה"}
+        title={disabled ? subText("שליחת ווצאפ כבויה ללקוח זה","WhatsApp is disabled for this client") : subText("שליחת ווצאפ פעילה ללקוח זה","WhatsApp is enabled for this client")}
       >
         <Press
           onClick={e=>{e.stopPropagation();toggleWhatsAppForClient(clientValue);}}
@@ -3019,7 +3601,7 @@ useEffect(() => {
             whiteSpace:"nowrap"
           }}
         >
-          {disabled ? "ווצאפ כבוי" : "ווצאפ פעיל"}
+          {disabled ? subText("ווצאפ כבוי","WhatsApp off") : subText("ווצאפ פעיל","WhatsApp on")}
         </Press>
       </span>
     );
@@ -3029,9 +3611,15 @@ useEffect(() => {
     const entries = Object.entries(lastReadings || {});
     const readings = entries.map(([, value]) => value);
     if (wantedId) {
+      if (lastReadings?.[wantedId]) return lastReadings[wantedId];
       const byId = readings.find(r => String(r?.clientId || "").trim() === wantedId);
       if (byId) return byId;
+      return null;
     }
+    const matchingPools = allPoolRecords().filter(c =>
+      clientLookupKey(c?.name) === clientLookupKey(clientName)
+    );
+    if (matchingPools.length > 1) return null;
     return lastReadings?.[clientName] ||
       entries.find(([key]) => normalizeName(key) === normalizeName(clientName))?.[1] ||
       readings.find(r => normalizeName(r?.client) === normalizeName(clientName)) ||
@@ -3040,7 +3628,7 @@ useEffect(() => {
   const ensureClientIds = (list = []) => {
     const used = new Set();
     return (list || []).map((c, i) => {
-      const base = String(c?.clientId || c?.id || c?.["לקוח_ID"] || c?.["מזהה_לקוח"] || "").trim() || stableClientId(c, i);
+      const base = String(c?.clientId || c?.id || c?.["לקוח_ID"] || c?.["מזהה_לקוח"] || "").trim() || stableClientId(c);
       let id = base;
       let n = 2;
       while (used.has(id)) id = `${base}-${n++}`;
@@ -3070,64 +3658,118 @@ useEffect(() => {
     poolType: String(c.poolType || "מלח"),
     waterCheckDays: normalizeWaterCheckDays(c.waterCheckDays),
   });
-  const saveAdminClientDetails = async (originalName, draft) => {
-    const next = {...adminClientDraft(draft), clientId:clientId(draft), originalName};
+  const saveAdminClientDetails = async (originalClientId, originalName, draft) => {
+    const next = {...adminClientDraft(draft), clientId:clientId(draft), originalClientId, originalName};
     if (!next.name.trim()) { showToast("⚠️ נא להזין שם לקוח"); return; }
-    const updated = ensureClientIds(clients.map(c => c.name === originalName ? next : c));
+    const updated = ensureClientIds(clients.map(c =>
+      samePoolIdentity({client:c.name,clientId:clientId(c)}, {client:originalName,clientId:originalClientId}) ? next : c
+    ));
     if (sheetId) {
-      const res = await sheetCall("saveClients", { clients: updated });
+      const res = await sheetCall("saveClients", { clients: [next] });
       if (!res?.success) { showToast("⚠️ השמירה לגיליון נכשלה"); haptic("medium"); return; }
     }
-    setClients(updated.map(({originalName: _originalName, ...client}) => client));
+    setClients(updated.map(({originalName: _originalName, originalClientId: _originalClientId, ...client}) => client));
     setEditingAdminClient(null);
     showToast("✅ פרטי לקוח נשמרו");
     haptic("success");
   };
   const deleteAdminClient = async (clientToDelete) => {
     const originalName = String(clientToDelete?.name || "").trim();
+    const originalClientId = clientId(clientToDelete);
     if (!originalName) return;
     if (!window.confirm("לחיצה על אישור מוחקת לצמיתות לקוח זה פעולה זו לא ניתנת לביטול")) return;
     if (sheetId) {
-      const res = await sheetCall("deleteClient", { originalName, clientName: originalName });
+      const res = await sheetCall("deleteClient", { clientId:originalClientId, originalName, clientName: originalName });
       if (!res?.success) { showToast("⚠️ המחיקה מהגיליון נכשלה"); haptic("medium"); return; }
     }
-    setClients(prev => prev.filter(c => c.name !== originalName));
-    if (editingAdminClient?.originalName === originalName) setEditingAdminClient(null);
+    setClients(prev => prev.filter(c => !samePoolIdentity(
+      {client:c.name,clientId:clientId(c)},
+      {client:originalName,clientId:originalClientId}
+    )));
+    if (editingAdminClient?.originalClientId === originalClientId) setEditingAdminClient(null);
     showToast("🗑️ לקוח נמחק");
     haptic("success");
   };
-  const completedReportKey = (date, clientName, operatorName) => [date, normalizeName(clientName), normalizeName(operatorName)].join("|");
+  const completedReportKey = (date, clientName, operatorName, clientIdValue = "") => [
+    date,
+    poolIdentityKey({client:clientName, clientId:clientIdValue}),
+    normalizeName(operatorName)
+  ].join("|");
   const rememberCompletedReport = (report) => {
-    const key = completedReportKey(report.reportDate, report.client, report.operator || user?.name);
+    const key = completedReportKey(report.reportDate, report.client, report.operator || user?.name, report.clientId);
     setCompletedReports(prev => prev.includes(key) ? prev : [...prev, key]);
   };
-  const forgetCompletedReport = (date, clientName, operatorName=user?.name) => {
-    const key = completedReportKey(date, clientName, operatorName || user?.name);
+  const forgetCompletedReport = (date, clientName, operatorName=user?.name, clientIdValue="") => {
+    const key = completedReportKey(date, clientName, operatorName || user?.name, clientIdValue);
     setCompletedReports(prev => prev.filter(x => x !== key));
   };
-  const isClientReportedDone = (date, clientName) => {
+  const isClientReportedDone = (date, clientName, clientIdValue = "") => {
     const opName = dailyOwnerName(date) || user?.name || "";
-    const last = lastReadingForClient(clientName);
+    const pool = {client:clientName, clientId:clientIdValue};
+    const last = lastReadingForClient(clientName, clientIdValue);
     const allReports = [...sheetReports, ...reports];
     return allReports.some(r =>
         normalizeDate(r.reportDate) === date &&
         normalizeName(r.operator) === normalizeName(opName) &&
-        normalizeName(r.client) === normalizeName(clientName)
+        samePoolIdentity(r, pool)
       ) ||
-      completedReports.includes(completedReportKey(date, clientName, opName)) ||
+      completedReports.includes(completedReportKey(date, clientName, opName, clientIdValue)) ||
       normalizeDate(last?.date) === date;
   };
   const poolTags = (poolType) => String(poolType || "מלח").split(/[,+/|]/).map(x=>x.trim()).filter(Boolean);
   const primaryPoolType = (poolType) => poolTags(poolType).includes("כלור") ? "כלור" : "מלח";
   const secondaryPoolType = (poolType) => poolTags(poolType).find(x=>x==="סקימר" || x==="גלישה") || "";
   const formatPoolType = (poolType) => [primaryPoolType(poolType), secondaryPoolType(poolType)].filter(Boolean).join(" + ");
+  const clientPoolTypeLabel = (clientName, clientIdValue = "") => {
+    const poolType = findClientByName(clientName, clientIdValue)?.poolType;
+    return poolType ? subPoolLabel(formatPoolType(poolType)) : "";
+  };
+  const operatorIssuePoolLabel = (clientName, clientIdValue = "") => {
+    const pool = findClientByName(clientName, clientIdValue);
+    return [
+      String(clientName || "").split(" - ")[0],
+      pool?.address,
+      pool?.poolType && formatPoolType(pool.poolType)
+    ].filter(Boolean).join(" · ");
+  };
+  const latestMeasuredSaltReports = () => {
+    const loadedReports = [...sheetReports, ...reports.filter(r=>!r._fromSheet)];
+    return allPoolRecords()
+      .filter(pool => primaryPoolType(pool.poolType) !== "כלור")
+      .map(pool => {
+        const poolId = clientId(pool);
+        const latestReading = lastReadingForClient(pool.name, poolId);
+        const readingHistory = latestReading
+          ? [latestReading, ...(Array.isArray(latestReading.previousMeasurements) ? latestReading.previousMeasurements : [])]
+          : [];
+        const candidates = [
+          ...loadedReports.filter(report => samePoolIdentity(report, {client:pool.name, clientId:poolId})),
+          ...readingHistory.map(reading => ({
+            ...reading,
+            client:reading.client || pool.name,
+            clientId:reading.clientId || poolId,
+            reportDate:reading.reportDate || reading.date || ""
+          }))
+        ]
+          .filter(report => Number.isFinite(measuredSaltPpm(report.salt)))
+          .sort((a,b) => measurementDate(b).localeCompare(measurementDate(a)));
+        return candidates[0] || null;
+      })
+      .filter(Boolean);
+  };
+  const clientOptionLabel = (c) => [
+    c?.name,
+    c?.address,
+    c?.poolType && subPoolLabel(formatPoolType(c.poolType)),
+    c?.regularOperator
+  ].filter(Boolean).join(" · ");
   const poolIconForType = (poolType) => primaryPoolType(poolType)==="כלור" ? "🧪" : secondaryPoolType(poolType)==="גלישה" ? "🌊" : secondaryPoolType(poolType)==="סקימר" ? "🔵" : "🧂";
   const setPoolTypePart = (poolType, part) => {
     const primary = part==="מלח" || part==="כלור" ? part : primaryPoolType(poolType);
     const secondary = part==="סקימר" || part==="גלישה" ? (secondaryPoolType(poolType)===part ? "" : part) : secondaryPoolType(poolType);
     return [primary, secondary].filter(Boolean).join(",");
   };
-  const freeTaskLogNote = (task) => {
+  const additionalTaskLogNote = (task) => {
     const logs = Array.isArray(task?.changeLog) ? task.changeLog : [];
     const closeWords = ["דוח הוגש", "בוצעה", "בוצע", "סומנה כבוצעה", "אדמין אישר", "אדמין דחה", "משימה עודכנה", "סדר היום", "הוסר", "נוסף"];
     const notes = logs.map(log => String(log?.note || "").trim()).filter(Boolean);
@@ -3174,9 +3816,7 @@ useEffect(() => {
     const reportCandidates = [...sheetReports, ...reports.filter(r=>!r._fromSheet)].reverse().filter(r => {
       if (normalizeDate(r.reportDate) !== normalizeDate(dailyDate)) return false;
       if (task?.reportId && String(r.id || "") === String(task.reportId)) return true;
-      const reportClientId = String(r.clientId || "").trim();
-      if (taskClientId && reportClientId) return reportClientId === taskClientId;
-      return normalizeName(r.client) === normalizeName(task.client);
+      return samePoolIdentity(r, {client:task.client,clientId:taskClientId,id:task.id});
     });
     const existing = reportCandidates.find(r => normalizeName(r.operator) === normalizeName(opName)) || reportCandidates[0];
     const lr = lastReadingForClient(task.client, task.clientId) || {};
@@ -3205,7 +3845,9 @@ useEffect(() => {
       ...reportSupplyFlags(source),
       reportDate: source.reportDate || dailyDate,
       client: source.client || task.client,
+      clientId: source.clientId || task.clientId || taskClientId,
       clientLocked: true,
+      waterCheckOnly: !!task?._waterCheck || !!source.waterCheckOnly,
       ph: isLowPhValue(source.ph) ? 0 : source.ph,
       salt: isLowSaltFlagValue(source.salt) ? 0 : source.salt,
       chlorineZeroConfirmed: Number(source.chlorine || 0) === 0,
@@ -3216,10 +3858,12 @@ useEffect(() => {
     setEditingReport({
       date: source.reportDate || dailyDate,
       client: source.client || task.client,
+      clientId: source.clientId || task.clientId || taskClientId,
       operator: source.operator || opName,
       localId: existing?.id || task?.reportId || "",
       notes: source.notes || "",
       missedTreatment: !!source.missedTreatment,
+      waterCheckOnly: !!task?._waterCheck || !!source.waterCheckOnly,
       sendWhatsAppOnSave
     });
     setOpenDoneTasks(x=>({...x,[`${dailyDate}:${task.id || task.client}`]:true}));
@@ -3321,8 +3965,8 @@ useEffect(() => {
     const parsed = new Date(raw);
     return isNaN(parsed) ? "" : parsed.toISOString().slice(0,10);
   };
-  const nextTreatmentDateForClient = (clientName, afterDate) => {
-    const clientObj = clients.find(c => normalizeName(c.name) === normalizeName(clientName));
+  const nextTreatmentDateForClient = (clientName, afterDate, clientIdValue = "") => {
+    const clientObj = findClientByName(clientName, clientIdValue);
     const baseIso = toISODate(afterDate) || todayStr();
     const days = String(clientObj?.regularDays || "").split(",").map(d=>normalizeDay(d.trim())).filter(Boolean);
     if (!days.length) return "";
@@ -3335,9 +3979,23 @@ useEffect(() => {
     }
     return "";
   };
-  const supplyDueDate = (clientName, supply) => toISODate(supply?.nextSupplyDate) || nextTreatmentDateForClient(clientName, supply?.updatedAt);
-  const isSupplyDueForDate = (clientName, date, supply = supplyDB[clientName]) => {
-    const due = supplyDueDate(clientName, supply);
+  const clientSupplyFromDB = (db, name, id = "") => {
+    const wantedId = String(id || "").trim();
+    const resolvedId = wantedId || clientIdByName(name);
+    if (!resolvedId) return null;
+    if (db?.[resolvedId]) return db[resolvedId];
+    if (resolvedId) {
+      const byId = Object.values(db || {}).find(item => String(item?.clientId || "").trim() === resolvedId);
+      if (byId) return byId;
+      return clientIdByName(name) === resolvedId ? (db?.[name] || db?.[`legacy:${name}`] || null) : null;
+    }
+    return null;
+  };
+  const clientSupply = (name, id = "") => clientSupplyFromDB(supplyDB, name, id);
+  const supplyStorageKey = (clientName, clientIdValue = "") => String(clientIdValue || "").trim() || clientName;
+  const supplyDueDate = (clientName, supply, clientIdValue = "") => toISODate(supply?.nextSupplyDate) || nextTreatmentDateForClient(clientName, supply?.updatedAt, clientIdValue);
+  const isSupplyDueForDate = (clientName, date, supply = clientSupply(clientName), clientIdValue = "") => {
+    const due = supplyDueDate(clientName, supply, clientIdValue);
     return !due || due <= normalizeDate(date);
   };
 
@@ -3354,7 +4012,7 @@ useEffect(() => {
   };
 
   const dayClientProfiles = (date=dailyDate, opName=dailyOwnerName(date) || user?.name) => {
-    return myDayClients(date, opName).map(c=>({id:`day-${c.name}`,client:c.name,operators:[opName],date,status:"pending",changeLog:[],_dayProfile:true}));
+    return myDayClients(date, opName).map(c=>({id:`day-${clientId(c)}`,client:c.name,clientId:clientId(c),operators:[opName],date,status:"pending",changeLog:[],_dayProfile:true}));
   };
 
   const myTasks = (date=dailyDate) => tasks.filter(t=>{
@@ -3368,6 +4026,7 @@ useEffect(() => {
     return dateMatch && nameMatch;
   });
   const measurementDate = (source = {}) => normalizeDate(source.reportDate || source.date);
+  const hasMeasurementValue = (value) => value !== "" && value !== null && value !== undefined;
   const mergeLatestReading = (previous = {}, incoming = {}) => {
     const byDate = new Map();
     [...(Array.isArray(previous.previousMeasurements) ? previous.previousMeasurements : []), previous, incoming].forEach(reading => {
@@ -3391,7 +4050,10 @@ useEffect(() => {
     return [...serverHistory, ...fetchedHistory, ...sheetReports, ...reports]
       .filter(r => {
         const reportClientId = String(r?.clientId || "").trim();
-        if (wantedId && reportClientId) return reportClientId === wantedId;
+        if (wantedId) {
+          if (reportClientId) return reportClientId === wantedId;
+          return clientIdByName(clientName) === wantedId && normalizeName(r?.client) === wantedName;
+        }
         return normalizeName(r?.client) === wantedName;
       })
       .sort((a,b)=>measurementDate(b).localeCompare(measurementDate(a)))
@@ -3407,7 +4069,7 @@ useEffect(() => {
     const key = historyKey || String(id || clientIdByName(clientName) || clientName);
     setMeasurementHistoryLoading(prev=>({...prev,[key]:true}));
     try {
-      const result = await sheetCall("getReports", {client:clientName, clientId:id || clientIdByName(clientName), query:clientName});
+      const result = await sheetCall("getReports", {client:clientName, clientId:id || clientIdByName(clientName), query:clientName, limit:100});
       if (Array.isArray(result?.reports)) setMeasurementHistoryByClient(prev=>({...prev,[key]:result.reports}));
     } catch (error) {
       console.warn("Measurement history load failed", error);
@@ -3462,7 +4124,7 @@ useEffect(() => {
       saltPkg: !!requested.saltPkg && requestedSaltBags > 0 && !suppliedSalt,
       saltBags: requestedSaltBags
     };
-    const nextSupplyDate = nextAcid || nextPhUpSupply || nextSaltPkg ? nextTreatmentDateForClient(clientName, source.reportDate) : "";
+    const nextSupplyDate = nextAcid || nextPhUpSupply || nextSaltPkg ? nextTreatmentDateForClient(clientName, source.reportDate, source.clientId) : "";
     return {
       shouldUpdate: !!(requested.acid || requested.phUpSupply || requested.saltPkg || supplied.length || hasPendingSupply(prevSupply)),
       explicitAfterSupplied,
@@ -3477,57 +4139,17 @@ useEffect(() => {
         assignedOperator: prevSupply.assignedOperator || "",
         materialPrices: normalizeNextSupplyPrices(prevSupply.materialPrices),
         supplyId: prevSupply.supplyId || "",
+        client: clientName,
         clientId: source.clientId || prevSupply.clientId || clientIdByName(clientName)
       }
     };
   };
-  const materialApprovalReport = (approval) => {
-    const allReports = [...reports, ...sheetReports];
-    return allReports.find(r => String(r.id || "") === String(approval?.reportId || "")) ||
-      allReports.filter(r => normalizeName(r.client) === normalizeName(approval?.client))
-        .sort((a,b)=>normalizeDate(b.reportDate).localeCompare(normalizeDate(a.reportDate)))[0] ||
-      {};
-  };
-  const materialApprovalSupply = (approval) => {
-    const metaSupply = supplyFromReportLike(approval || {});
-    if (materialNamesFromSupply(metaSupply).length) return metaSupply;
-    return supplyFromReportLike(materialApprovalReport(approval));
-  };
-  const materialApprovalDisplayStatus = (approval) => {
-    const status = String(approval?.status || "").trim().toLowerCase();
-    const answer = String(approval?.answer || "");
-    if (status === "rejected" || answer.includes("לא")) return {label:"לקוח לא אישר", col:C.red};
-    if (status === "pending") return {label:"ממתין לאישור לקוח", col:C.orange};
-    if (["approved","admin_added","auto_added","added"].includes(status) || (answer.includes("מאשר") && !answer.includes("לא"))) {
-      return {label:"לקוח אישר", col:C.green};
-    }
-    return null;
-  };
-  const materialApprovalStatusForSupply = (clientName, supply = {}, reportId = "") => {
-    const wantedNames = materialNamesFromSupply(supply).map(normalizeName).filter(Boolean);
-    if (!clientName || !wantedNames.length) return null;
-    return [...materialApprovals]
-      .filter(approval => {
-        if (normalizeName(approval?.client) !== normalizeName(clientName)) return false;
-        const approvalNames = materialNamesFromSupply(materialApprovalSupply(approval)).map(normalizeName).filter(Boolean);
-        if (!approvalNames.length) return false;
-        const reportMatch = reportId && String(approval?.reportId || "") === String(reportId);
-        const materialsMatch = wantedNames.every(name => approvalNames.includes(name));
-        return reportMatch || materialsMatch;
-      })
-      .sort((a,b)=>String(b.answeredAt || b.timestamp || "").localeCompare(String(a.answeredAt || a.timestamp || "")))
-      .map(materialApprovalDisplayStatus)
-      .find(Boolean) || null;
-  };
-  const isMaterialApprovalAwaitingAdmin = (approval) => {
-    const status = String(approval?.status || "").toLowerCase();
-    const answer = String(approval?.answer || "");
-    return (status === "approved" || (answer.includes("מאשר") && !answer.includes("לא"))) &&
-      !["admin_added","added","rejected"].includes(status);
-  };
   const persistSupplyDB = (db) => {
     if (!sheetId) return;
-    const rows = Object.entries(db).map(([c,v])=>[c,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices),v.supplyId||"",v.clientId||clientIdByName(c)]);
+    const rows = Object.entries(db).map(([key,v])=>{
+      const clientName = v.client || findClientByName("", v.clientId)?.name || key;
+      return [clientName,v.acid?"כן":"לא",v.phUpSupply?"כן":"לא",v.saltPkg?"כן":"לא",v.saltBags||0,v.updatedAt,v.supplyNote||"",v.nextSupplyDate||"",v.assignedOperator||"",serializeNextSupplyPrices(v.materialPrices),v.supplyId||"",v.clientId||clientIdByName(clientName)];
+    });
     void sheetCall("saveSupplyDB",{rows}).catch(e=>console.warn("Supply sync failed", e));
   };
   useEffect(() => {
@@ -3535,13 +4157,23 @@ useEffect(() => {
     const timer = setInterval(() => persistSupplyDB(supplyDB), 180000);
     return () => clearInterval(timer);
   }, [sheetId, supplyDB]);
-  const buildSupplyUpdateForReport = (source = {}) => {
+  const supplyDBWithPoolUpdate = (db, clientName, supply) => {
+    const resolvedClientId = String(supply?.clientId || clientIdByName(clientName) || "").trim();
+    const key = supplyStorageKey(clientName, resolvedClientId);
+    const next = {...(db || {}), [key]:{...supply, client:clientName, clientId:resolvedClientId}};
+    if (resolvedClientId && key !== clientName && clientIdByName(clientName) === resolvedClientId) {
+      delete next[clientName];
+      delete next[`legacy:${clientName}`];
+    }
+    return next;
+  };
+  const buildSupplyUpdateForReport = (source = {}, baseSupplyDB = supplyDB) => {
     const clientName = source.client || "";
     if (!clientName) return null;
-    const prevSupply = supplyDB[clientName] || {};
+    const prevSupply = clientSupplyFromDB(baseSupplyDB, clientName, source.clientId) || {};
     const {shouldUpdate, nextSupply} = nextSupplyStateForReport(clientName, source, prevSupply);
     if (!shouldUpdate) return null;
-    const db = {...supplyDB, [clientName]: nextSupply};
+    const db = supplyDBWithPoolUpdate(baseSupplyDB, clientName, nextSupply);
     const row = [clientName,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices),nextSupply.supplyId||"",nextSupply.clientId||clientIdByName(clientName)];
     return {db, row};
   };
@@ -3599,15 +4231,19 @@ useEffect(() => {
   const saveInternalNoteForClient = async () => {
     if (!internalNoteEdit?.client) return;
     const clientName = internalNoteEdit.client;
+    const clientIdValue = String(internalNoteEdit.clientId || "").trim();
+    const readingKey = clientIdValue || clientName;
     const note = internalNoteEdit.note || "";
     setInternalNoteEdit(null);
     setLastReadings(prev => {
       const next = {
         ...prev,
-        [clientName]: {
-          ...(prev[clientName] || {}),
-          date: prev[clientName]?.date || todayStr(),
-          poolStatus: prev[clientName]?.poolStatus || "מאוזנת",
+        [readingKey]: {
+          ...(lastReadingForClient(clientName, clientIdValue) || {}),
+          client:clientName,
+          clientId:clientIdValue,
+          date: lastReadingForClient(clientName, clientIdValue)?.date || todayStr(),
+          poolStatus: lastReadingForClient(clientName, clientIdValue)?.poolStatus || "מאוזנת",
           customStatusText: note
         }
       };
@@ -3617,7 +4253,7 @@ useEffect(() => {
       } catch {}
       return next;
     });
-    const res = await sheetCall("saveClientInternalNote", {client: clientName, clientId: clientIdByName(clientName), note}).catch(()=>null);
+    const res = await sheetCall("saveClientInternalNote", {client: clientName, clientId: clientIdValue, note}).catch(()=>null);
     if (res?.success) showToast("✅ הערה פנימית נשמרה");
     else showToast("⚠️ ההערה עודכנה מקומית, שמירה בשיטס נכשלה");
     haptic(res?.success ? "success" : "medium");
@@ -3628,66 +4264,137 @@ useEffect(() => {
   const isIssueDone = (status) => issueText(status).includes("טופל") || issueText(status).includes("˜•₪");
 
   const sendPendingOperatorIssueItem = async (issue) => {
-    if (typeof navigator !== "undefined" && navigator.onLine === false) return false;
-    const clean = makePendingOperatorIssue(issue);
-    const res = await sheetCall("saveOperatorIssue", {
-      localId: clean.localId,
-      operator: clean.operator,
-      client: clean.client,
-      desc: clean.desc,
-      priority: clean.priority,
-      date: clean.date
-    }).catch(()=>null);
-    return !!res?.success;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      const offlineItem = updatePendingOperatorIssue(issue, {lastError:"offline"});
+      return {success:false, item:offlineItem, offline:true};
+    }
+    const issueKey = pendingOperatorIssueKey(issue);
+    if (operatorIssueInFlightIdsRef.current.has(issueKey)) return {success:false, item:issue, skipped:true};
+    operatorIssueInFlightIdsRef.current.add(issueKey);
+    const latestIssue = pendingOperatorIssuesRef.current.find(item => samePendingOperatorIssue(item, issue)) || issue;
+    const clean = updatePendingOperatorIssue(latestIssue, {
+      lastAttemptAt:new Date().toISOString(),
+      attemptCount:Number(latestIssue?.attemptCount || 0) + 1,
+      lastError:""
+    });
+    try {
+      const res = await sheetCall("saveOperatorIssue", {
+        localId: clean.localId,
+        operator: clean.operator,
+        client: clean.client,
+        clientId: clean.clientId,
+        desc: clean.desc,
+        priority: clean.priority,
+        date: clean.date
+      }).catch(()=>null);
+      if (res?.success) return {success:true, item:clean};
+      const failedItem = updatePendingOperatorIssue(clean, {lastError:String(res?.error || "send_failed")});
+      return {success:false, item:failedItem};
+    } finally {
+      operatorIssueInFlightIdsRef.current.delete(issueKey);
+    }
   };
 
-  const syncPendingOperatorIssues = async (maxItems = Infinity, silent = false) => {
-    if (!pendingOperatorIssues.length || operatorIssueSyncRef.current) return { sent:0, failed:pendingOperatorIssues.length };
-    if (typeof navigator !== "undefined" && navigator.onLine === false) return { sent:0, failed:pendingOperatorIssues.length, offline:true };
+  const syncPendingOperatorIssues = async (maxItems = Infinity, silent = false, preferredIssue = null) => {
+    const storedIssues = pendingOperatorIssuesRef.current;
+    const scheduledIssues = [...storedIssues].sort((a,b) => {
+      const priorityOrder = Number(isCriticalIssue(b?.priority)) - Number(isCriticalIssue(a?.priority));
+      if (priorityOrder) return priorityOrder;
+      const aAttempt = String(a?.lastAttemptAt || "");
+      const bAttempt = String(b?.lastAttemptAt || "");
+      if (!aAttempt && bAttempt) return -1;
+      if (aAttempt && !bAttempt) return 1;
+      return aAttempt.localeCompare(bAttempt) || String(a?.createdAt || "").localeCompare(String(b?.createdAt || ""));
+    });
+    const currentIssues = preferredIssue
+      ? [
+          storedIssues.find(item => samePendingOperatorIssue(item, preferredIssue)) || makePendingOperatorIssue(preferredIssue),
+          ...scheduledIssues.filter(item => !samePendingOperatorIssue(item, preferredIssue))
+        ]
+      : scheduledIssues;
+    if (!currentIssues.length) return {success:true, sent:0, failed:0};
+    if (operatorIssueSyncRef.current) {
+      if (preferredIssue && isCriticalIssue(preferredIssue.priority)) {
+        const urgentResult = await sendPendingOperatorIssueItem(preferredIssue);
+        if (urgentResult.success) {
+          const {issues:remaining} = commitPendingOperatorIssues(latest =>
+            latest.filter(item => !samePendingOperatorIssue(item, preferredIssue))
+          );
+          return {success:true, sent:1, failed:remaining.length};
+        }
+        return {success:false, sent:0, failed:pendingOperatorIssuesRef.current.length, skipped:!!urgentResult.skipped};
+      }
+      return {success:false, sent:0, failed:currentIssues.length, skipped:true};
+    }
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return {success:false, sent:0, failed:currentIssues.length, offline:true};
     operatorIssueSyncRef.current = true;
-    const itemsToSync = Number.isFinite(maxItems) ? pendingOperatorIssues.slice(0, Math.max(1, maxItems)) : pendingOperatorIssues;
-    const failed = Number.isFinite(maxItems) ? pendingOperatorIssues.slice(itemsToSync.length) : [];
-    const sent = [];
+    const itemsToSync = Number.isFinite(maxItems) ? currentIssues.slice(0, Math.max(1, maxItems)) : currentIssues;
+    const sentKeys = new Set();
+    const failedByKey = new Map();
     try {
       for (const item of itemsToSync) {
-        const ok = await sendPendingOperatorIssueItem(item);
-        if (ok) sent.push(item);
-        else failed.push(item);
+        const result = await sendPendingOperatorIssueItem(item);
+        const key = pendingOperatorIssueKey(item);
+        if (result.success) sentKeys.add(key);
+        else failedByKey.set(key, result.item || item);
       }
-      setPendingOperatorIssues(failed);
-      if (sent.length && !silent) showToast(failed.length ? `${failed.length} תקלות עדיין ממתינות לשליחה` : "כל התקלות נשלחו לאדמין");
-      return { sent:sent.length, failed:failed.length };
+      const {issues:remaining} = commitPendingOperatorIssues(latest => latest
+        .filter(item => !sentKeys.has(pendingOperatorIssueKey(item)))
+        .map(item => failedByKey.get(pendingOperatorIssueKey(item)) || item));
+      const preferredStillPending = preferredIssue
+        ? remaining.some(item => samePendingOperatorIssue(item, preferredIssue))
+        : false;
+      if (sentKeys.size && !silent) showToast(remaining.length ? `${remaining.length} תקלות עדיין ממתינות לשליחה` : "כל התקלות נשלחו לאדמין");
+      return {
+        success:preferredIssue ? !preferredStillPending : remaining.length === 0,
+        sent:sentKeys.size,
+        failed:remaining.length
+      };
     } finally {
       operatorIssueSyncRef.current = false;
     }
   };
 
-  const reportCriticalFlowIssue = async (report) => {
+  const queueCriticalFlowIssue = (report) => {
     if (report.flow !== "לא תקין") return null;
     showToast("🚨 נרשמת תקלה קריטית בזרימה...");
     const issue = {
-      operator: user?.name || "",
-      client: report.client,
+      localId:report.id ? `opissue-flow-${report.id}` : undefined,
+      operator: report.operator || user?.name || "",
+      client: operatorIssuePoolLabel(report.client, report.clientId),
+      clientId: report.clientId || "",
       desc: `תקלה קריטית בזרימה - נפתחה אוטומטית מדוח טיפול (${fmtDate(report.reportDate)})`,
       priority: "קריטי",
       date: report.reportDate || todayStr()
     };
+    const alreadyQueued = pendingOperatorIssuesRef.current.some(item => samePendingOperatorIssue(item, issue));
     const pendingIssue = addPendingOperatorIssue(issue);
     setPendingBackgroundSync(true);
-    setOperatorIssues(prev => [operatorIssueToRow(pendingIssue), ...prev]);
+    if (!alreadyQueued) setOperatorIssues(prev => [operatorIssueToRow(pendingIssue), ...prev]);
+    return pendingIssue;
+  };
+
+  const deliverCriticalFlowIssue = async (pendingIssue) => {
+    if (!pendingIssue) return null;
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      showToast("התקלה נשמרה מקומית ותישלח כשיחזור חיבור");
-      return { success:false, local:true, offline:true };
+      showToast(pendingIssue._localPersisted
+        ? "התקלה נשמרה מקומית ותישלח כשיחזור חיבור"
+        : "שמירת התקלה בטלפון נכשלה - הדוח נשאר בתור וינסה ליצור אותה שוב");
+      return { success:false, local:pendingIssue._localPersisted, offline:true };
     }
-    const sent = await sendPendingOperatorIssueItem(pendingIssue);
-    if (sent) {
-      removePendingOperatorIssue(pendingIssue);
+    const result = await syncPendingOperatorIssues(1, true, pendingIssue);
+    if (result.success) {
       showToast("תקלה קריטית נשלחה לאדמין");
       return { success:true };
     }
-    showToast("התקלה נשמרה מקומית, בדוק חיבור");
-    return { success:false, local:true };
+    showToast(pendingIssue._localPersisted
+      ? "התקלה נשמרה מקומית, בדוק חיבור"
+      : "השליחה והשמירה המקומית נכשלו - השאר את האפליקציה פתוחה ונסה שוב");
+    return { success:false, local:pendingIssue._localPersisted };
   };
+
+  const reportCriticalFlowIssue = async (report) =>
+    deliverCriticalFlowIssue(queueCriticalFlowIssue(report));
 
   const dismissCriticalIssue = (id) => {
     const next = [...new Set([...dismissedCriticalIssueIds, String(id)])];
@@ -3747,9 +4454,12 @@ useEffect(() => {
         const versionKey = `${String(versionR?.version || "")}:${dailyDate}`;
         const forceFullRefresh = Date.now() - operatorRefreshLastFullRef.current >= 60000;
         if (!forceFullRefresh && versionR?.version && operatorRefreshVersionRef.current === versionKey) return;
+        const preserveLoadedReportRange = screen === "admin" && adminTab === "reports";
         const [liveR, repR] = await Promise.all([
           sheetCall("getOperatorRefreshData"),
-          sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300}),
+          preserveLoadedReportRange
+            ? Promise.resolve(null)
+            : sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300}),
         ]);
         const tR = {tasks:liveR?.tasks};
         const uR = {users:liveR?.users};
@@ -3759,7 +4469,6 @@ useEffect(() => {
         const prR = {pendingSubReports:liveR?.pendingSubReports};
         const lrR = {lastReadings:liveR?.lastReadings};
         const setR = {settings:liveR?.settings};
-        const maR = {approvals:liveR?.materialApprovals};
         if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
         if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
         if(Array.isArray(shR?.sharedSubOrders)) setSharedSubOrders(shR.sharedSubOrders);
@@ -3767,12 +4476,17 @@ useEffect(() => {
         if(Array.isArray(prR?.pendingSubReports)) setPendingSubReports(prR.pendingSubReports);
         if(lrR?.lastReadings) setLastReadings(lrR.lastReadings);
         if(setR?.settings?.waMessageTemplate) setWaMessageTemplate(normalizeWaMessageTemplate(setR.settings.waMessageTemplate));
-        if(setR?.settings?.waPollMessage) setWaPollMessage(normalizeWaPollMessage(setR.settings.waPollMessage));
-        if(setR?.settings?.waPollOptions) setWaPollOptions(normalizeWaPollOptions(setR.settings.waPollOptions));
+        if(setR?.settings?.acidSupplyMessage) setAcidSupplyMessage(normalizeAcidSupplyMessage(setR.settings.acidSupplyMessage));
+        if(setR?.settings?.phUpSupplyMessage) setPhUpSupplyMessage(normalizePhUpSupplyMessage(setR.settings.phUpSupplyMessage));
+        if(setR?.settings?.saltSupplyMessage) setSaltSupplyMessage(normalizeSaltSupplyMessage(setR.settings.saltSupplyMessage));
         if(setR?.settings?.chlorineReminderMessage) setChlorineReminderMessage(normalizeChlorineReminderMessage(setR.settings.chlorineReminderMessage));
         if(setR?.settings?.waterLevelNoticeMessage) setWaterLevelNoticeMessage(normalizeWaterLevelNoticeMessage(setR.settings.waterLevelNoticeMessage));
-        if(Array.isArray(repR?.reports)) setSheetReports(repR.reports);
-        if(Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
+        if(Array.isArray(repR?.reports)) {
+          setSheetReports(previous => repR.reports.reduce(
+            (next, report) => upsertReportByIdentity(next, report),
+            previous
+          ));
+        }
         if(Array.isArray(uR?.users) && uR.users.length) applyFetchedUsers(uR.users);
         if (versionR?.version) operatorRefreshVersionRef.current = versionKey;
         operatorRefreshLastFullRef.current = Date.now();
@@ -3787,10 +4501,18 @@ useEffect(() => {
             subOperatorApprovals:Array.isArray(apR?.approvals) ? apR.approvals : c.subOperatorApprovals,
             pendingSubReports:Array.isArray(prR?.pendingSubReports) ? prR.pendingSubReports : c.pendingSubReports,
             waMessageTemplate:setR?.settings?.waMessageTemplate || c.waMessageTemplate,
+            acidSupplyMessage:setR?.settings?.acidSupplyMessage || c.acidSupplyMessage,
+            phUpSupplyMessage:setR?.settings?.phUpSupplyMessage || c.phUpSupplyMessage,
+            saltSupplyMessage:setR?.settings?.saltSupplyMessage || c.saltSupplyMessage,
             chlorineReminderMessage:setR?.settings?.chlorineReminderMessage || c.chlorineReminderMessage,
             waterLevelNoticeMessage:setR?.settings?.waterLevelNoticeMessage || c.waterLevelNoticeMessage,
             lastReadings:lrR?.lastReadings || c.lastReadings,
-            sheetReports:Array.isArray(repR?.reports) ? repR.reports : c.sheetReports,
+            sheetReports:Array.isArray(repR?.reports)
+              ? repR.reports.reduce(
+                  (next, report) => upsertReportByIdentity(next, report),
+                  Array.isArray(c.sheetReports) ? c.sheetReports : []
+                )
+              : c.sheetReports,
             users:Array.isArray(uR?.users) && uR.users.length ? uR.users : c.users,
             cachedAt:Date.now()
           }));
@@ -3806,7 +4528,7 @@ useEffect(() => {
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return ()=>{ clearInterval(interval); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refreshWhenVisible); };
-  },[user, dailyDate]);
+  },[user, dailyDate, screen, adminTab]);
 
   useEffect(()=>{
     if(!user) return;
@@ -3951,7 +4673,14 @@ useEffect(() => {
       return {...t, operators: cleanedOps.filter(Boolean)};
     });
     setTasks(nextTasks);
-    if (sheetId) await sheetCall("saveTasks", {tasks: nextTasks}).catch(e => console.warn("Sub-operator task assignment sync failed", e));
+    if (sheetId) {
+      const changedTasks = nextTasks.filter((task, index) => task !== tasks[index]);
+      const taskResult = await sheetCall("mutateTasks", {upserts:changedTasks}).catch(e => {
+        console.warn("Sub-operator task assignment sync failed", e);
+        return null;
+      });
+      if (Array.isArray(taskResult?.tasks)) setTasks(taskResult.tasks);
+    }
     if (sheetId) {
       try {
         if (previousUsername && previousUsername !== nextUsername) await sheetCall("saveSubOperatorAssignment", {username: previousUsername, operator: ""});
@@ -4037,24 +4766,28 @@ useEffect(() => {
   ].filter((r, idx, arr) => {
     const opName = dailyOwnerName(dailyDate) || user?.name || "";
     if (normalizeDate(r.reportDate) !== dailyDate || normalizeName(r.operator) !== normalizeName(opName) || !r.client) return false;
-    const key = normalizeName(r.client);
-    return arr.findIndex(x => normalizeDate(x.reportDate) === dailyDate && normalizeName(x.operator) === normalizeName(opName) && normalizeName(x.client) === key) === idx;
-  }).map(r=>r.client);
-  const taskForClientOperator = (date, clientName, opName) => tasks.find(t =>
+    return arr.findIndex(x =>
+      normalizeDate(x.reportDate) === dailyDate &&
+      normalizeName(x.operator) === normalizeName(opName) &&
+      samePoolIdentity(x, r)
+    ) === idx;
+  }).map(r=>({client:r.client,clientId:r.clientId||""}));
+  const taskForClientOperator = (date, clientName, opName, clientIdValue = "") => tasks.find(t =>
     normalizeDate(t.date) === date &&
-    t.client === clientName &&
+    samePoolIdentity(t, {client:clientName,clientId:clientIdValue}) &&
     (t.operators || []).some(op => normalizeName(op) === normalizeName(opName))
   );
-  const taskDoneForClient = (date, clientName, opName) => {
-    const task = taskForClientOperator(date, clientName, opName);
-    return task?.status === "done" || reports.some(r => r.reportDate === date && r.client === clientName && normalizeName(r.operator) === normalizeName(opName));
+  const taskDoneForClient = (date, clientName, opName, clientIdValue = "") => {
+    const pool = {client:clientName,clientId:clientIdValue};
+    const task = taskForClientOperator(date, clientName, opName, clientIdValue);
+    return task?.status === "done" || reports.some(r => r.reportDate === date && samePoolIdentity(r, pool) && normalizeName(r.operator) === normalizeName(opName));
   };
   const progressReportsForOperator = (date, opName) => {
     const seen = new Set();
     return [...sheetReports, ...reports.filter(r=>!r._fromSheet)]
       .filter(r => normalizeDate(r.reportDate) === date && normalizeName(r.operator) === normalizeName(opName) && r.client)
       .filter(r => {
-        const key = `${normalizeDate(r.reportDate)}:${normalizeName(r.operator)}:${normalizeName(r.client)}`;
+        const key = `${normalizeDate(r.reportDate)}:${normalizeName(r.operator)}:${poolIdentityKey(r)}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -4064,10 +4797,11 @@ useEffect(() => {
     const byClient = new Map();
     getAdminOrderEntries(date, opName).forEach((entry, index) => {
       if (!entry?.client) return;
-      byClient.set(normalizeName(entry.client), {...entry, client:entry.client, clientId:entry.clientId||clientIdByName(entry.client), orderIndex:Number(entry.orderIndex || index + 1), reported:false, source:"order"});
+      const normalizedEntry = {...entry, client:entry.client, clientId:entry.clientId||clientIdByName(entry.client), orderIndex:Number(entry.orderIndex || index + 1), reported:false, source:"order"};
+      byClient.set(poolIdentityKey(normalizedEntry), normalizedEntry);
     });
     progressReportsForOperator(date, opName).forEach((report, index) => {
-      const key = normalizeName(report.client);
+      const key = poolIdentityKey(report);
       const existing = byClient.get(key);
       byClient.set(key, {
         ...(existing || {client:report.client, clientId:report.clientId||clientIdByName(report.client), note:"", orderIndex:9999 + index, source:"report"}),
@@ -4079,14 +4813,14 @@ useEffect(() => {
   };
   const baseOperatorClients = (date, opName) => {
     const dayName = dateDayName(date);
-    const names = new Set();
+    const assigned = [];
     clients.forEach(c => {
       const days = String(c.regularDays || "").split(",").map(d=>normalizeDay(d.trim()));
       const opMatch = !c.regularOperator || normalizeName(c.regularOperator) === normalizeName(opName);
       const dayMatch = days.some(d=>d === dayName);
-      if (opMatch && dayMatch) names.add(c.name);
+      if (opMatch && dayMatch) assigned.push({client:c.name,clientId:clientId(c)});
     });
-    return [...names].filter(Boolean).map((clientName, index) => ({client: clientName, clientId:clientIdByName(clientName), note: "", orderIndex: index + 1}));
+    return assigned.filter(item=>item.client).map((item, index) => ({...item, note: "", orderIndex: index + 1}));
   };
   const getAdminOrderEntries = (date, opName) => {
     const fromTasks = getSheetAdminOrderEntries(date, opName);
@@ -4103,7 +4837,7 @@ useEffect(() => {
       .sort((a,b)=>a.orderIndex-b.orderIndex);
     if (fromOrders.length) {
       const byClient = new Map();
-      fromOrders.forEach(o => byClient.set(normalizeName(o.client), o));
+      fromOrders.forEach(o => byClient.set(poolIdentityKey(o), o));
       return [...byClient.values()].sort((a,b)=>a.orderIndex-b.orderIndex);
     }
     return tasks
@@ -4124,11 +4858,12 @@ useEffect(() => {
     const byClient = new Map();
     (entries || []).filter(x=>x?.client).forEach((x, i) => {
       const orderNumber = Number(x.orderIndex);
-      byClient.set(normalizeName(x.client), {client:x.client, clientId:x.clientId||clientIdByName(x.client), note:x.note || "", orderIndex:Number.isFinite(orderNumber) && orderNumber > 0 ? orderNumber : i + 1});
+      const normalizedEntry = {client:x.client, clientId:x.clientId||clientIdByName(x.client), note:x.note || "", orderIndex:Number.isFinite(orderNumber) && orderNumber > 0 ? orderNumber : i + 1};
+      byClient.set(poolIdentityKey(normalizedEntry), normalizedEntry);
     });
     return [...byClient.values()].sort((a,b)=>Number(a.orderIndex || 9999)-Number(b.orderIndex || 9999)).map((x, i)=>({...x, orderIndex:Number(x.orderIndex || i + 1)}));
   };
-  const adminOrderDedupeKey = (o) => [normalizeDate(o?.date), normalizeName(o?.operator), normalizeName(o?.client)].join("|");
+  const adminOrderDedupeKey = (o) => [normalizeDate(o?.date), normalizeName(o?.operator), poolIdentityKey(o)].join("|");
   const dedupeAdminOrders = (orders) => {
     const map = new Map();
     (orders || []).filter(o=>o?.date && o?.operator && o?.client).forEach(o => map.set(adminOrderDedupeKey(o), o));
@@ -4136,15 +4871,33 @@ useEffect(() => {
   };
   const syncAdminOrderTasks = async (date, opName, entries) => {
     const clean = prepareAdminOrderEntries(entries);
-    const existingByClient = new Map(adminOrders
+    if (sheetId) {
+      const result = await sheetCall("saveAdminOrderScope", {
+        date,
+        operator:opName,
+        orders:clean,
+        changedAt:nowStr(),
+        changedBy:user?.name || ""
+      }).catch(() => null);
+      if (!result?.success || !Array.isArray(result?.adminOrders)) {
+        return {success:false, clean, error:result?.error || "admin order scope save failed"};
+      }
+      setAdminOrders(dedupeAdminOrders(result.adminOrders));
+      writeLocalArray(adminOrderKey(date, opName), clean);
+      setSubOperatorRefresh(x=>x+1);
+      return {success:true, clean};
+    }
+
+    const sourceOrders = adminOrders;
+    const existingByClient = new Map(sourceOrders
       .filter(o => normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName))
-      .map(o => [normalizeName(o.client), o])
+      .map(o => [poolIdentityKey(o), o])
     );
     const orderRows = clean.map((entry, i) => {
-      const existing = existingByClient.get(normalizeName(entry.client));
+      const existing = existingByClient.get(poolIdentityKey(entry));
       return {
         ...(existing || {}),
-        id: existing?.id || `admin-order-${date}-${normalizeName(opName)}-${normalizeName(entry.client)}`,
+        id: existing?.id || `admin-order-${date}-${normalizeName(opName)}-${entry.clientId || normalizeName(entry.client)}`,
         date,
         operator: opName,
         client: entry.client,
@@ -4155,10 +4908,8 @@ useEffect(() => {
         adminNote: entry.note || ""
       };
     });
-    const cleanedOrders = adminOrders.filter(o => !(normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName)));
+    const cleanedOrders = sourceOrders.filter(o => !(normalizeDate(o.date) === date && normalizeName(o.operator) === normalizeName(opName)));
     const nextOrders = dedupeAdminOrders([...cleanedOrders, ...orderRows]);
-    const res = await sheetCall("saveAdminOrders", {adminOrders: nextOrders});
-    if (!res?.success) return {success:false, clean, error:res?.error || "saveAdminOrders failed"};
     setAdminOrders(nextOrders);
     writeLocalArray(adminOrderKey(date, opName), clean);
     setSubOperatorRefresh(x=>x+1);
@@ -4185,7 +4936,7 @@ useEffect(() => {
     .filter(entry=>entry?.client)
     .map((entry, i) => {
       const orderIndex = Number(entry.orderIndex || i + 1);
-      return {id:entry.id || `${idPrefix}-${date}-${entry.client}`, client:entry.client, clientId:entry.clientId||clientIdByName(entry.client), operators:[opName], date, status:entry.status || "pending", changeLog:entry.changeLog || [], orderIndex, adminNote:entry.note || entry.adminNote || "", completedAt:entry.completedAt || "", completedBy:entry.completedBy || "", reportId:entry.reportId || "", createdByAdminOrder:true, _adminOrder:true};
+      return {id:entry.id || `${idPrefix}-${date}-${entry.clientId || entry.client}`, client:entry.client, clientId:entry.clientId||clientIdByName(entry.client), operators:[opName], date, status:entry.status || "pending", changeLog:entry.changeLog || [], orderIndex, adminNote:entry.note || entry.adminNote || "", completedAt:entry.completedAt || "", completedBy:entry.completedBy || "", reportId:entry.reportId || "", createdByAdminOrder:true, _adminOrder:true, _waterCheck:!!entry._waterCheck};
     })
     .sort((a,b)=>Number(a.orderIndex||999)-Number(b.orderIndex||999));
   const moveAdminOrderItem = (from, to) => {
@@ -4198,23 +4949,25 @@ useEffect(() => {
     });
   };
   const getLockedClients = (date=dailyDate) => new Set(readLocalArray(lockedClientsKey(user?.username || user?.name, date)));
-  const setClientLockedLocal = (clientName, locked, date=dailyDate) => {
+  const setClientLockedLocal = (task, locked, date=dailyDate) => {
+    const poolKey = poolIdentityKey(task);
     const key = lockedClientsKey(user?.username || user?.name, date);
     const current = new Set(readLocalArray(key));
-    locked ? current.add(clientName) : current.delete(clientName);
+    locked ? current.add(poolKey) : current.delete(poolKey);
     writeLocalArray(key, [...current]);
   };
-  const startClientLongPress = (clientName, locked=false) => {
-    clearTimeout(longPressTimers.current[clientName]);
-    longPressTimers.current[clientName] = setTimeout(() => {
-      setClientLockedLocal(clientName, !locked);
+  const startClientLongPress = (task, locked=false) => {
+    const poolKey = poolIdentityKey(task);
+    clearTimeout(longPressTimers.current[poolKey]);
+    longPressTimers.current[poolKey] = setTimeout(() => {
+      setClientLockedLocal(task, !locked);
       showToast(!locked ? "ננעל זמנית" : "שוחרר לסדר היום");
       haptic("success");
       setOpenDoneTasks(x=>({...x}));
     }, 3000);
   };
-  const stopClientLongPress = (clientName) => clearTimeout(longPressTimers.current[clientName]);
-  const dailyTaskClientKey = (task) => String(task?.clientId || "").trim() || normalizeName(task?.client);
+  const stopClientLongPress = (task) => clearTimeout(longPressTimers.current[poolIdentityKey(task)]);
+  const dailyTaskClientKey = (task) => poolIdentityKey(task);
   const mergeWaterChecksIntoDailyList = (baseList, waterChecks, date) => {
     const list = [];
     const indexByClient = new Map();
@@ -4232,7 +4985,8 @@ useEffect(() => {
           clientId: existing.clientId || task.clientId || clientIdByName(existing.client || task.client),
           adminNote: [...new Set(noteParts)].join(" · "),
           note: [...new Set(noteParts)].join(" · "),
-          _waterCheck: existing._waterCheck || task._waterCheck
+          _waterCheck: !!existing._waterCheck,
+          _includesWaterCheck: !!(existing._waterCheck || task._waterCheck)
         };
         return;
       }
@@ -4266,7 +5020,8 @@ useEffect(() => {
     let list;
     if (adminEntries.length) {
       const ordered = entriesToDailyTasks(date, opName, adminEntries, "admin").map(t=>({...t, _adminLocalOrder:true}));
-      const extra = myTasks(date).filter(t=>t.adminApproval !== "pending" && t.adminApproval !== "rejected" && !ordered.some(x=>x.client===t.client));
+      const orderedKeys = new Set(ordered.map(dailyTaskClientKey));
+      const extra = myTasks(date).filter(t=>t.adminApproval !== "pending" && t.adminApproval !== "rejected" && !orderedKeys.has(dailyTaskClientKey(t)));
       list = [...ordered, ...extra];
     } else {
       list = dayClientProfiles(date, opName);
@@ -4275,7 +5030,10 @@ useEffect(() => {
     const operatorOrder = readLocalArray(operatorOrderKey(user?.username || user?.name, date));
     if (operatorOrder.length) {
       const orderMap = new Map(operatorOrder.map((clientName, i)=>[clientName, i]));
-      list = [...list].sort((a,b)=>(orderMap.has(a.client)?orderMap.get(a.client):9999) - (orderMap.has(b.client)?orderMap.get(b.client):9999));
+      const orderIndex = task => orderMap.has(dailyTaskClientKey(task))
+        ? orderMap.get(dailyTaskClientKey(task))
+        : (!task.clientId && clientIdByName(task.client) && orderMap.has(task.client) ? orderMap.get(task.client) : 9999);
+      list = [...list].sort((a,b)=>orderIndex(a) - orderIndex(b));
     }
     return list;
   };
@@ -4293,10 +5051,9 @@ useEffect(() => {
     if (!opName || !subs.length) return;
     const currentList = getOperatorDailyView(report.reportDate);
     if (!currentList.length) return;
-    const completedClient = normalizeName(report.client);
     const sharedEntries = currentList.map((t, i) => {
-      const completedNow = normalizeName(t.client) === completedClient;
-      const done = completedNow || t.status === "done" || isClientReportedDone(report.reportDate, t.client);
+      const completedNow = samePoolIdentity(t, report);
+      const done = completedNow || t.status === "done" || isClientReportedDone(report.reportDate, t.client, t.clientId);
       return {
         id: t.id,
         client: t.client,
@@ -4372,32 +5129,48 @@ useEffect(() => {
     operatorIssueSendingRef.current = true;
     const issue = {
       operator: user?.name,
-      client: opIssueClient,
+      client: operatorIssuePoolLabel(opIssueClient, opIssueClientId),
+      clientId: opIssueClientId,
       desc,
       priority: opIssuePriority,
       date: todayStr()
     };
 
+    const alreadyQueued = pendingOperatorIssuesRef.current.some(item =>
+      samePendingOperatorIssueContent(item, issue)
+    );
     const pendingIssue = addPendingOperatorIssue(issue);
-    setOperatorIssues(prev => [operatorIssueToRow(pendingIssue), ...prev]);
+    if (!alreadyQueued) setOperatorIssues(prev => [operatorIssueToRow(pendingIssue), ...prev]);
     setPendingBackgroundSync(true);
     setAction("operatorIssueReport", "loading");
-    setShowOperatorIssue(false);
-    setOpIssueDesc("");
-    setOpIssuePriority("רגיל");
-    showToast("הדיווח נשמר מקומית, שולח ברקע...");
+    if (pendingIssue._localPersisted) {
+      setShowOperatorIssue(false);
+      setOpIssueClientId("");
+      setOpIssueDesc("");
+      setOpIssuePriority("רגיל");
+      showToast("הדיווח נשמר מקומית, שולח ברקע...");
+    } else {
+      showToast("שמירת התקלה בטלפון נכשלה - מנסה לשלוח ישירות");
+    }
 
     void (async () => {
       try {
-        const sent = await sendPendingOperatorIssueItem(pendingIssue);
-        if (sent) {
-          removePendingOperatorIssue(pendingIssue);
+        const result = await syncPendingOperatorIssues(1, true, pendingIssue);
+        if (result.success) {
+          if (!pendingIssue._localPersisted) {
+            setShowOperatorIssue(false);
+            setOpIssueClientId("");
+            setOpIssueDesc("");
+            setOpIssuePriority("רגיל");
+          }
           setAction("operatorIssueReport", "success", 1600);
           showToast("תקלה דווחה לאדמין");
           haptic("success");
         } else {
-          setAction("operatorIssueReport", "local", 2200);
-          showToast("התקלה נשמרה מקומית ותישלח כשיהיה חיבור");
+          setAction("operatorIssueReport", pendingIssue._localPersisted ? "local" : "error", 2200);
+          showToast(pendingIssue._localPersisted
+            ? "התקלה נשמרה מקומית ותישלח כשיהיה חיבור"
+            : "השליחה נכשלה והטופס נשאר פתוח - נסה שוב");
           haptic("medium");
         }
       } finally {
@@ -4412,14 +5185,14 @@ useEffect(() => {
     setEquipmentChecklist(next);
     localStorage.setItem(equipmentChecklistStorageKey(currentEquipmentChecklistUser), JSON.stringify(next));
     setShowEquipmentChecklistEditor(false);
-    showToast("רשימת הצ׳ק ליסט נשמרה");
+    showToast(subText("רשימת הצ׳ק ליסט נשמרה","Checklist saved"));
     haptic("success");
   };
   const resetEquipmentChecklist = () => {
     setEquipmentChecklist(DAILY_EQUIPMENT_CHECKLIST);
     setEquipmentChecklistDraft(checklistToText(DAILY_EQUIPMENT_CHECKLIST));
     localStorage.removeItem(equipmentChecklistStorageKey(currentEquipmentChecklistUser));
-    showToast("רשימת ברירת המחדל שוחזרה");
+    showToast(subText("רשימת ברירת המחדל שוחזרה","Default checklist restored"));
     haptic("medium");
   };
 
@@ -4454,7 +5227,7 @@ useEffect(() => {
       localStorage.setItem("galileo_app_installed", "true");
       setInstallPrompt(null);
       setIsStandalone(true);
-      showToast("✅ האפליקציה הותקנה");
+      showToast(subText("✅ האפליקציה הותקנה","✅ App installed"));
     };
 
     updateStandalone();
@@ -4472,7 +5245,7 @@ useEffect(() => {
   const installApp = async () => {
     applyTenantBranding(getCompany());
     if (isStandalone) {
-      showToast("✅ האפליקציה כבר מותקנת");
+      showToast(subText("✅ האפליקציה כבר מותקנת","✅ App is already installed"));
       return;
     }
 
@@ -4485,16 +5258,16 @@ useEffect(() => {
       setInstallPrompt(null);
       if (choice?.outcome === "accepted") {
         setAction("install", "success", 1800);
-        showToast("✅ התקנת האפליקציה התחילה");
+        showToast(subText("✅ התקנת האפליקציה התחילה","✅ App installation started"));
       } else {
         setAction("install", "error", 2200);
-        showToast("⚠️ ההתקנה בוטלה");
+        showToast(subText("⚠️ ההתקנה בוטלה","⚠️ Installation cancelled"));
       }
       return;
     }
 
     setAction("install", "manual", 3500);
-    showToast("ב-Chrome לחץ ⋮ ואז התקנת האפליקציה / הוספה למסך הבית");
+    showToast(subText("ב-Chrome לחץ ⋮ ואז התקנת האפליקציה / הוספה למסך הבית","Open the browser menu and choose Install app or Add to Home Screen"));
   };
 
   const InstallAppCard = ({compact=false}) => {
@@ -4518,11 +5291,11 @@ useEffect(() => {
       >
         <span style={{fontSize:18}}>⬇️</span>
         <div style={{flex:1}}>
-          <div style={{fontWeight:800,fontSize:13,color:C.green}}>התקן אפליקציה</div>
-          <div style={{fontSize:11,color:C.muted}}>פתח בלי דפדפן וקבל חוויה יציבה יותר</div>
+          <div style={{fontWeight:800,fontSize:13,color:C.green}}>{subText("התקן אפליקציה","Install app")}</div>
+          <div style={{fontSize:11,color:C.muted}}>{subText("פתח בלי דפדפן וקבל חוויה יציבה יותר","Open without the browser for a more stable experience")}</div>
         </div>
         <span style={{fontSize:12,fontWeight:800,color:C.green}}>
-          {actionLabel("install",{idle:"התקן",loading:"⏳",success:"✅",manual:"⋮",error:"נסה שוב"})}
+          {actionLabel("install",{idle:subText("התקן","Install"),loading:"⏳",success:"✅",manual:"⋮",error:subText("נסה שוב","Retry")})}
         </span>
       </Press>
     );
@@ -4534,8 +5307,8 @@ useEffect(() => {
       <div style={{...card({marginTop: compact ? 0 : 10, marginBottom: compact ? 8 : 0, background:"#fff8e1", border:"1px solid #ffe082", display:"flex", alignItems:"center", gap:10}), padding: compact ? "8px 10px" : "10px 12px", borderRadius:14}}>
         <span style={{fontSize:18}}>↗️</span>
         <div style={{flex:1}}>
-          <div style={{fontWeight:900,fontSize:13,color:C.orange}}>הוסף למסך הבית באייפון</div>
-          <div style={{fontSize:11,color:C.muted,lineHeight:1.45}}>לחץ שיתוף ואז הוסף למסך הבית כדי לפתוח כאפליקציה מלאה ולקבל התראות.</div>
+          <div style={{fontWeight:900,fontSize:13,color:C.orange}}>{subText("הוסף למסך הבית באייפון","Add to the iPhone Home Screen")}</div>
+          <div style={{fontSize:11,color:C.muted,lineHeight:1.45}}>{subText("לחץ שיתוף ואז הוסף למסך הבית כדי לפתוח כאפליקציה מלאה ולקבל התראות.","Tap Share, then Add to Home Screen, to open it as a full app and receive notifications.")}</div>
         </div>
       </div>
     );
@@ -4543,10 +5316,26 @@ useEffect(() => {
 
   useEffect(()=>{
     applyTenantBranding(getCompany());
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); setSheetId("connected"); } } catch {}
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(ensureClientIds(cls)); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); setSheetId("connected"); } } catch {}
     const checkLicense = async () => {
       const lic = getLicense(); if(!lic.key) return;
-      try { const res = await mgmtCall("validateLicense",{key:lic.key}); if(res?.valid){ const company = companyFromLicenseResponse(res); saveLicense({...lic, company:company.name, sheetId:res.sheetId, plan:res.plan, status:res.status, expiry:res.expiry, logoUrl:res.logoUrl||"", appName:company.appName, shortName:company.shortName, icon192Url:company.icon192Url, icon512Url:company.icon512Url, appleIconUrl:company.appleIconUrl, themeColor:company.themeColor, backgroundColor:company.backgroundColor}); saveCompany(company); setCompanyName(company.name || DEFAULT_APP_NAME); setClientPlan({plan:res.plan, status:res.status}); if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId); } else { localStorage.removeItem("galileo_user"); localStorage.removeItem("galileo_license"); setUser(null); setShowSetup(true); } } catch {}
+      try {
+        const res = await mgmtCall("validateLicense",{key:lic.key});
+        if(res?.valid === true){
+          const company = companyFromLicenseResponse(res);
+          saveLicense({...lic, company:company.name, sheetId:res.sheetId, plan:res.plan, status:res.status, expiry:res.expiry, logoUrl:res.logoUrl||"", appName:company.appName, shortName:company.shortName, icon192Url:company.icon192Url, icon512Url:company.icon512Url, appleIconUrl:company.appleIconUrl, themeColor:company.themeColor, backgroundColor:company.backgroundColor});
+          saveCompany(company);
+          setCompanyName(company.name || DEFAULT_APP_NAME);
+          setClientPlan({plan:res.plan, status:res.status});
+          if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId);
+        } else if(res?.valid === false) {
+          setDataConnectionStatus("offline");
+          showToast("מפתח הגישה לא אומת כרגע. האפליקציה נשארת פתוחה עם המידע השמור");
+        } else {
+          setDataConnectionStatus("offline");
+          showToast("לא ניתן לאמת את מפתח הגישה כרגע. החיבור נשמר ואפשר להמשיך לעבוד");
+        }
+      } catch {}
     };
     checkLicense(); setTimeout(()=>connectSheets(true), 80);
   },[]);
@@ -4586,19 +5375,17 @@ useEffect(() => {
       try {
         if(["daily","progress"].includes(adminTab)){
           const reportLoadDate = adminTab==="daily" ? taskDate : dailyDate;
-          const [rep,tR,oR,lrR,maR] = await Promise.all([
+          const [rep,tR,oR,lrR] = await Promise.all([
             sheetCall("getReports",{fromDate:reportLoadDate,toDate:reportLoadDate,limit:300}).catch(()=>null),
             sheetCall("getTasks").catch(()=>null),
             sheetCall("getAdminOrders").catch(()=>null),
-            sheetCall("getLastReadings").catch(()=>null),
-            sheetCall("getMaterialApprovals").catch(()=>null)
+            sheetCall("getLastReadings").catch(()=>null)
           ]);
           if(cancelled) return;
           if(Array.isArray(rep?.reports)) setSheetReports(rep.reports);
           if(Array.isArray(tR?.tasks)) setTasks(tR.tasks);
           if(Array.isArray(oR?.adminOrders)) setAdminOrders(oR.adminOrders);
           if(lrR?.lastReadings) setLastReadings(lrR.lastReadings);
-          if(Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
           return;
         }
         if(adminTab==="reports" || adminTab==="supply"){
@@ -4608,7 +5395,12 @@ useEffect(() => {
             query:reportFilter || "",
             limit:reportDateFilter || reportDateToFilter || reportFilter ? 500 : 250
           }).catch(()=>null);
-          if(!cancelled && Array.isArray(rep?.reports)) setSheetReports(rep.reports);
+          if(!cancelled && Array.isArray(rep?.reports)) {
+            setSheetReports(rep.reports);
+            setDataConnectionStatus("connected");
+          } else if(!cancelled) {
+            setDataConnectionStatus("offline");
+          }
           return;
         }
         if(adminTab==="tasks"){
@@ -4617,13 +5409,9 @@ useEffect(() => {
           return;
         }
         if(adminTab==="clients"){
-          const [cR,ucR] = await Promise.all([
-            sheetCall("getClients").catch(()=>null),
-            sheetCall("getUnassignedClients").catch(()=>null)
-          ]);
+          const cR = await sheetCall("getClients").catch(()=>null);
           if(cancelled) return;
-          if(Array.isArray(cR?.clients)) setClients(cR.clients);
-          if(Array.isArray(ucR?.clients)) setUnassignedClients(ucR.clients);
+          if(Array.isArray(cR?.clients)) setClients(ensureClientIds(cR.clients));
           return;
         }
         if(adminTab==="users"){
@@ -4644,71 +5432,110 @@ useEffect(() => {
   },[screen, adminTab, dailyDate, taskDate, sheetId, reportDateFilter, reportDateToFilter, reportFilter]);
 
   const connectSheets = async (bg=false) => {
-    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,waMessageTemplate:wt,chlorineReminderMessage:crm,waterLevelNoticeMessage:wlm,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(cls); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); if(wt) setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(crm) setChlorineReminderMessage(normalizeChlorineReminderMessage(crm)); if(wlm) setWaterLevelNoticeMessage(normalizeWaterLevelNoticeMessage(wlm)); setSheetId("connected"); if(!bg) return; } } catch {}
+    let cachedSheetData = {};
+    try { const cached = localStorage.getItem("galileo_cache"); if(cached){ cachedSheetData=JSON.parse(cached) || {}; const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,waMessageTemplate:wt,acidSupplyMessage:asm,phUpSupplyMessage:psm,saltSupplyMessage:ssm,chlorineReminderMessage:crm,waterLevelNoticeMessage:wlm,sheetReports:sr}=cachedSheetData; if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(ensureClientIds(cls)); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); if(wt) setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(asm) setAcidSupplyMessage(normalizeAcidSupplyMessage(asm)); if(psm) setPhUpSupplyMessage(normalizePhUpSupplyMessage(psm)); if(ssm) setSaltSupplyMessage(normalizeSaltSupplyMessage(ssm)); if(crm) setChlorineReminderMessage(normalizeChlorineReminderMessage(crm)); if(wlm) setWaterLevelNoticeMessage(normalizeWaterLevelNoticeMessage(wlm)); setSheetId("connected"); if(!bg) return; } } catch {}
     try {
       let boot = await sheetCall("getBootstrapData");
+      let networkConnected = !!boot && [
+        "users","clients","tasks","adminOrders","supplyDB","lastReadings","settings"
+      ].some(key => Object.prototype.hasOwnProperty.call(boot, key));
       let u=boot?.users?.length?boot.users:null;
-      let c=boot?.clients?.length?boot.clients:null;
+      let c=Array.isArray(boot?.clients)?boot.clients:null;
       let t=Array.isArray(boot?.tasks)?boot.tasks:null;
       let ord=Array.isArray(boot?.adminOrders)?boot.adminOrders:null;
       let s=boot?.supplyDB?boot.supplyDB:null;
       let lr=boot?.lastReadings?boot.lastReadings:null;
-      let uc=boot?.unassignedClients?.length?boot.unassignedClients:null;
       let sh=Array.isArray(boot?.sharedSubOrders)?boot.sharedSubOrders:null;
       let ap=Array.isArray(boot?.subOperatorApprovals)?boot.subOperatorApprovals:null;
       let pr=Array.isArray(boot?.pendingSubReports)?boot.pendingSubReports:null;
-      let ma=Array.isArray(boot?.materialApprovals)?boot.materialApprovals:null;
       let wt=boot?.settings?.waMessageTemplate || boot?.waMessageTemplate || null;
-      let wp=boot?.settings?.waPollMessage || boot?.waPollMessage || null;
-      let wo=boot?.settings?.waPollOptions || boot?.waPollOptions || null;
+      let asm=boot?.settings?.acidSupplyMessage || boot?.acidSupplyMessage || null;
+      let psm=boot?.settings?.phUpSupplyMessage || boot?.phUpSupplyMessage || null;
+      let ssm=boot?.settings?.saltSupplyMessage || boot?.saltSupplyMessage || null;
       let crm=boot?.settings?.chlorineReminderMessage || boot?.chlorineReminderMessage || null;
       let wlm=boot?.settings?.waterLevelNoticeMessage || boot?.waterLevelNoticeMessage || null;
-      if(!u && !c && !t && !ord && !s && !lr){
-        const [uR,cR,tR,oR,sR,rR,ucR,shR,apR,prR,maR,setR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getUnassignedClients"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals"),sheetCall("getPendingSubReports"),sheetCall("getMaterialApprovals"),sheetCall("getClientSettings")]);
-        u=uR?.users?.length?uR.users:null; c=cR?.clients?.length?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; uc=ucR?.clients?.length?ucR.clients:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; ma=Array.isArray(maR?.approvals)?maR.approvals:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt; wp=setR?.settings?.waPollMessage || setR?.waPollMessage || wp; wo=setR?.settings?.waPollOptions || setR?.waPollOptions || wo; crm=setR?.settings?.chlorineReminderMessage || setR?.chlorineReminderMessage || crm; wlm=setR?.settings?.waterLevelNoticeMessage || setR?.waterLevelNoticeMessage || wlm;
+      let poolSourcesLoaded = Array.isArray(boot?.clients);
+      if(boot !== null && !u && !c && !t && !ord && !s && !lr){
+        const [uR,cR,tR,oR,sR,rR,shR,apR,prR,setR] = await Promise.all([sheetCall("getUsers"),sheetCall("getClients"),sheetCall("getTasks"),sheetCall("getAdminOrders"),sheetCall("getSupplyDB"),sheetCall("getLastReadings"),sheetCall("getSubOperatorShares"),sheetCall("getSubOperatorApprovals"),sheetCall("getPendingSubReports"),sheetCall("getClientSettings")]);
+        networkConnected = networkConnected || [
+          uR?.users,cR?.clients,tR?.tasks,oR?.adminOrders,sR?.supplyDB,rR?.lastReadings,
+          shR?.sharedSubOrders,apR?.approvals,prR?.pendingSubReports,setR?.settings
+        ].some(value => value !== undefined && value !== null);
+        u=uR?.users?.length?uR.users:null; c=Array.isArray(cR?.clients)?cR.clients:null; t=Array.isArray(tR?.tasks)?tR.tasks:null; ord=Array.isArray(oR?.adminOrders)?oR.adminOrders:null; s=sR?.supplyDB?sR.supplyDB:null; lr=rR?.lastReadings?rR.lastReadings:null; sh=Array.isArray(shR?.sharedSubOrders)?shR.sharedSubOrders:null; ap=Array.isArray(apR?.approvals)?apR.approvals:null; pr=Array.isArray(prR?.pendingSubReports)?prR.pendingSubReports:null; wt=setR?.settings?.waMessageTemplate || setR?.waMessageTemplate || wt; asm=setR?.settings?.acidSupplyMessage || setR?.acidSupplyMessage || asm; psm=setR?.settings?.phUpSupplyMessage || setR?.phUpSupplyMessage || psm; ssm=setR?.settings?.saltSupplyMessage || setR?.saltSupplyMessage || ssm; crm=setR?.settings?.chlorineReminderMessage || setR?.chlorineReminderMessage || crm; wlm=setR?.settings?.waterLevelNoticeMessage || setR?.waterLevelNoticeMessage || wlm;
+        poolSourcesLoaded = Array.isArray(cR?.clients);
       }
       const cleanUsers = u ? applyFetchedUsers(u) : dedupeUsers(allUsers);
-      if(c)setClients(c); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(uc)setUnassignedClients(uc); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(ma)setMaterialApprovals(ma); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(wp)setWaPollMessage(normalizeWaPollMessage(wp)); if(wo)setWaPollOptions(normalizeWaPollOptions(wo)); if(crm)setChlorineReminderMessage(normalizeChlorineReminderMessage(crm)); if(wlm)setWaterLevelNoticeMessage(normalizeWaterLevelNoticeMessage(wlm));
-      localStorage.setItem("galileo_cache",JSON.stringify({users:cleanUsers,clients:c||clients,tasks:t||[],adminOrders:ord||adminOrders,supplyDB:s||{},lastReadings:lr||{},sharedSubOrders:sh||sharedSubOrders,subOperatorApprovals:ap||subOperatorApprovals,pendingSubReports:pr||pendingSubReports,sheetReports:sheetReports||[],waMessageTemplate:wt||waMessageTemplate,chlorineReminderMessage:crm||chlorineReminderMessage,waterLevelNoticeMessage:wlm||waterLevelNoticeMessage,cachedAt:Date.now()}));
+      if(Array.isArray(c))setClients(ensureClientIds(c)); if(t)setTasks(t); if(ord)setAdminOrders(ord); if(s)setSupplyDB(s); if(lr)setLastReadings(lr); if(sh)setSharedSubOrders(sh); if(ap)setSubOperatorApprovals(ap); if(pr)setPendingSubReports(pr); if(wt)setWaMessageTemplate(normalizeWaMessageTemplate(wt)); if(asm)setAcidSupplyMessage(normalizeAcidSupplyMessage(asm)); if(psm)setPhUpSupplyMessage(normalizePhUpSupplyMessage(psm)); if(ssm)setSaltSupplyMessage(normalizeSaltSupplyMessage(ssm)); if(crm)setChlorineReminderMessage(normalizeChlorineReminderMessage(crm)); if(wlm)setWaterLevelNoticeMessage(normalizeWaterLevelNoticeMessage(wlm));
+      if(poolSourcesLoaded) setPoolSourcesReady(true);
+      const reportsForCache = [
+        ...(Array.isArray(cachedSheetData.sheetReports) ? cachedSheetData.sheetReports : []),
+        ...(Array.isArray(sheetReports) ? sheetReports : [])
+      ].reduce((next, report) => upsertReportByIdentity(next, report), []);
+      localStorage.setItem("galileo_cache",JSON.stringify({
+        users:cleanUsers,
+        clients:Array.isArray(c) ? c : (Array.isArray(cachedSheetData.clients) ? cachedSheetData.clients : clients),
+        tasks:Array.isArray(t) ? t : (Array.isArray(cachedSheetData.tasks) ? cachedSheetData.tasks : tasks),
+        adminOrders:Array.isArray(ord) ? ord : (Array.isArray(cachedSheetData.adminOrders) ? cachedSheetData.adminOrders : adminOrders),
+        supplyDB:s || cachedSheetData.supplyDB || supplyDB || {},
+        lastReadings:lr || cachedSheetData.lastReadings || lastReadings || {},
+        sharedSubOrders:Array.isArray(sh) ? sh : (Array.isArray(cachedSheetData.sharedSubOrders) ? cachedSheetData.sharedSubOrders : sharedSubOrders),
+        subOperatorApprovals:Array.isArray(ap) ? ap : (Array.isArray(cachedSheetData.subOperatorApprovals) ? cachedSheetData.subOperatorApprovals : subOperatorApprovals),
+        pendingSubReports:Array.isArray(pr) ? pr : (Array.isArray(cachedSheetData.pendingSubReports) ? cachedSheetData.pendingSubReports : pendingSubReports),
+        sheetReports:reportsForCache,
+        waMessageTemplate:wt || cachedSheetData.waMessageTemplate || waMessageTemplate,
+        acidSupplyMessage:asm || cachedSheetData.acidSupplyMessage || acidSupplyMessage,
+        phUpSupplyMessage:psm || cachedSheetData.phUpSupplyMessage || phUpSupplyMessage,
+        saltSupplyMessage:ssm || cachedSheetData.saltSupplyMessage || saltSupplyMessage,
+        chlorineReminderMessage:crm || cachedSheetData.chlorineReminderMessage || chlorineReminderMessage,
+        waterLevelNoticeMessage:wlm || cachedSheetData.waterLevelNoticeMessage || waterLevelNoticeMessage,
+        cachedAt:Date.now()
+      }));
       setSheetId("connected");
+      setDataConnectionStatus(networkConnected ? "connected" : "offline");
       setTimeout(async()=>{ try { const company = getCompany(); if(company.sheetId) { const mgmtRes = await mgmtCall("getMgmtClients"); const rec = (mgmtRes?.clients||[]).find(c=>String(c[7])===String(company.sheetId)); if(rec) setClientPlan({plan:rec[5]||"",status:rec[6]||""}); } } catch {} }, 100);
-    } catch {}
+      return networkConnected;
+    } catch {
+      setDataConnectionStatus("offline");
+      return false;
+    }
   };
 
   const refreshCurrentPageData = async () => {
     if (!user || isActionLoading("refreshData")) return;
     setAction("refreshData", "loading");
+    setDataConnectionStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "checking");
     try {
-      await connectSheets(true);
+      let refreshed = await connectSheets(true);
+      if (!refreshed) throw new Error("bootstrap_refresh_failed");
       if (screen === "daily" || screen === "admin") await loadOperatorIssues(true);
       if (screen === "daily") {
-        const [rep, maR] = await Promise.all([
-          sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300}).catch(()=>null),
-          sheetCall("getMaterialApprovals").catch(()=>null)
-        ]);
+        const rep = await sheetCall("getReports", {fromDate:dailyDate, toDate:dailyDate, limit:300}).catch(()=>null);
         if (Array.isArray(rep?.reports)) setSheetReports(rep.reports);
-        if (Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
+        else refreshed = false;
       }
       if (screen === "admin" && adminTab === "treatments") await loadTreatmentCounts();
       if (screen === "admin" && ["daily","progress","reports"].includes(adminTab)) {
         const refreshReportDate = adminTab === "daily" ? taskDate : adminTab === "progress" ? dailyDate : reportDateFilter;
-        const [rep, maR] = await Promise.all([sheetCall("getReports",{
+        const rep = await sheetCall("getReports",{
           fromDate:refreshReportDate || "",
           toDate:adminTab === "reports" ? (reportDateToFilter || (refreshReportDate ? refreshReportDate : "")) : (refreshReportDate || ""),
           query:adminTab === "reports" ? (reportFilter || "") : "",
           limit:adminTab === "reports" ? (refreshReportDate || reportDateToFilter || reportFilter ? 500 : 250) : 300
-        }).catch(()=>null), sheetCall("getMaterialApprovals").catch(()=>null)]);
+        }).catch(()=>null);
         if (Array.isArray(rep?.reports)) setSheetReports(rep.reports);
-        if (Array.isArray(maR?.approvals)) setMaterialApprovals(maR.approvals);
+        else refreshed = false;
       }
+      if (!refreshed) throw new Error("page_refresh_failed");
       setSubOperatorRefresh(x=>x+1);
+      setDataConnectionStatus("connected");
       setAction("refreshData", "success", 1400);
-      showToast("✅ הנתונים רועננו");
+      showToast(subText("✅ הנתונים רועננו","✅ Data refreshed"));
       haptic("success");
     } catch (e) {
       console.warn("Refresh failed", e);
+      setDataConnectionStatus("offline");
       setAction("refreshData", "error", 2200);
-      showToast("⚠️ הריענון נכשל");
+      showToast(subText("⚠️ אין חיבור לנתונים · המידע השמור נשאר זמין","⚠️ Data connection failed · saved data remains available"));
       haptic("medium");
     }
   };
@@ -4717,14 +5544,20 @@ useEffect(() => {
     <Press
       onClick={refreshCurrentPageData}
       disabled={isActionLoading("refreshData")}
-      title="רענון נתונים"
+      title={dataConnectionStatus==="offline"
+        ? subText("אין חיבור לנתונים · לחץ לניסיון נוסף","Data connection unavailable · tap to retry")
+        : subText("רענון נתונים","Refresh data")}
       style={{
-        background:isActionLoading("refreshData")?"rgba(226,237,250,0.55)":"rgba(226,237,250,0.72)",
+        background:isActionLoading("refreshData")
+          ? "rgba(226,237,250,0.55)"
+          : dataConnectionStatus==="offline"
+            ? "#fff8e1"
+            : "rgba(226,237,250,0.72)",
         backdropFilter:"blur(14px)",
-        border:"1px solid rgba(148,163,184,0.22)",
+        border:dataConnectionStatus==="offline"?"1px solid #ffe082":"1px solid rgba(148,163,184,0.22)",
         borderRadius:16,
         padding:compact?"9px 11px":"9px 12px",
-        color:actionStatus.refreshData==="error"?C.red:C.blue,
+        color:dataConnectionStatus==="offline"?C.orange:actionStatus.refreshData==="error"?C.red:C.blue,
         fontSize:12,
         fontWeight:900,
         minWidth:compact?42:"auto",
@@ -4733,7 +5566,7 @@ useEffect(() => {
         boxShadow:"0 10px 26px rgba(30,64,175,0.12)"
       }}
     >
-      {actionLabel("refreshData",{idle:"↻",loading:"⏳",success:"✅",error:"⚠️"})}
+      {actionLabel("refreshData",{idle:dataConnectionStatus==="offline"?"⚠️":dataConnectionStatus==="checking"?"…":"↻",loading:"⏳",success:"✅",error:"⚠️"})}
     </Press>
   );
 
@@ -4856,19 +5689,42 @@ useEffect(() => {
     const note = task.noteOverride !== undefined ? task.noteOverride : taskNote;
     const logEntry={at:nowStr(),note:note||(isEdit?"משימה עודכנה":"📋 משימה חדשה הוקצתה לך"),by:user?.name,needsAck:true,ackedBy:[]};
     const newTasks=isEdit?tasks.map(t=>t.id===editTaskId?{...t,...cleanTask,changeLog:[...(t.changeLog||[]),logEntry]}:t):[...tasks,{id:Date.now(),...cleanTask,status:"pending",changeLog:[logEntry]}];
-    setTasks(newTasks); setEditTaskId(null); setTaskClient(""); setTaskClients([]); setTaskOps([]); setTaskNote("");
-    if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
+    const changedTask = isEdit ? newTasks.find(t=>t.id===editTaskId) : newTasks[newTasks.length - 1];
+    if(sheetId) {
+      const result = await sheetCall("mutateTasks",{upserts:[changedTask]}).catch(()=>null);
+      if (!result?.success || !Array.isArray(result?.tasks)) {
+        showToast("שמירת המשימה נכשלה - נסה שוב");
+        haptic("medium");
+        return false;
+      }
+      setTasks(result.tasks);
+    } else {
+      setTasks(newTasks);
+    }
+    setEditTaskId(null); setTaskClient(""); setTaskClientId(""); setTaskClients([]); setTaskOps([]); setTaskNote("");
     if(isEdit) await sendNotificationToOperators(cleanTask.operators, "📋 משימה עודכנה", `${cleanTask.client?.split(" - ")[0] || ""} — ${fmtDate(cleanTask.date)}`);
     showToast(isEdit?"✏️ משימה עודכנה":"✅ משימה נוספה");
+    return true;
   };
 
   const updateTask = async (id,changes,logNote,isAdmin=false) => {
     const newTasks=tasks.map(t=>{ if(t.id!==id)return t; const entry={at:nowStr(),note:logNote,by:user?.name,...(isAdmin?{needsAck:true,ackedBy:[]}:{})}; return{...t,...changes,changeLog:[...(t.changeLog||[]),entry]}; });
-    setTasks(newTasks); if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
+    const changedTask = newTasks.find(t=>t.id===id);
+    if(sheetId) {
+      const result = await sheetCall("mutateTasks",{upserts:[changedTask]}).catch(()=>null);
+      if (!result?.success || !Array.isArray(result?.tasks)) {
+        showToast("שמירת המשימה נכשלה - נסה שוב");
+        haptic("medium");
+        return false;
+      }
+      setTasks(result.tasks);
+    } else {
+      setTasks(newTasks);
+    }
     if(isAdmin) {
-      const changedTask = newTasks.find(t=>t.id===id);
       await sendNotificationToOperators(changedTask?.operators || [], "📋 משימה עודכנה", `${changedTask?.client?.split(" - ")[0] || ""} — ${logNote}`);
     }
+    return true;
   };
 
   const openDatePicker = (e) => {
@@ -4878,32 +5734,116 @@ useEffect(() => {
   const ackChange = async (taskId,logIdx) => {
     const originalTask = tasks.find(t=>t.id===taskId);
     if (!originalTask) {
-      const originalOrder = adminOrders.find(o=>o.id===taskId);
-      if (!originalOrder) return;
+      const originalOrder = adminOrders.find(o=>String(o.id)===String(taskId));
+      if (!originalOrder) {
+        showToast("סדר העבודה כבר לא קיים");
+        haptic("medium");
+        return;
+      }
       const originalOrderLog = originalOrder?.changeLog?.[logIdx];
-      const newOrders=adminOrders.map(o=>{ if(o.id!==taskId)return o; const newLog=(o.changeLog||[]).map((e,i)=>{ if(i!==logIdx)return e; const ackedBy=[...(e.ackedBy||[])]; if(!ackedBy.includes(user?.name))ackedBy.push(user?.name); return{...e,ackedBy}; }); return{...o,changeLog:newLog}; });
-      setAdminOrders(newOrders); if(sheetId) await sheetCall("saveAdminOrders",{adminOrders:newOrders});
+      let newOrders=adminOrders.map(o=>{ if(String(o.id)!==String(taskId))return o; const newLog=(o.changeLog||[]).map((e,i)=>{ if(i!==logIdx)return e; const ackedBy=[...(e.ackedBy||[])]; if(!ackedBy.includes(user?.name))ackedBy.push(user?.name); return{...e,ackedBy}; }); return{...o,changeLog:newLog}; });
+      if(sheetId) {
+        const saveResult = await sheetCall("ackAdminOrderChange",{
+          orderId:taskId,
+          logIndex:logIdx,
+          ackedBy:user?.name || ""
+        }).catch(()=>null);
+        if(!saveResult?.success || !Array.isArray(saveResult?.adminOrders)) {
+          showToast("שמירת האישור נכשלה - נסה שוב");
+          haptic("medium");
+          return;
+        }
+        newOrders=dedupeAdminOrders(saveResult.adminOrders);
+      }
+      setAdminOrders(newOrders);
       await sendNotificationToAdmins(
         "✅ מפעיל אישר סדר יום",
         `${user?.name || "מפעיל"} אישר: ${originalOrder?.client?.split(" - ")[0] || "בריכה"}${originalOrderLog?.note ? ` — ${originalOrderLog.note}` : ""}`
       );
-      showToast("✓ קיבלת אישור נשלח");
+      showToast(subText("✓ קיבלת אישור נשלח","✓ Confirmation sent"));
       return;
     }
     const originalLog = originalTask?.changeLog?.[logIdx];
-    const newTasks=tasks.map(t=>{ if(t.id!==taskId)return t; const newLog=t.changeLog.map((e,i)=>{ if(i!==logIdx)return e; const ackedBy=[...(e.ackedBy||[])]; if(!ackedBy.includes(user?.name))ackedBy.push(user?.name); return{...e,ackedBy}; }); return{...t,changeLog:newLog}; });
-    setTasks(newTasks); if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
+    let newTasks=tasks.map(t=>{ if(t.id!==taskId)return t; const newLog=t.changeLog.map((e,i)=>{ if(i!==logIdx)return e; const ackedBy=[...(e.ackedBy||[])]; if(!ackedBy.includes(user?.name))ackedBy.push(user?.name); return{...e,ackedBy}; }); return{...t,changeLog:newLog}; });
+    if(sheetId) {
+      const changedTask = newTasks.find(t=>t.id===taskId);
+      const result = await sheetCall("mutateTasks",{upserts:[changedTask]}).catch(()=>null);
+      if (!result?.success || !Array.isArray(result?.tasks)) {
+        showToast("שמירת האישור נכשלה - נסה שוב");
+        haptic("medium");
+        return;
+      }
+      newTasks=result.tasks;
+    }
+    setTasks(newTasks);
     await sendNotificationToAdmins(
       "✅ מפעיל אישר משימה",
       `${user?.name || "מפעיל"} אישר: ${originalTask?.client?.split(" - ")[0] || "משימה"}${originalLog?.note ? ` — ${originalLog.note}` : ""}`
     );
-    showToast("✓ קיבלת אישור נשלח");
+    showToast(subText("✓ קיבלת אישור נשלח","✓ Confirmation sent"));
   };
 
-  const removeOp=async(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t)return;await updateTask(id,{operators:t.operators.filter(o=>o!==n)},`הוסר ${n} מהמשימה`,true);await sendNotificationToOperators([n], "📋 הוסרת ממשימה", `${t.client?.split(" - ")[0] || ""} — ${fmtDate(t.date)}`);};
+  const removeOp=async(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t)return;const saved=await updateTask(id,{operators:t.operators.filter(o=>o!==n)},`הוסר ${n} מהמשימה`,true);if(saved)await sendNotificationToOperators([n], "📋 הוסרת ממשימה", `${t.client?.split(" - ")[0] || ""} — ${fmtDate(t.date)}`);};
   const addOp=(id,n)=>{const t=tasks.find(x=>x.id===id);if(!t||t.operators.includes(n))return;updateTask(id,{operators:[...t.operators,n]},`נוסף ${n} למשימה`,true);};
   const markDone=(id)=>updateTask(id,{status:"done"},"דוח הוגש — בוצעה",false);
-  const taskStatusLabel = (t) => t.adminApproval==="pending" ? "ממתין לאישור" : t.adminApproval==="rejected" ? "נדחה" : t.status==="done" ? "✓ בוצע" : t.adminApproval==="approved" ? "מאושר" : "ממתין";
+  const taskMatchesReport = (task, report) =>
+    normalizeDate(task?.date) === normalizeDate(report?.reportDate) &&
+    samePoolIdentity(task, report) &&
+    (task?.operators || []).some(op => normalizeName(op) === normalizeName(report?.operator));
+  const pendingTaskCompletionForReport = (report, existing = null) => {
+    if (existing?.required) return existing;
+    const task = tasksRef.current.find(candidate =>
+      candidate?.status !== "done" && taskMatchesReport(candidate, report)
+    );
+    return task
+      ? {required:true, synced:false, taskId:task.id, lastError:""}
+      : {required:false, synced:true, taskId:"", lastError:""};
+  };
+  const syncPendingReportTaskCompletion = async (item, report = getPendingReportPayload(item)) => {
+    const completion = item?.taskCompletion || {required:false, synced:true, taskId:"", lastError:""};
+    if (completion.required && completion.synced === true) return item;
+    if (!sheetId) {
+      return {
+        ...item,
+        taskCompletion:{...completion, required:true, synced:false, lastError:"task_save_unavailable"}
+      };
+    }
+    const result = await sheetCall("setTaskReportCompletion", {
+      completed:true,
+      taskId:completion.taskId || "",
+      report,
+      actor:user?.name || report?.operator || "",
+      at:nowStr(),
+      completedAt:new Date().toISOString()
+    }).catch(() => null);
+    if (!result?.success || !Array.isArray(result?.tasks)) {
+      return {
+        ...item,
+        taskCompletion:{...completion, required:true, synced:false, lastError:"task_save_failed"}
+      };
+    }
+    tasksRef.current = result.tasks;
+    setTasks(result.tasks);
+    return {
+      ...item,
+      taskCompletion:{
+        ...completion,
+        required:!!result.taskFound,
+        taskId:result.task?.id || "",
+        synced:true,
+        lastError:""
+      }
+    };
+  };
+  const taskStatusLabel = (t) => t.adminApproval==="pending"
+    ? subText("ממתין לאישור","Pending approval")
+    : t.adminApproval==="rejected"
+      ? subText("נדחה","Rejected")
+      : t.status==="done"
+        ? subText("✓ בוצע","✓ Done")
+        : t.adminApproval==="approved"
+          ? subText("מאושר","Approved")
+          : subText("ממתין","Pending");
   const taskStatusColor = (t) => t.adminApproval==="pending" ? C.orange : t.adminApproval==="rejected" ? C.red : t.status==="done" ? C.green : t.adminApproval==="approved" ? C.blue : C.orange;
 
   const submitOperatorTaskRequest = async () => {
@@ -4914,7 +5854,7 @@ useEffect(() => {
       id: Date.now(),
       date: dailyDate.slice(0,10),
       client: operatorTaskClient,
-      clientId: clientIdByName(operatorTaskClient),
+      clientId: operatorTaskClientId || clientIdByName(operatorTaskClient),
       operators: [opName],
       status: "pending",
       operatorCreated: true,
@@ -4924,11 +5864,22 @@ useEffect(() => {
     };
     const newTasks = [...tasks, task];
     setAction("operatorTaskRequest", "loading");
-    setTasks(newTasks);
+    if (sheetId) {
+      const result = await sheetCall("mutateTasks", {upserts:[task]}).catch(()=>null);
+      if (!result?.success || !Array.isArray(result?.tasks)) {
+        setAction("operatorTaskRequest", "error", 2200);
+        showToast("המשימה לא נשמרה - נסה שוב");
+        haptic("medium");
+        return;
+      }
+      setTasks(result.tasks);
+    } else {
+      setTasks(newTasks);
+    }
     setOperatorTaskClient("");
+    setOperatorTaskClientId("");
     setOperatorTaskClientSearch("");
     setOperatorTaskNote("");
-    if (sheetId) await sheetCall("saveTasks", {tasks:newTasks});
     await sendNotificationToAdmins("\u05de\u05e9\u05d9\u05de\u05d4 \u05d7\u05d3\u05e9\u05d4 \u05de\u05de\u05e4\u05e2\u05d9\u05dc", `${opName} \u2014 ${operatorTaskClient.split(" - ")[0]}`).catch(e => console.warn("Operator task request notification failed", e));
     setAction("operatorTaskRequest", "success", 1500);
     showToast("\u05d4\u05de\u05e9\u05d9\u05de\u05d4 \u05e0\u05e9\u05dc\u05d7\u05d4 \u05dc\u05d0\u05d9\u05e9\u05d5\u05e8 \u05d0\u05d3\u05de\u05d9\u05df");
@@ -4970,7 +5921,7 @@ useEffect(() => {
         const existingIndex = nextOrders.findIndex(order =>
           normalizeDate(order.date) === taskDateValue &&
           normalizeName(order.operator) === normalizeName(opName) &&
-          normalizeName(order.client) === normalizeName(target.client)
+          samePoolIdentity(order, target)
         );
         if (existingIndex >= 0) {
           nextOrders = nextOrders.map((order, index) => index === existingIndex ? {
@@ -4985,7 +5936,7 @@ useEffect(() => {
           .filter(order => normalizeDate(order.date) === taskDateValue && normalizeName(order.operator) === normalizeName(opName))
           .reduce((max, order) => Math.max(max, Number(order.orderIndex || 0)), 0) + 1;
         nextOrders = [...nextOrders, {
-          id:`admin-order-${taskDateValue}-${normalizeName(opName)}-${normalizeName(target.client)}`,
+          id:`admin-order-${taskDateValue}-${normalizeName(opName)}-${target.clientId || normalizeName(target.client)}`,
           date:taskDateValue,
           operator:opName,
           client:target.client,
@@ -4999,19 +5950,23 @@ useEffect(() => {
       nextOrders = dedupeAdminOrders(nextOrders);
     }
 
+    let savedTasks = nextTasks;
     try {
       if (sheetId) {
-        const taskResult = await sheetCall("saveTasks", {tasks:nextTasks});
-        if (!taskResult?.success) throw new Error(taskResult?.error || "saveTasks failed");
-        if (approved) {
-          const orderResult = await sheetCall("saveAdminOrders", {adminOrders:nextOrders});
-          if (!orderResult?.success) {
-            await sheetCall("saveTasks", {tasks}).catch(()=>null);
-            throw new Error(orderResult?.error || "saveAdminOrders failed");
-          }
+        const approvalResult = await sheetCall("setOperatorTaskApproval", {
+          taskId:id,
+          approved,
+          operators:assignedOperators,
+          approvalLog,
+          adminNote:String(target.adminNote || target.changeLog?.[target.changeLog.length - 1]?.note || "").trim()
+        }).catch(()=>null);
+        if (!approvalResult?.success || !Array.isArray(approvalResult?.tasks) || !Array.isArray(approvalResult?.adminOrders)) {
+          throw new Error(approvalResult?.error || "task approval save failed");
         }
+        savedTasks = approvalResult.tasks;
+        nextOrders = dedupeAdminOrders(approvalResult.adminOrders);
       }
-      setTasks(nextTasks);
+      setTasks(savedTasks);
       if (approved) {
         setAdminOrders(nextOrders);
         assignedOperators.forEach(opName => {
@@ -5057,7 +6012,7 @@ useEffect(() => {
   };
   const saveWorkClockEditor = async () => {
     if (!workClockEditor?.date || !workClockEditor?.start) {
-      showToast("⚠️ חובה להזין תאריך ושעת כניסה");
+      showToast(subText("⚠️ חובה להזין תאריך ושעת כניסה","⚠️ Date and start time are required"));
       haptic("medium");
       return;
     }
@@ -5067,7 +6022,7 @@ useEffect(() => {
       localStorage.setItem("galileo_workstart", cleanStart);
       setWorkStart(cleanStart);
       setWorkClockEditor(null);
-      showToast("▶ שעת כניסה נשמרה");
+      showToast(subText("▶ שעת כניסה נשמרה","▶ Start time saved"));
       haptic("success");
       if(sheetId) await sheetCall("saveWorkStart",{log:{username:user?.username||"",operator:user?.name,date:workClockEditor.date,start:cleanStart}});
       trackUsageEvent("save_work_start", {screen:"daily", target:"clock_start", date:workClockEditor.date});
@@ -5082,7 +6037,7 @@ useEffect(() => {
     localStorage.removeItem("galileo_workstart");
     setWorkStart(null);
     setWorkClockEditor(null);
-    showToast(`⏹ ${totalStr} שעות עבודה נשמרו`);
+    showToast(subText(`⏹ ${totalStr} שעות עבודה נשמרו`,`⏹ ${totalStr} work hours saved`));
     haptic("success");
     if(sheetId) {
       await sheetCall("clearWorkStart",{username:user?.username||"",operator:user?.name,date:workClockEditor.date});
@@ -5096,7 +6051,7 @@ useEffect(() => {
     const date = todayStr();
     localStorage.setItem("galileo_workstart", now);
     setWorkStart(now);
-    showToast("▶ שעון עבודה התחיל");
+    showToast(subText("▶ שעון עבודה התחיל","▶ Work clock started"));
     haptic("success");
     trackUsageEvent("save_work_start", {screen:"daily", target:"clock_start_quick", date});
     void (async () => {
@@ -5126,8 +6081,16 @@ useEffect(() => {
     const name=r.client?.split(" - ")[0]||"לקוח יקר"; const company = getCompany().name || "POOLMANG";
     const statusLine=r.poolStatus==="אחר"?`⚠️ *נדרשת תשומת לב:*\n${r.customStatusText}${r.restrictedUntil?`\nהבריכה לא זמינה עד ${fmtDate(r.restrictedUntil)}`:""}` :"✅ הבריכה מאוזנת ומוכנה לשימוש מלא";
     const waterLevelNotice = r.waterLevel==="לא תקין" ? `\n\n${normalizeWaterLevelNoticeMessage(waterLevelNoticeMessage)}` : "";
-    const supplyApprovalNotice = r.supplyLabel ? `\n\nלתשומת לבך יש צורך לספק חומרים לאיזון המים - נדרש אישור לאספקה` : "";
-    const reportDetails = `${statusLine}${waterLevelNotice}${supplyApprovalNotice}${r.notes?`\n\n📝 ${r.notes}`:""}`.trim();
+    const supplyNoticeText = supplyDeliveryMessage(r.supplyLabel, {
+      acid:acidSupplyMessage,
+      phUp:phUpSupplyMessage,
+      salt:saltSupplyMessage
+    });
+    const priceSummary = nextSupplyPriceSummary(r.supplyLabel, clientSupply(r.client, r.clientId)?.materialPrices);
+    const supplyNotice = supplyNoticeText
+      ? `\n\n📦 *חומרים לטיפול הבא:*\n${[supplyNoticeText, priceSummary].filter(Boolean).join("\n")}`
+      : "";
+    const reportDetails = `${statusLine}${waterLevelNotice}${supplyNotice}${r.notes?`\n\n📝 ${r.notes}`:""}`.trim();
     return renderWaMessageTemplate(waMessageTemplate, {
       clientName: name,
       operatorName: user?.name || "",
@@ -5139,22 +6102,25 @@ useEffect(() => {
   const saveWaMessageTemplate = async () => {
     if (isActionLoading("saveWaTemplate")) return;
     const clean = normalizeWaMessageTemplate(waTemplateDraft);
-    const cleanPollMessage = normalizeWaPollMessage(waPollMessageDraft);
-    const cleanPollOptions = normalizeWaPollOptions(waPollOptionsDraft);
+    const cleanAcidSupplyMessage = normalizeAcidSupplyMessage(acidSupplyMessageDraft);
+    const cleanPhUpSupplyMessage = normalizePhUpSupplyMessage(phUpSupplyMessageDraft);
+    const cleanSaltSupplyMessage = normalizeSaltSupplyMessage(saltSupplyMessageDraft);
     const cleanChlorineReminderMessage = normalizeChlorineReminderMessage(chlorineReminderMessageDraft);
     const cleanWaterLevelNoticeMessage = normalizeWaterLevelNoticeMessage(waterLevelNoticeMessageDraft);
     setAction("saveWaTemplate", "loading");
     setWaMessageTemplate(clean);
-    setWaPollMessage(cleanPollMessage);
-    setWaPollOptions(cleanPollOptions);
+    setAcidSupplyMessage(cleanAcidSupplyMessage);
+    setPhUpSupplyMessage(cleanPhUpSupplyMessage);
+    setSaltSupplyMessage(cleanSaltSupplyMessage);
     setChlorineReminderMessage(cleanChlorineReminderMessage);
     setWaterLevelNoticeMessage(cleanWaterLevelNoticeMessage);
     try { localStorage.setItem(WA_TEMPLATE_STORAGE_KEY, clean); } catch {}
-    try { localStorage.setItem(WA_POLL_MESSAGE_STORAGE_KEY, cleanPollMessage); } catch {}
-    try { localStorage.setItem(WA_POLL_OPTIONS_STORAGE_KEY, JSON.stringify(cleanPollOptions)); } catch {}
+    try { localStorage.setItem(WA_ACID_SUPPLY_MESSAGE_STORAGE_KEY, cleanAcidSupplyMessage); } catch {}
+    try { localStorage.setItem(WA_PH_UP_SUPPLY_MESSAGE_STORAGE_KEY, cleanPhUpSupplyMessage); } catch {}
+    try { localStorage.setItem(WA_SALT_SUPPLY_MESSAGE_STORAGE_KEY, cleanSaltSupplyMessage); } catch {}
     try { localStorage.setItem(WA_TABLET_REMINDER_STORAGE_KEY, cleanChlorineReminderMessage); } catch {}
     try { localStorage.setItem(WA_WATER_LEVEL_NOTICE_STORAGE_KEY, cleanWaterLevelNoticeMessage); } catch {}
-    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean,waPollMessage:cleanPollMessage,waPollOptions:cleanPollOptions,chlorineReminderMessage:cleanChlorineReminderMessage,waterLevelNoticeMessage:cleanWaterLevelNoticeMessage}}).catch(()=>null) : null;
+    const res = sheetId ? await sheetCall("saveClientSettings", {settings:{waMessageTemplate:clean,acidSupplyMessage:cleanAcidSupplyMessage,phUpSupplyMessage:cleanPhUpSupplyMessage,saltSupplyMessage:cleanSaltSupplyMessage,chlorineReminderMessage:cleanChlorineReminderMessage,waterLevelNoticeMessage:cleanWaterLevelNoticeMessage}}).catch(()=>null) : null;
     if (sheetId && !res?.success) {
       setAction("saveWaTemplate", "error", 1800);
       showToast("שמירת ההודעה לגיליון נכשלה");
@@ -5166,8 +6132,9 @@ useEffect(() => {
 
   const resetWaMessageTemplate = () => {
     setWaTemplateDraft(DEFAULT_WA_MESSAGE_TEMPLATE);
-    setWaPollMessageDraft(DEFAULT_WA_POLL_MESSAGE);
-    setWaPollOptionsDraft(DEFAULT_WA_POLL_OPTIONS);
+    setAcidSupplyMessageDraft(DEFAULT_ACID_SUPPLY_MESSAGE);
+    setPhUpSupplyMessageDraft(DEFAULT_PH_UP_SUPPLY_MESSAGE);
+    setSaltSupplyMessageDraft(DEFAULT_SALT_SUPPLY_MESSAGE);
     setChlorineReminderMessageDraft(DEFAULT_CHLORINE_TABLET_REMINDER_MESSAGE);
     setWaterLevelNoticeMessageDraft(DEFAULT_WATER_LEVEL_NOTICE_MESSAGE);
     haptic("medium");
@@ -5211,16 +6178,18 @@ useEffect(() => {
     haptic(failed ? "medium" : "success");
   };
 
-  const sendReportWhatsApp = async (report) => {
-    if (isWhatsAppDisabledForClient(report)) {
-      showToast("ווצאפ כבוי ללקוח - הדוח נשמר ללא הודעה");
-      return true;
+  const sendReportWhatsApp = async (report, deliveryDecision = null) => {
+    if (report?.waterCheckOnly) return {sent:true, skipped:true};
+    if (deliveryDecision?.version && deliveryDecision.shouldSend === false) return {sent:true, skipped:true};
+    if (!deliveryDecision?.version && isWhatsAppDisabledForClient(report)) {
+      showToast(subText("ווצאפ כבוי ללקוח - הדוח נשמר ללא הודעה","WhatsApp is off for this client. The report was saved without a message"));
+      return {sent:true, skipped:true};
     }
-    const phone = normalizeWhatsAppPhone(clientPhone(report.client));
-    const message = buildWA(report);
+    const phone = normalizeWhatsAppPhone(deliveryDecision?.phone || clientPhone(report.client, report.clientId));
+    const message = String(deliveryDecision?.message || buildWA(report)).trim();
     if (!phone) {
-      showToast("⚠️ אין טלפון ללקוח - הדוח נשמר והוסר מתור ההודעות");
-      return true;
+      showToast(subText("⚠️ אין טלפון ללקוח - הדוח נשמר והוסר מתור ההודעות","⚠️ The client has no phone number. The report was saved without a message"));
+      return {sent:true, skipped:true};
     }
 
     const res = await sheetCall("sendGreenApiWhatsApp", {
@@ -5229,51 +6198,71 @@ useEffect(() => {
       message,
       client: report.client,
       reportId: report.id,
+      deliveryId:deliveryDecision?.deliveryId || `${report.id || ""}:completion`,
     }).catch(()=>null);
 
     if (res?.idMessage || res?.response?.idMessage) {
-      if (report.supplyLabel) {
-        const pollRes = await sheetCall("sendGreenApiPoll", {
-            phone,
-            client: report.client,
-            reportId: report.id,
-            supplyLabel: report.supplyLabel || "",
-            saltBags: String(report.supplyLabel || "").match(/מלח\s*[×xX]\s*(\d+)/)?.[1] || 0,
-            materialPrices: normalizeNextSupplyPrices(supplyDB[report.client]?.materialPrices),
-            message: [normalizeWaPollMessage(waPollMessage), nextSupplyPriceSummary(report.supplyLabel, supplyDB[report.client]?.materialPrices)].filter(Boolean).join("\n\n"),
-            options: normalizeWaPollOptions(waPollOptions),
-            multipleAnswers: false,
-            ensureWebhook: true
-          }).catch(e => {
-            console.warn("Green API poll failed", e);
-            return null;
-          });
-        if (!pollRes?.success) console.warn("Green API poll failed", pollRes);
-      }
-      showToast("✅ הודעת WhatsApp נשלחה ללקוח");
-      return true;
+      showToast(subText("✅ הודעת WhatsApp נשלחה ללקוח","✅ WhatsApp message sent to the client"));
+      return {sent:true, response:res};
     }
 
     console.warn("Green API send failed", res);
     const greenState = res?.stateInstance ? ` · ${res.stateInstance}` : "";
     const greenError = res?.error ? ` · ${res.error}` : "";
-    showToast(`⚠️ WhatsApp לא נשלח${res?.status ? ` (${res.status})` : ""}${greenState}${greenError}`);
-    return false;
+    showToast(subText(
+      `⚠️ WhatsApp לא נשלח${res?.status ? ` (${res.status})` : ""}${greenState}${greenError}`,
+      `⚠️ WhatsApp was not sent${res?.status ? ` (${res.status})` : ""}${greenState}${greenError}`
+    ));
+    const status = Number(res?.status || 0);
+    const deliveryUnknown =
+      res?.error === "delivery_status_unknown" ||
+      status >= 500 ||
+      (status >= 200 && status < 300);
+    return {
+      sent:false,
+      error:deliveryUnknown ? "delivery_status_unknown" : (res?.error || "whatsapp_send_failed"),
+      response:res || null
+    };
   };
-  const sendReportWhatsAppAfterSheetConfirm = async (report, shouldSend = true) => {
-    if (!shouldSend) return { sent:true, sheetConfirmed:true, skipped:true };
+  const sendSelfWhatsAppTest = async () => {
+    const actionKey = "sendSelfWhatsApp";
+    if (isActionLoading(actionKey)) return;
+    const currentUserRecord = findPushUser(user?.username || user?.name || user?.phone) || user || {};
+    const phone = normalizeWhatsAppPhone(user?.phone || currentUserRecord?.phone);
+    if (!phone) {
+      setAction(actionKey, "error", 2200);
+      showToast(subText("⚠️ לא מוגדר מספר טלפון למשתמש המחובר","⚠️ No phone number is configured for the signed-in user"));
+      haptic("medium");
+      return;
+    }
+    setAction(actionKey, "loading");
+    const res = await sheetCall("sendGreenApiWhatsApp", {
+      phone,
+      chatId: `${phone}@c.us`,
+      message: "כפתור שליחה לעצמי נלחץ",
+      client: user?.name || user?.username || "מפעיל"
+    }).catch(error => ({success:false,error:error?.message || "send_failed"}));
+    const sent = !!(res?.idMessage || res?.response?.idMessage);
+    setAction(actionKey, sent ? "success" : "error", sent ? 1800 : 2600);
+    showToast(sent
+      ? subText("✅ הודעת הבדיקה נשלחה אליך","✅ Test message sent to you")
+      : subText("⚠️ הודעת הבדיקה לא נשלחה - שירות הווצאפ אינו תקין","⚠️ Test message was not sent. The WhatsApp service is unavailable"));
+    haptic(sent ? "success" : "medium");
+  };
+  const sendReportWhatsAppAfterSheetConfirm = async (report, deliveryDecision = null) => {
+    if (deliveryDecision?.version && deliveryDecision.shouldSend === false) return { sent:true, sheetConfirmed:true, skipped:true };
     const sheetConfirmed = await confirmReportSavedToSheet(report);
     if (!sheetConfirmed) {
-      showToast("⚠️ הדוח עדיין לא אומת בשיטס - הודעת לקוח לא נשלחה");
+      showToast(subText("⚠️ הדוח עדיין לא אומת בשיטס - הודעת לקוח לא נשלחה","⚠️ The report has not been confirmed in Sheets. No client message was sent"));
       return { sent:false, sheetConfirmed:false };
     }
-    const sent = await sendReportWhatsApp(report);
-    return { sent, sheetConfirmed:true };
+    const delivery = await sendReportWhatsApp(report, deliveryDecision);
+    return { ...delivery, sheetConfirmed:true };
   };
 
   const queueSubOperatorReportForApproval = async (report, photosBase64, adminEmail) => {
     const item = {
-      id: crypto.randomUUID(),
+      id: makeReportId(),
       status: "pending",
       createdAt: new Date().toISOString(),
       operator: report.operator,
@@ -5282,14 +6271,14 @@ useEffect(() => {
       report,
       photos: photosBase64,
       adminEmail,
-      clientAddress: clientAddress(report.client),
-      clientPhone: clientPhone(report.client),
+      clientAddress: clientAddress(report.client, report.clientId),
+      clientPhone: clientPhone(report.client, report.clientId),
     };
     const next = [item, ...pendingSubReports.filter(x => x.id !== item.id)];
     await savePendingSubReports(next);
     rememberCompletedReport(report);
     setAction("submitReport", "success", 1600);
-    showToast("הדוח ממתין לאישור מפעיל");
+    showToast(subText("הדוח ממתין לאישור מפעיל","Report is waiting for operator approval"));
     haptic("success");
   };
 
@@ -5317,6 +6306,17 @@ useEffect(() => {
     if (!item || syncing || isActionLoading(`approveSubReport:${item.id}`)) return;
     const report = item.report;
     const supplyUpdateForApproval = buildSupplyUpdateForReport(report);
+    const approvalPhone = normalizeWhatsAppPhone(clientPhone(report.client, report.clientId));
+    const approvalWhatsAppDisabled = isWhatsAppDisabledForClient(report);
+    const approvalShouldSend = !report?.waterCheckOnly && !approvalWhatsAppDisabled && !!approvalPhone;
+    const deliveryDecision = {
+      version:1,
+      shouldSend:approvalShouldSend,
+      skipReason:report?.waterCheckOnly ? "water_check" : approvalWhatsAppDisabled ? "disabled" : !approvalPhone ? "missing_phone" : "",
+      phone:approvalPhone,
+      message:approvalShouldSend ? buildWA(report) : "",
+      deliveryId:`wa-${report.id || item.id || makeReportId()}`
+    };
     setDeferredSubReportIds(ids => ids.includes(item.id) ? ids : [...ids, item.id]);
     setActiveSubReportApprovalId("");
     setAction(`approveSubReport:${item.id}`, "loading");
@@ -5328,8 +6328,8 @@ useEffect(() => {
         report,
         photos: item.photos || [],
         adminEmail: item.adminEmail || getCompany().adminEmail || "",
-        clientAddress: item.clientAddress || clientAddress(report.client),
-        clientPhone: item.clientPhone || clientPhone(report.client),
+        clientAddress: item.clientAddress || clientAddress(report.client, report.clientId),
+        clientPhone: item.clientPhone || clientPhone(report.client, report.clientId),
         supplyUpdate: supplyUpdateForApproval?.row || undefined,
       }).catch(() => null);
       saved = res?.success === true;
@@ -5344,42 +6344,90 @@ useEffect(() => {
     }
 
     if (saved) {
+      let approvalDeliveryItem = null;
+      if (deliveryDecision.shouldSend) {
+        try {
+          approvalDeliveryItem = await persistPendingReportBeforeSend(
+            savedReport,
+            supplyUpdateForApproval?.row,
+            {
+              savedToSheet:true,
+              sendWhatsAppOnSave:true,
+              whatsappSending:true,
+              whatsappSkipReason:"",
+              whatsappSent:false,
+              deliveryDecision
+            }
+          );
+        } catch (error) {
+          console.warn("Approved report delivery queue save failed", error);
+          setDeferredSubReportIds(ids => ids.filter(id => id !== item.id));
+          setAction(`approveSubReport:${item.id}`, "error", 2400);
+          showToast("הדוח נשמר בשיטס, אך תור ההודעה לא נשמר בטלפון. האישור נשאר לניסיון נוסף");
+          return;
+        }
+      }
       setReports(prev => upsertReportByIdentity(prev, savedReport));
       rememberCompletedReport(savedReport);
-      setLastReadings(prev => ({
-        ...prev,
-        [report.client]: mergeLatestReading(prev[report.client] || {}, {
-          client: report.client,
-          clientId: report.clientId || clientIdByName(report.client),
-          date: report.reportDate,
-          reportDate: report.reportDate,
-          chlorine: report.chlorine,
-          ph: report.ph,
-          salt: report.salt,
-          chlora: report.chlora || 0,
-          hth: report.hth || 0,
-          phUp: report.phUp || 0,
-          acidLiters: report.acidLiters || 0,
-          poolStatus: report.poolStatus,
-          customStatusText: report.customStatusText,
-          internalNoteDate: report.internalNoteDate || report.reportDate,
-          notes: report.notes,
-          missedTreatment: false
-        })
-      }));
-      const match = tasks.find(t => t.date === report.reportDate && t.client === report.client && (t.operators || []).includes(report.operator) && t.status !== "done");
-      if (match) markDone(match.id);
+      setLastReadings(prev => {
+        const readingId = String(report.clientId || clientIdByName(report.client) || "").trim();
+        const readingKey = readingId || report.client;
+        const previous = lastReadingForClient(report.client, readingId) || {};
+        return {
+          ...prev,
+          [readingKey]: mergeLatestReading(previous, {
+            client: report.client,
+            clientId: readingId,
+            date: report.reportDate,
+            reportDate: report.reportDate,
+            chlorine: report.chlorine,
+            ph: report.ph,
+            salt: report.salt,
+            chlora: report.chlora ?? "",
+            hth: report.hth ?? "",
+            phUp: report.phUp ?? "",
+            acidLiters: report.acidLiters ?? "",
+            poolStatus: report.poolStatus,
+            customStatusText: report.waterCheckOnly ? previous.customStatusText || "" : report.customStatusText,
+            internalNoteDate: report.waterCheckOnly ? previous.internalNoteDate || "" : (report.internalNoteDate || report.reportDate),
+            notes: report.notes,
+            waterCheckOnly:!!report.waterCheckOnly,
+            missedTreatment: false
+          })
+        };
+      });
+      const match = tasks.find(t => {
+        if (normalizeDate(t.date) !== normalizeDate(report.reportDate) || t.status === "done") return false;
+        return samePoolIdentity(t, report) &&
+          (t.operators || []).some(op => normalizeName(op) === normalizeName(report.operator));
+      });
+      if (match) void markDone(match.id);
       await removePendingSubReport(item.id);
       setAction(`approveSubReport:${item.id}`, "success", 1400);
       showToast("✅ הדוח אושר ונשלח");
       void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
       void (async () => {
-        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport).catch(e => {
+        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport, deliveryDecision).catch(e => {
           console.warn("WhatsApp send failed", e);
           return { sent:false, sheetConfirmed:false };
         });
+        if (approvalDeliveryItem) {
+          const deliveryState = {
+            ...approvalDeliveryItem,
+            savedToSheet:!!whatsAppResult.sheetConfirmed,
+            whatsappSending:false,
+            whatsappSent:!!whatsAppResult.sent,
+            lastError:whatsAppResult.sent
+              ? ""
+              : (whatsAppResult.sheetConfirmed
+                  ? (whatsAppResult.error || "whatsapp_send_failed")
+                  : "sheet_confirm_failed")
+          };
+          await persistPendingReportItem(deliveryState).catch(e =>
+            console.warn("Approved report delivery state save failed", e)
+          );
+        }
         if (!whatsAppResult.sent) {
-          addPendingReport(savedReport, supplyUpdateForApproval?.row, { savedToSheet: whatsAppResult.sheetConfirmed });
           setDismissed(false);
           setPendingBackgroundSync(true);
         }
@@ -5387,7 +6435,25 @@ useEffect(() => {
       void autoShareOrderAfterReport(savedReport);
       trackUsageEvent("approve_sub_report", {screen:"daily", target:"pending_sub_report"});
     } else {
-      addPendingReport(report);
+      try {
+        await persistPendingReportBeforeSend(report, supplyUpdateForApproval?.row, {
+          savedToSheet:false,
+          sendWhatsAppOnSave:deliveryDecision.shouldSend,
+          whatsappSkipReason:deliveryDecision.skipReason,
+          deliveryDecision,
+          completionContext:{
+            previousLastReading:lastReadingForClient(report.client, report.clientId) || null,
+            previousLocalReport:null
+          },
+          taskCompletion:pendingTaskCompletionForReport(report)
+        });
+      } catch (error) {
+        console.warn("Approved report local queue save failed", error);
+        setDeferredSubReportIds(ids => ids.filter(id => id !== item.id));
+        setAction(`approveSubReport:${item.id}`, "error", 2400);
+        showToast("שמירת הדוח בטלפון נכשלה. הדוח נשאר ברשימת האישורים ולא הוסר");
+        return;
+      }
       await removePendingSubReport(item.id);
       setAction(`approveSubReport:${item.id}`, "local", 2200);
       trackUsageEvent("approve_sub_report_local", {screen:"daily", target:"pending_sub_report"});
@@ -5412,31 +6478,36 @@ useEffect(() => {
     haptic("medium");
   };
 
+  const waterCheckReportMode = !!form.waterCheckOnly || !!editingReport?.waterCheckOnly;
   const handleSubmit = async (options = {}) => {
     if (!client || syncing || isActionLoading("submitReport")) return;
     const sendCustomerWhatsApp = options.sendCustomerWhatsApp !== false;
+    const isEditingPendingReport = !!editingReport?.pendingLocal;
     const isEditingExistingReport = !!editingReport && !editingReport.pendingLocal;
-    if (chlorine === "" || ph === "" || !flow) {
-      showToast("⚠️ חובה למלא כלור, pH וזרימה");
+    const pendingEditItem = isEditingPendingReport ? editingReport.pendingItem : null;
+    if (chlorine === "" || (!waterCheckReportMode && ph === "") || !flow) {
+      showToast(waterCheckReportMode
+        ? subText("⚠️ חובה למלא כלור וזרימת מים","⚠️ Chlorine and water flow are required")
+        : subText("⚠️ חובה למלא כלור, pH וזרימה","⚠️ Chlorine, pH and flow are required"));
       if (chlorine === "") sf("_exp_chlorine", true);
-      else if (ph === "") sf("_exp_ph", true);
+      else if (!waterCheckReportMode && ph === "") sf("_exp_ph", true);
       haptic("medium");
       return;
     }
     if (Number(chlorine) === 0 && !form.chlorineZeroConfirmed) {
-      showToast("⚠️ אשר במפורש רמת כלור 0");
+      showToast(subText("⚠️ אשר במפורש רמת כלור 0","⚠️ Confirm a chlorine level of 0"));
       sf("_exp_chlorine", true);
       haptic("medium");
       return;
     }
-    if (Number(ph) === 0 && !form.phLowConfirmed) {
-      showToast("⚠️ חובה לבחור ערך pH או לסמן PH נמוך");
+    if (!waterCheckReportMode && Number(ph) === 0 && !form.phLowConfirmed) {
+      showToast(subText("⚠️ חובה לבחור ערך pH או לסמן PH נמוך","⚠️ Select a pH value or mark pH as low"));
       sf("_exp_ph", true);
       haptic("medium");
       return;
     }
-    if (Number(form.chlora || 0) === 0 && !form._exp_chlora_zero) {
-      showToast("⚠️ חובה למלא טבליות כלור (TAB) או לסמן שאין צורך להוסיף");
+    if (!waterCheckReportMode && Number(form.chlora || 0) === 0 && !form._exp_chlora_zero) {
+      showToast(subText("⚠️ חובה למלא טבליות כלור (TAB) או לסמן שאין צורך להוסיף","⚠️ Enter chlorine tablets (TAB) or mark that none are needed"));
       sf("_exp_chlora", true);
       haptic("medium");
       return;
@@ -5446,56 +6517,54 @@ useEffect(() => {
     const elNext=calcNext(elDate);
     let nextSupplyDB = null;
     let supplyUpdate = null;
-    const currentClientId = clientIdByName(client);
+    const currentClientId = String(form.clientId || editingReport?.clientId || clientIdByName(client)).trim();
     const supplySource = {reportDate, client, clientId: currentClientId, acid, phUpSupply, saltPkg, saltBags, suppliedEquipment};
-    const prevSupplyForClient = supplyDB[client] || {};
+    const prevSupplyForClient = clientSupply(client, currentClientId) || {};
     const computedSupply = nextSupplyStateForReport(client, supplySource, prevSupplyForClient);
     const supplyLabel = supplyLabelFromFlags(computedSupply.explicitAfterSupplied);
     if(client&&computedSupply.shouldUpdate&&(!isSubOperatorRole(user?.role)||approvalEditId)){
-      const newDB={...supplyDB};
-      newDB[client]=computedSupply.nextSupply;
+      const supplyKey = supplyStorageKey(client, currentClientId);
+      const newDB=supplyDBWithPoolUpdate(supplyDB, client, computedSupply.nextSupply);
       nextSupplyDB = newDB;
-      const nextSupply = newDB[client];
+      const nextSupply = newDB[supplyKey];
       if (nextSupply) {
         supplyUpdate = [client,nextSupply.acid?"כן":"לא",nextSupply.phUpSupply?"כן":"לא",nextSupply.saltPkg?"כן":"לא",nextSupply.saltBags||0,nextSupply.updatedAt,nextSupply.supplyNote||"",nextSupply.nextSupplyDate||"",nextSupply.assignedOperator||"",serializeNextSupplyPrices(nextSupply.materialPrices),nextSupply.supplyId||"",nextSupply.clientId||currentClientId];
       }
     }
     const reportOperatorName = dailyOwnerName(reportDate) || user?.name;
-    if (!isSubOperatorRole(user?.role) || approvalEditId) {
-      const match=tasks.find(t=>t.date===reportDate&&t.client===client&&t.operators.includes(reportOperatorName)&&t.status!=="done"); if(match)markDone(match.id);
-    }
     let photosBase64 = [];
     const report = {
-  id: editingReport?.localId || crypto.randomUUID(),
+  id: editingReport?.localId || makeReportId(),
   reportDate,
   operator:reportOperatorName||user?.name||"",
   client,
-  clientId: clientIdByName(client),
+  clientId: currentClientId,
   chlorine,
-  ph: form.phLowConfirmed && Number(ph) === 0 ? "PH נמוך" : ph,
-  salt,
-  chlora:form.chlora>0?form.chlora:undefined,
-  hth:form.hth>0?form.hth:undefined,
-  phUp:form.phUp>0?form.phUp:undefined,
-  acidLiters:form.acidLiters>0?form.acidLiters:undefined,
-  elModel,
-  elSerial,
-  elDate,
-  elNext:elNext||"",
-  supplyLabel,
-  suppliedEquipment: suppliedEquipment.join(", "),
-  waterLevel,
-  clarity,
-  fat,
+  ph: waterCheckReportMode ? "" : (form.phLowConfirmed && Number(ph) === 0 ? "PH נמוך" : ph),
+  salt: waterCheckReportMode || currentPrimaryPool === "כלור" ? "" : salt,
+  chlora:form.chlora>0?form.chlora:(waterCheckReportMode?"":undefined),
+  hth:form.hth>0?form.hth:(waterCheckReportMode?"":undefined),
+  phUp:waterCheckReportMode?"":(form.phUp>0?form.phUp:undefined),
+  acidLiters:waterCheckReportMode?"":(form.acidLiters>0?form.acidLiters:undefined),
+  elModel:waterCheckReportMode?"":elModel,
+  elSerial:waterCheckReportMode?"":elSerial,
+  elDate:waterCheckReportMode?"":elDate,
+  elNext:waterCheckReportMode?"":(elNext||""),
+  supplyLabel:waterCheckReportMode?"":supplyLabel,
+  suppliedEquipment: waterCheckReportMode ? "" : suppliedEquipment.join(", "),
+  waterLevel:waterCheckReportMode?"":waterLevel,
+  clarity:waterCheckReportMode?"":clarity,
+  fat:waterCheckReportMode?"":fat,
   flow,
-  poolStatus,
-  customStatusText,
-  restrictedUntil,
-  notes,
-  sendReminder: !!form.sendReminder,
-  chlorineReminderCreatedAt: form.chlorineReminderCreatedAt || "",
-  chlorineReminderDueAt: form.chlorineReminderDueAt || "",
-  chlorineReminderMessage: form.sendReminder ? normalizeChlorineReminderMessage(form.chlorineReminderMessage || chlorineReminderMessage) : "",
+  poolStatus:waterCheckReportMode?"":poolStatus,
+  customStatusText:waterCheckReportMode?"":customStatusText,
+  restrictedUntil:waterCheckReportMode?"":restrictedUntil,
+  notes:waterCheckReportMode?"":notes,
+  waterCheckOnly: waterCheckReportMode,
+  sendReminder: waterCheckReportMode ? false : !!form.sendReminder,
+  chlorineReminderCreatedAt: waterCheckReportMode ? "" : (form.chlorineReminderCreatedAt || ""),
+  chlorineReminderDueAt: waterCheckReportMode ? "" : (form.chlorineReminderDueAt || ""),
+  chlorineReminderMessage: !waterCheckReportMode && form.sendReminder ? normalizeChlorineReminderMessage(form.chlorineReminderMessage || chlorineReminderMessage) : "",
   photosCount:0
 };
     const sendEditedReportToCustomer = sendCustomerWhatsApp && isEditingExistingReport && shouldSendEditedReportToCustomer(editingReport, report);
@@ -5511,41 +6580,152 @@ useEffect(() => {
       } catch(e) {
         console.warn("Sub-operator report queue failed", e);
         setAction("submitReport", "error", 2200);
-        showToast("שמירת הדוח לאישור נכשלה");
+        showToast(subText("שמירת הדוח לאישור נכשלה","Failed to save the report for approval"));
         haptic("medium");
         setSyncing(false);
         return;
       }
     }
-    if (!isEditingExistingReport) {
-      addPendingReport(report, supplyUpdate, { sendWhatsAppOnSave: sendCustomerWhatsApp });
+    const pendingEditShouldSend = isEditingPendingReport
+      ? !pendingEditItem?.whatsappSent && pendingReportWantsWhatsApp(pendingEditItem, report)
+      : false;
+    const shouldSendReportWhatsApp = !report.waterCheckOnly && (
+      isEditingPendingReport
+        ? pendingEditShouldSend
+        : isEditingExistingReport
+        ? sendEditedReportToCustomer
+        : sendCustomerWhatsApp
+    );
+    const deliveryPhone = normalizeWhatsAppPhone(
+      pendingEditItem?.deliveryDecision?.phone || clientPhone(report.client, report.clientId)
+    );
+    const existingDeliveryDecision = pendingEditItem?.deliveryDecision;
+    const whatsappSkipReason = pendingEditItem?.whatsappSent
+      ? "already_sent"
+      : isEditingPendingReport && existingDeliveryDecision?.version
+      ? (existingDeliveryDecision.shouldSend ? "" : (existingDeliveryDecision.skipReason || "not_requested"))
+      : !shouldSendReportWhatsApp
+        ? "not_requested"
+        : isWhatsAppDisabledForClient(report)
+          ? "disabled"
+          : !deliveryPhone
+            ? "missing_phone"
+            : "";
+    const deliveryDecision = {
+      version:1,
+      shouldSend:!whatsappSkipReason,
+      skipReason:whatsappSkipReason,
+      phone:deliveryPhone,
+      message:whatsappSkipReason ? "" : buildWA(report),
+      deliveryId:`${report.id}:completion`
+    };
+    const updateOriginal = isEditingExistingReport
+      ? editingReport
+      : (isEditingPendingReport && pendingEditItem?.savedToSheet ? editingReport.originalReport : undefined);
+    const previousLocalReport = isEditingExistingReport
+      ? [...sheetReports, ...reports].find(candidate =>
+          (editingReport?.localId && String(candidate?.id || "") === String(editingReport.localId)) ||
+          (
+            normalizeDate(candidate?.reportDate) === normalizeDate(editingReport?.date) &&
+            normalizeName(candidate?.operator) === normalizeName(editingReport?.operator) &&
+            samePoolIdentity(candidate, editingReport)
+          )
+        ) || null
+      : null;
+    const inheritedCompletionContext = pendingEditItem?.completionContext;
+    const completionContext = inheritedCompletionContext || {
+      previousLastReading:lastReadingForClient(report.client, report.clientId) || null,
+      previousLocalReport
+    };
+    const pendingOriginalReport = pendingEditItem ? getPendingReportPayload(pendingEditItem) : null;
+    const pendingTaskTargetChanged = !!pendingOriginalReport && (
+      normalizeDate(pendingOriginalReport.reportDate) !== normalizeDate(report.reportDate) ||
+      normalizeName(pendingOriginalReport.operator) !== normalizeName(report.operator) ||
+      !samePoolIdentity(pendingOriginalReport, report)
+    );
+    const inheritedTaskCompletion = pendingTaskTargetChanged ? null : pendingEditItem?.taskCompletion;
+    const taskCompletion = inheritedTaskCompletion || (
+      !isEditingExistingReport && (!isSubOperatorRole(user?.role) || approvalEditId)
+        ? pendingTaskCompletionForReport(report)
+        : {required:false, synced:true, taskId:"", lastError:""}
+    );
+    const pendingMeta = {
+      sendWhatsAppOnSave:deliveryDecision.shouldSend,
+      updateOriginal,
+      completionContext,
+      taskCompletion,
+      whatsappSending:deliveryDecision.shouldSend,
+      whatsappSkipReason,
+      whatsappSent:!!pendingEditItem?.whatsappSent,
+      deliveryDecision,
+      editingPaused:false,
+      replacePendingState:isEditingPendingReport,
+      queueUpdatedAt:Math.max(Date.now(), Number(pendingEditItem?.queueUpdatedAt || 0) + 1),
+      savedToSheet:false,
+      criticalIssueQueued:!!pendingEditItem?.criticalIssueQueued,
+      criticalIssueId:pendingEditItem?.criticalIssueId || ""
+    };
+    let pendingItem = null;
+    immediateReportIdsRef.current.add(String(report.id || ""));
+    try {
+      pendingItem = await persistPendingReportBeforeSend(report, supplyUpdate, pendingMeta);
+      if (isEditingPendingReport) {
+        const pendingEditId = pendingReportStorageId(pendingEditItem);
+        if (pendingEditId) editingPendingReportIdsRef.current.delete(pendingEditId);
+      }
       setDismissed(false);
       if (typeof navigator !== "undefined" && navigator.onLine === false) {
         setPendingBackgroundSync(true);
       }
+    } catch (error) {
+      immediateReportIdsRef.current.delete(String(report.id || ""));
+      console.warn("Durable local report save failed", error);
+      setAction("submitReport", "error", 2200);
+      showToast(subText("שמירת הדוח בטלפון נכשלה - הדוח לא נשלח","Saving the report on this device failed. The report was not sent"));
+      setSyncing(false);
+      haptic("medium");
+      return;
     }
-    if (isEditingExistingReport) {
+    if (report.flow === "לא תקין" && !pendingItem?.criticalIssueQueued) {
+      const pendingCriticalIssue = queueCriticalFlowIssue(report);
+      pendingItem = {
+        ...pendingItem,
+        criticalIssueQueued:!!pendingCriticalIssue?._localPersisted,
+        criticalIssueId:pendingCriticalIssue?.localId || ""
+      };
+      await persistPendingReportItem(pendingItem).catch(error =>
+        console.warn("Critical issue queue state persistence failed", error)
+      );
+      void deliverCriticalFlowIssue(pendingCriticalIssue).catch(error =>
+        console.warn("Critical flow issue delivery failed", error)
+      );
+    }
+    if (isEditingExistingReport || isEditingPendingReport) {
       setReports(prev => {
         const next = [...prev];
         const idx = next.findIndex(r =>
-          r.reportDate === editingReport.date &&
-          r.client === editingReport.client &&
-          r.operator === editingReport.operator
+          (report.id && String(r.id || "") === String(report.id)) ||
+          (
+            r.reportDate === editingReport.date &&
+            samePoolIdentity(r, editingReport) &&
+            r.operator === editingReport.operator
+          )
         );
         if (idx >= 0) next[idx] = report;
         else next.push(report);
         return next;
       });
-      if (editingReport.date !== report.reportDate || editingReport.client !== report.client || editingReport.operator !== report.operator) {
-        forgetCompletedReport(editingReport.date, editingReport.client, editingReport.operator);
+      if (editingReport.date !== report.reportDate || !samePoolIdentity(editingReport, report) || editingReport.operator !== report.operator) {
+        forgetCompletedReport(editingReport.date, editingReport.client, editingReport.operator, editingReport.clientId);
       }
     } else {
       setReports(prev => upsertReportByIdentity(prev, report));
     }
     rememberCompletedReport(report);
     setLastReadings(prev => {
-      const previous = prev[client] || {};
-      const internalNote = String(customStatusText || "").trim();
+      const readingKey = currentClientId || client;
+      const previous = lastReadingForClient(client, currentClientId) || {};
+      const internalNote = report.waterCheckOnly ? String(previous.customStatusText || "").trim() : String(customStatusText || "").trim();
       const previousInternalNote = String(previous.customStatusText || "").trim();
       const internalNoteDate = internalNote
         ? (internalNote === previousInternalNote
@@ -5554,190 +6734,158 @@ useEffect(() => {
         : "";
       return {
         ...prev,
-        [client]: mergeLatestReading(previous, {
-          client,
-          clientId: clientIdByName(client),
-          date: reportDate,
-          reportDate,
-          chlorine,
-          ph: report.ph,
-          salt,
-          chlora: form.chlora > 0 ? form.chlora : 0,
-          hth: form.hth > 0 ? form.hth : 0,
-          phUp: form.phUp > 0 ? form.phUp : 0,
-          acidLiters: form.acidLiters > 0 ? form.acidLiters : 0,
-          poolStatus,
-          customStatusText: internalNote,
-          internalNoteDate,
-          notes,
-          missedTreatment: false
-        })
-      };
-    });
+        [readingKey]: mergeLatestReading(previous, {
+           client,
+           clientId: currentClientId,
+           date: reportDate,
+           reportDate,
+           chlorine,
+           ph: report.ph,
+           salt:report.salt,
+           chlora: report.chlora ?? "",
+           hth: report.hth ?? "",
+           phUp: report.phUp ?? "",
+           acidLiters: report.acidLiters ?? "",
+           poolStatus:report.poolStatus,
+           customStatusText: internalNote,
+           internalNoteDate,
+           notes:report.notes,
+           waterCheckOnly:report.waterCheckOnly,
+           missedTreatment: false
+         })
+       };
+     });
 
-    if (!isEditingExistingReport) {
-      setAction("submitReport", "success", 1200);
-      showToast("✅ הדוח נקלט - שומר לשיטס ואז שולח ללקוח");
-      setSyncing(false);
-      if (approvalEditId) {
-        void removePendingSubReport(approvalEditId).catch(e => console.warn("Pending approval cleanup failed", e));
-        setApprovalEditId("");
-      }
-      setEditingReport(null);
-      setScreen("done");
-      immediateReportIdsRef.current.add(String(report.id || ""));
-      void (async()=>{
-        try {
-          let savedInBackground = false;
-          let saveResponse = null;
-          if (sheetId) {
-            saveResponse = await sheetCall("saveReport", {
-              report,
-              photos: photosBase64,
-              adminEmail:getCompany().adminEmail||"",
-              clientAddress: clientAddress(client),
-              clientPhone: clientPhone(client),
-              supplyUpdate: supplyUpdate || undefined,
-            }).catch(() => null);
-            savedInBackground = saveResponse?.success === true;
-          }
-          if (savedInBackground) {
-            const savedReport = reportWithServerId(report, saveResponse);
-            if (nextSupplyDB) setSupplyDB(nextSupplyDB);
-            setReports(prev => upsertReportByIdentity(prev, savedReport));
-            setSheetReports(prev => upsertReportByIdentity(prev, savedReport));
-            if (!saveResponse?.duplicate && user?.role !== "admin") {
-              void sendNotificationToAdmins(
-                `✅ דוח בוצע: ${client}`,
-                `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
-              ).catch(e => console.warn("Admin report notification failed", e));
-            }
-            void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
-            const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport, sendCustomerWhatsApp).catch(e => {
-              console.warn("WhatsApp send failed", e);
-              return { sent:false, sheetConfirmed:false };
-            });
-            if (whatsAppResult.sent) {
-              removePendingReport(makePendingReportItem(report, supplyUpdate));
-              setAction("submitReport", "success", 1200);
-            } else {
-              addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed, sendWhatsAppOnSave: sendCustomerWhatsApp });
-              setDismissed(false);
-              setPendingBackgroundSync(true);
-              setAction("submitReport", "local", 2200);
-            }
-            void autoShareOrderAfterReport(savedReport);
-          } else {
-            addPendingReport(report, supplyUpdate, { sendWhatsAppOnSave: sendCustomerWhatsApp });
-            setDismissed(false);
-            setPendingBackgroundSync(true);
-            setAction("submitReport", "local", 2200);
-            showToast("⚠️ הדוח נשמר מקומית וממתין לסנכרון");
-          }
-        } finally {
-          immediateReportIdsRef.current.delete(String(report.id || ""));
-        }
-      })();
-      return;
-    }
-
-    let saved=false;
-    let savedReport = report;
-    const adminEmail = getCompany().adminEmail||"";
-       if (sheetId) {
-      const res = isEditingExistingReport
-        ? await sheetCall("updateReport", {report, original:editingReport, supplyUpdate: supplyUpdate || undefined}).catch(() => null)
-        : await sheetCall("saveReport", {
-          report,
-          photos: photosBase64,
-          adminEmail,
-          clientAddress: clientAddress(client),
-          clientPhone: clientPhone(client),
-          supplyUpdate: supplyUpdate || undefined,
-        }).catch(() => null);
-
-      saved = res?.success === true;
-      if (saved) savedReport = reportWithServerId(report, res);
-      if (saved && nextSupplyDB) setSupplyDB(nextSupplyDB);
-      if (saved) {
-        setReports(prev => upsertReportByIdentity(prev, savedReport));
-        setSheetReports(prev => upsertReportByIdentity(prev, savedReport));
-      }
-
-      if (!isEditingExistingReport && saved && !res?.duplicate && user?.role !== "admin") {
-        void sendNotificationToAdmins(
-          `✅ דוח בוצע: ${client}`,
-          `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
-        ).catch(e => console.warn("Admin report notification failed", e));
-      }
-    }
-
-    if (!saved && !isEditingExistingReport) {
-      if (supplyUpdate) {
-        setReports(prev => prev.filter(x => x.id !== report.id));
-        forgetCompletedReport(report.reportDate, report.client, report.operator);
-        setAction("submitReport", "error", 2200);
-        showToast("שמירת החומרים לטיפול הבא נכשלה - הדוח לא נשלח");
-        setSyncing(false);
-        haptic("medium");
-        return;
-      }
-      addPendingReport(report, supplyUpdate, { sendWhatsAppOnSave: sendCustomerWhatsApp });
-      setDismissed(false);
-      setAction("submitReport", "local", 2200);
-      showToast("⚠️ הדוח נשמר מקומית");
-    } else if (!saved && isEditingExistingReport) {
-      addPendingReport(report, supplyUpdate, { updateOriginal: editingReport, sendWhatsAppOnSave: sendEditedReportToCustomer });
-      setDismissed(false);
-      setPendingBackgroundSync(true);
-      setAction("submitReport", "error", 2200);
-      showToast("⚠️ העריכה נשמרה מקומית, לא עודכנה בשיטס");
-    } else {
-      setAction("submitReport", "success", 1200);
-      showToast(sendEditedReportToCustomer ? "✅ הדוח עודכן - בודק שיטס ושולח ברקע" : isEditingExistingReport ? "✅ הדוח עודכן" : "✅ הדוח נשמר");
-    }
-
+    setAction("submitReport", "success", 1200);
+    showToast(whatsappSkipReason
+      ? report.waterCheckOnly
+        ? subText("✅ בדיקת המים נשמרה ללא הודעת סיום טיפול","✅ Water test saved without a treatment completion message")
+        : subText("✅ הדוח נשמר בטלפון - שומר לשיטס ברקע","✅ Report saved on this device. Saving to Sheets in the background")
+      : subText("✅ הדוח נשמר בטלפון - שולח ללקוח ושומר לשיטס ברקע","✅ Report saved on this device. Sending to the client and saving to Sheets"));
     setSyncing(false);
     if (approvalEditId) {
-      await removePendingSubReport(approvalEditId);
+      void removePendingSubReport(approvalEditId).catch(e => console.warn("Pending approval cleanup failed", e));
       setApprovalEditId("");
     }
     setEditingReport(null);
+    setSubmittedReport({...report,_deliveryDecision:deliveryDecision});
     setScreen("done");
-    if (sendEditedReportToCustomer && saved) {
-      void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
-      void (async () => {
-        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport, sendCustomerWhatsApp).catch(e => {
-          console.warn("WhatsApp send failed", e);
-          return { sent:false, sheetConfirmed:false };
-        });
-        if (!whatsAppResult.sent) {
-          addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed, updateOriginal: editingReport, sendWhatsAppOnSave: true });
+    void (async () => {
+      let activePendingItem = pendingItem;
+      try {
+        const saveRequest = sheetId
+          ? (
+              updateOriginal
+                ? sheetCall("updateReport", {
+                    report,
+                    original:updateOriginal,
+                    supplyUpdate:supplyUpdate || undefined,
+                    queueRevision:pendingItem?.queueRevision,
+                    queueUpdatedAt:pendingItem?.queueUpdatedAt,
+                  })
+                : sheetCall("saveReport", {
+                    report,
+                    photos:photosBase64,
+                    adminEmail:getCompany().adminEmail || "",
+                    clientAddress:clientAddress(client,currentClientId),
+                    clientPhone:clientPhone(client,currentClientId),
+                    supplyUpdate:supplyUpdate || undefined,
+                    queueRevision:pendingItem?.queueRevision,
+                    queueUpdatedAt:pendingItem?.queueUpdatedAt,
+                  })
+            ).catch(() => null)
+          : Promise.resolve(null);
+
+        if (deliveryDecision.shouldSend) {
+          const whatsAppResult = await sendReportWhatsApp(report, deliveryDecision).catch(error => {
+            console.warn("WhatsApp send failed", error);
+            return {sent:false, error:"whatsapp_send_failed"};
+          });
+          const whatsAppSent = !!whatsAppResult.sent;
+          activePendingItem = {
+            ...activePendingItem,
+            whatsappSending:false,
+            whatsappSent:whatsAppSent,
+            lastError:whatsAppSent ? "" : (whatsAppResult.error || "whatsapp_send_failed")
+          };
+          await persistPendingReportItem(activePendingItem).catch(error =>
+            console.warn("WhatsApp state persistence failed", error)
+          );
+          if (!whatsAppSent) {
+            setDismissed(false);
+            setPendingBackgroundSync(true);
+            setAction("submitReport", "local", 2200);
+          }
+        } else {
+          activePendingItem = {...activePendingItem, whatsappSending:false};
+          await persistPendingReportItem(activePendingItem).catch(error =>
+            console.warn("Skipped WhatsApp state persistence failed", error)
+          );
+        }
+
+        const saveResponse = await saveRequest;
+        if (saveResponse?.success === true) {
+          const savedReport = reportWithServerId(report, saveResponse);
+          const sheetConfirmed = await confirmReportSavedToSheet(savedReport);
+          if (nextSupplyDB) setSupplyDB(nextSupplyDB);
+          setReports(prev => upsertReportByIdentity(prev, savedReport));
+          setSheetReports(prev => upsertReportByIdentity(prev, savedReport));
+          if (!updateOriginal && !saveResponse?.duplicate && user?.role !== "admin") {
+            void sendNotificationToAdmins(
+              `✅ דוח בוצע: ${client}`,
+              `${user?.name || "מפעיל"} שלח דוח · כלור ${report.chlorine}, pH ${report.ph}`
+            ).catch(e => console.warn("Admin report notification failed", e));
+          }
+          if (!updateOriginal || shouldSendReportWhatsApp) {
+            void autoShareOrderAfterReport(savedReport);
+          }
+          activePendingItem = {
+            ...activePendingItem,
+            report:savedReport,
+            savedToSheet:sheetConfirmed,
+            sheetError:sheetConfirmed ? "" : "sheet_confirm_failed"
+          };
+          if (sheetConfirmed) {
+            activePendingItem = await syncPendingReportTaskCompletion(activePendingItem, savedReport);
+          }
+          await persistPendingReportItem(activePendingItem).catch(error =>
+            console.warn("Sheet state persistence failed", error)
+          );
+          if (sheetConfirmed && !shouldKeepPendingReport(activePendingItem)) {
+            setAction("submitReport", "success", 1200);
+          } else {
+            setDismissed(false);
+            setPendingBackgroundSync(true);
+            setAction("submitReport", "local", 2200);
+          }
+        } else {
+          activePendingItem = {
+            ...activePendingItem,
+            whatsappSending:false,
+            sheetError:"sheet_save_failed"
+          };
+          await persistPendingReportItem(activePendingItem).catch(error =>
+            console.warn("Failed sheet state persistence failed", error)
+          );
           setDismissed(false);
           setPendingBackgroundSync(true);
+          setAction("submitReport", "local", 2200);
+          showToast(subText("⚠️ הדוח נשמר בטלפון וממתין לשמירה בשיטס","⚠️ Report saved on this device and waiting to save to Sheets"));
         }
-      })();
-      void autoShareOrderAfterReport(savedReport);
-    } else if (!isEditingExistingReport) {
-      void reportCriticalFlowIssue(savedReport).catch(e => console.warn("Critical flow issue failed", e));
-      void (async () => {
-        const whatsAppResult = await sendReportWhatsAppAfterSheetConfirm(savedReport, sendCustomerWhatsApp).catch(e => {
-          console.warn("WhatsApp send failed", e);
-          return { sent:false, sheetConfirmed:false };
-        });
-        if (!whatsAppResult.sent) {
-          addPendingReport(savedReport, supplyUpdate, { savedToSheet: whatsAppResult.sheetConfirmed, sendWhatsAppOnSave: sendCustomerWhatsApp });
-          setDismissed(false);
-          setPendingBackgroundSync(true);
-        }
-      })();
-      void autoShareOrderAfterReport(savedReport);
-    }
+      } finally {
+        immediateReportIdsRef.current.delete(String(report.id || ""));
+      }
+    })();
+    return;
   };
 
   const handleSubmitPress = () => {
     if (!client || syncing || isActionLoading("submitReport")) return;
-    if (!isWhatsAppDisabledForClient(client)) {
+    if (waterCheckReportMode) {
+      void handleSubmit({sendCustomerWhatsApp:false});
+      return;
+    }
+    if (!isWhatsAppDisabledForClient({client,clientId:form.clientId})) {
       setConfirmReportWhatsApp({send:true});
       haptic("medium");
       return;
@@ -5746,9 +6894,10 @@ useEffect(() => {
   };
 
   const syncPendingReports = async (maxItems = Infinity, preferredItem = null) => {
+    const currentPending = pendingRef.current;
     const pendingSource = preferredItem
-      ? [preferredItem, ...pending.filter(item => !samePendingReport(item, preferredItem))]
-      : pending;
+      ? [preferredItem, ...currentPending.filter(item => !samePendingReport(item, preferredItem))]
+      : currentPending;
     if (!pendingSource.length || pendingSyncRef.current || isActionLoading("syncPending")) {
       return { success:false, skipped:true, sent:0, failed:pendingSource.length };
     }
@@ -5756,35 +6905,85 @@ useEffect(() => {
     setAction("syncPending", "loading");
 
     const sent = [];
-    const syncablePending = pendingSource.filter(item => !isPendingReportDeletedLocally(item));
+    const pausedEditing = pendingSource.filter(item => {
+      const pendingId = pendingReportStorageId(item);
+      return !!item?.editingPaused || (!!pendingId && editingPendingReportIdsRef.current.has(pendingId));
+    });
+    const pausedEditingIds = new Set(pausedEditing.map(pendingReportStorageId));
+    const blockedUnknown = pendingSource.filter(item =>
+      !isPendingReportDeletedLocally(item) &&
+      !pausedEditingIds.has(pendingReportStorageId(item)) &&
+      item?.lastError === "delivery_status_unknown"
+    );
+    const syncablePending = pendingSource.filter(item =>
+      !isPendingReportDeletedLocally(item) &&
+      !pausedEditingIds.has(pendingReportStorageId(item)) &&
+      item?.lastError !== "delivery_status_unknown"
+    );
     const itemsToSync = Number.isFinite(maxItems) ? syncablePending.slice(0, Math.max(1, maxItems)) : syncablePending;
-    const failed = Number.isFinite(maxItems) ? syncablePending.slice(itemsToSync.length) : [];
-    let nextSupplyDBFromSync = null;
-    let skippedImmediateCount = 0;
+    const failed = [
+      ...pausedEditing,
+      ...blockedUnknown,
+      ...(Number.isFinite(maxItems) ? syncablePending.slice(itemsToSync.length) : [])
+    ];
+    let nextSupplyDBFromSync = supplyDB;
+    let supplyDBChangedDuringSync = false;
+    let skippedImmediateCount = pausedEditing.length;
     try {
       for (const item of itemsToSync) {
         if (isPendingReportDeletedLocally(item)) continue;
         const r = getPendingReportPayload(item);
         const immediateId = String(r?.id || "");
-        if (immediateId && immediateReportIdsRef.current.has(immediateId)) {
+        const pendingId = pendingReportStorageId(item);
+        if (
+          (immediateId && immediateReportIdsRef.current.has(immediateId)) ||
+          (pendingId && editingPendingReportIdsRef.current.has(pendingId))
+        ) {
           skippedImmediateCount += 1;
           failed.push(item);
           continue;
         }
-        const rebuiltSupply = buildSupplyUpdateForReport(r);
+        const rebuiltSupply = buildSupplyUpdateForReport(r, nextSupplyDBFromSync);
         const supplyUpdate = rebuiltSupply?.row || getPendingSupplyUpdate(item);
         const updateOriginal = getPendingUpdateOriginal(item);
+        const deliveryMeta = {
+          deliveryDecision:item?.deliveryDecision,
+          whatsappSkipReason:item?.whatsappSkipReason,
+          whatsappSent:!!item?.whatsappSent,
+          pendingStorageId:item?.pendingStorageId || pendingReportStorageId(item),
+          queueRevision:item?.queueRevision,
+          queueUpdatedAt:item?.queueUpdatedAt,
+          completionContext:item?.completionContext,
+          taskCompletion:item?.taskCompletion,
+          criticalIssueQueued:!!item?.criticalIssueQueued,
+          criticalIssueId:item?.criticalIssueId || "",
+          editingPaused:false
+        };
         let savedReport = r;
         let saveSucceeded = isPendingReportSavedToSheet(item);
 
         if (!saveSucceeded) {
           const res = updateOriginal
-            ? await sheetCall("updateReport", { report: r, original: updateOriginal, supplyUpdate }).catch(() => null)
-            : await sheetCall("saveReport", { report: r, supplyUpdate }).catch(() => null);
+            ? await sheetCall("updateReport", {
+                report:r,
+                original:updateOriginal,
+                supplyUpdate,
+                queueRevision:item?.queueRevision,
+                queueUpdatedAt:item?.queueUpdatedAt
+              }).catch(() => null)
+            : await sheetCall("saveReport", {
+                report:r,
+                supplyUpdate,
+                queueRevision:item?.queueRevision,
+                queueUpdatedAt:item?.queueUpdatedAt
+              }).catch(() => null);
           saveSucceeded = res?.success === true;
           if (saveSucceeded) {
             savedReport = reportWithServerId(r, res);
-            if (rebuiltSupply?.db) nextSupplyDBFromSync = rebuiltSupply.db;
+            if (rebuiltSupply?.db) {
+              nextSupplyDBFromSync = rebuiltSupply.db;
+              supplyDBChangedDuringSync = true;
+            }
           }
         }
 
@@ -5795,30 +6994,69 @@ useEffect(() => {
 
         const sheetConfirmed = await confirmReportSavedToSheet(savedReport);
         if (!sheetConfirmed) {
-          if (!isPendingReportDeletedLocally(item)) failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet:false, updateOriginal, sendWhatsAppOnSave:shouldSendPendingReportWhatsApp(item, savedReport), lastError:"sheet_confirm_failed" }));
+          if (!isPendingReportDeletedLocally(item)) failed.push(makePendingReportItem(savedReport, supplyUpdate, { ...deliveryMeta, savedToSheet:false, updateOriginal, sendWhatsAppOnSave:shouldSendPendingReportWhatsApp(item, savedReport), lastError:"sheet_confirm_failed" }));
           continue;
         }
 
+        if (savedReport.flow === "לא תקין" && !deliveryMeta.criticalIssueQueued) {
+          const pendingCriticalIssue = queueCriticalFlowIssue(savedReport);
+          deliveryMeta.criticalIssueQueued = !!pendingCriticalIssue?._localPersisted;
+          deliveryMeta.criticalIssueId = pendingCriticalIssue?.localId || "";
+          void deliverCriticalFlowIssue(pendingCriticalIssue).catch(error =>
+            console.warn("Pending report critical issue delivery failed", error)
+          );
+        }
+
+        const taskCompletionItem = await syncPendingReportTaskCompletion(
+          makePendingReportItem(savedReport, supplyUpdate, {
+            ...deliveryMeta,
+            savedToSheet:true,
+            updateOriginal
+          }),
+          savedReport
+        );
+        deliveryMeta.taskCompletion = taskCompletionItem.taskCompletion;
         const sendWhatsAppOnSave = shouldSendPendingReportWhatsApp(item, savedReport);
         if (!sendWhatsAppOnSave) {
-          sent.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal, sendWhatsAppOnSave }));
+          const completedItem = makePendingReportItem(savedReport, supplyUpdate, { ...deliveryMeta, savedToSheet:true, updateOriginal, sendWhatsAppOnSave });
+          if (shouldKeepPendingReport(completedItem)) failed.push(completedItem);
+          else sent.push(completedItem);
           continue;
         }
 
-        const whatsAppSent = await sendReportWhatsApp(savedReport).catch(e => {
+        const whatsAppResult = await sendReportWhatsApp(savedReport, item?.deliveryDecision).catch(e => {
           console.warn("Pending WhatsApp send failed", e);
-          return false;
+          return {sent:false, error:"whatsapp_send_failed"};
         });
+        const whatsAppSent = !!whatsAppResult.sent;
 
         if (whatsAppSent) {
-          sent.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal, sendWhatsAppOnSave }));
+          const completedItem = makePendingReportItem(savedReport, supplyUpdate, { ...deliveryMeta, whatsappSent:true, savedToSheet:true, updateOriginal, sendWhatsAppOnSave });
+          if (shouldKeepPendingReport(completedItem)) failed.push(completedItem);
+          else sent.push(completedItem);
         } else {
-          if (!isPendingReportDeletedLocally(item)) failed.push(makePendingReportItem(savedReport, supplyUpdate, { savedToSheet: true, updateOriginal, sendWhatsAppOnSave, lastError:"whatsapp_send_failed" }));
+          if (!isPendingReportDeletedLocally(item)) failed.push(makePendingReportItem(savedReport, supplyUpdate, {
+            ...deliveryMeta,
+            savedToSheet:true,
+            updateOriginal,
+            sendWhatsAppOnSave,
+            lastError:whatsAppResult.error || "whatsapp_send_failed"
+          }));
         }
       }
 
+      const cleanedSentVersions = new Set();
       if (sent.length) {
-        if (nextSupplyDBFromSync) setSupplyDB(nextSupplyDBFromSync);
+        await Promise.all(sent.map(async item => {
+          const deleted = await deletePendingReportFromIndexedDBIfUnchanged(item).catch(error => {
+            console.warn("Completed pending report cleanup failed", error);
+            return false;
+          });
+          if (deleted) {
+            cleanedSentVersions.add(`${pendingReportStorageId(item)}|${pendingReportPayloadFingerprint(item)}`);
+          }
+        }));
+        if (supplyDBChangedDuringSync) setSupplyDB(nextSupplyDBFromSync);
         setReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
         setSheetReports(prev => sent.reduce((acc, item) => upsertReportByIdentity(acc, getPendingReportPayload(item)), prev));
         sent.forEach(item => {
@@ -5827,14 +7065,47 @@ useEffect(() => {
       }
 
       const visibleFailed = failed.filter(item => !isPendingReportDeletedLocally(item));
-      setPending(visibleFailed);
-      setPendingBackgroundSync(!!visibleFailed.length || pendingOperatorIssues.length > 0);
+      setPending(current => {
+        const next = [...current];
+        itemsToSync.forEach(original => {
+          const currentIndex = next.findIndex(item => samePendingReport(item, original));
+          if (currentIndex < 0) return;
+          if (pendingReportPayloadFingerprint(next[currentIndex]) !== pendingReportPayloadFingerprint(original)) return;
+          const failedItem = visibleFailed.find(item => samePendingReport(item, original));
+          if (failedItem) {
+            next[currentIndex] = mergePendingReportItems(next[currentIndex], failedItem);
+            return;
+          }
+          const sentItem = sent.find(item =>
+            samePendingReport(item, original) &&
+            pendingReportPayloadFingerprint(item) === pendingReportPayloadFingerprint(original)
+          );
+          if (sentItem && !cleanedSentVersions.has(`${pendingReportStorageId(sentItem)}|${pendingReportPayloadFingerprint(sentItem)}`)) {
+            next[currentIndex] = mergePendingReportItems(next[currentIndex], sentItem);
+            return;
+          }
+          next.splice(currentIndex, 1);
+        });
+        visibleFailed.forEach(failedItem => {
+          if (isPendingReportDeletedLocally(failedItem)) return;
+          if (!next.some(item => samePendingReport(item, failedItem))) next.push(failedItem);
+        });
+        pendingRef.current = next;
+        return next;
+      });
+      setPendingBackgroundSync(
+        visibleFailed.some(item => item?.lastError !== "delivery_status_unknown") ||
+        cleanedSentVersions.size < sent.length ||
+        pendingOperatorIssues.length > 0
+      );
       const onlySkippedImmediate = visibleFailed.length > 0 && visibleFailed.length === skippedImmediateCount && sent.length === 0;
       if (onlySkippedImmediate) {
         setAction("syncPending", "idle");
       } else {
         setAction("syncPending", visibleFailed.length ? "error" : "success", visibleFailed.length ? 2200 : 1600);
-        showToast(visibleFailed.length ? `⚠️ ${visibleFailed.length} דוחות עדיין ממתינים לשליחה ללקוח` : "✅ כל הדוחות נשלחו ללקוחות!");
+        showToast(visibleFailed.length
+          ? subText(`⚠️ ${visibleFailed.length} דוחות עדיין ממתינים לשליחה ללקוח`,`⚠️ ${visibleFailed.length} reports are still waiting to be sent to clients`)
+          : subText("✅ כל הדוחות נשלחו ללקוחות!","✅ All reports were sent to clients!"));
       }
       const preferredStillPending = preferredItem ? visibleFailed.some(item => samePendingReport(item, preferredItem)) : false;
       return {
@@ -5851,19 +7122,41 @@ useEffect(() => {
     e?.stopPropagation?.();
     setPendingBackgroundSync(active => {
       if (active && pending.length) {
-        showToast("שליחה ברקע נשארת פעילה עד שכל הלקוחות יקבלו הודעה");
+        showToast(subText("שליחה ברקע נשארת פעילה עד שכל הלקוחות יקבלו הודעה","Background sending stays active until every client receives a message"));
         return true;
       }
       const next = !active;
-      showToast(next ? "שליחת דוחות ברקע הופעלה" : "שליחת דוחות ברקע נעצרה");
+      showToast(next
+        ? subText("שליחת דוחות ברקע הופעלה","Background report sending started")
+        : subText("שליחת דוחות ברקע נעצרה","Background report sending stopped"));
       return next;
     });
   };
 
-  const openPendingReportForEdit = (item, e) => {
+  const openPendingReportForEdit = async (item, e) => {
     e?.stopPropagation?.();
     const r = getPendingReportPayload(item) || {};
     if (!r.client) return;
+    if (r?.id && immediateReportIdsRef.current.has(String(r.id))) {
+      showToast(subText("הדוח עדיין בתהליך שמירה. נסה לערוך שוב בעוד רגע","The report is still being saved. Try editing it again in a moment"));
+      return;
+    }
+    if (pendingSyncRef.current || isActionLoading("syncPending")) {
+      showToast(subText("הדוח מסתנכרן כרגע. נסה שוב בעוד רגע","The report is syncing now. Try again in a moment"));
+      return;
+    }
+    const pendingId = pendingReportStorageId(item);
+    if (pendingId) editingPendingReportIdsRef.current.add(pendingId);
+    const pausedItem = setPendingEditingPaused(item, true);
+    try {
+      await persistPendingReportItem(pausedItem, {durableFirst:true});
+    } catch (error) {
+      if (pendingId) editingPendingReportIdsRef.current.delete(pendingId);
+      console.warn("Pending report edit pause failed", error);
+      showToast(subText("לא ניתן לפתוח את הדוח בבטחה לעריכה","The report could not be opened safely for editing"));
+      haptic("medium");
+      return;
+    }
     setForm({
       ...blank(),
       ...r,
@@ -5877,17 +7170,248 @@ useEffect(() => {
       phLowConfirmed: isLowPhValue(r.ph),
       lowSaltLight: isLowSaltReportValue(r.salt)
     });
-    setEditingReport({date:r.reportDate, client:r.client, operator:r.operator || user?.name, localId:r.id, pendingLocal:true});
+    setEditingReport({
+      date:r.reportDate,
+      client:r.client,
+      clientId:r.clientId || "",
+      operator:r.operator || user?.name,
+      localId:r.id,
+      pendingLocal:true,
+      pendingItem:pausedItem,
+      originalReport:r
+    });
     setScreen("form");
     haptic("medium");
-    showToast("הדוח הממתין נטען לעריכה ושליחה מחדש");
+    showToast(subText("הדוח הממתין נטען לעריכה ושליחה מחדש","Queued report loaded for editing and resubmission"));
   };
 
-  const deletePendingReport = (item, e) => {
+  const leaveReportForm = () => {
+    const pendingItem = editingReport?.pendingLocal ? editingReport.pendingItem : null;
+    if (pendingItem) {
+      const pendingId = pendingReportStorageId(pendingItem);
+      if (pendingId) editingPendingReportIdsRef.current.delete(pendingId);
+      const resumedItem = setPendingEditingPaused(pendingItem, false);
+      void persistPendingReportItem(resumedItem).catch(error => {
+        console.warn("Pending report edit resume failed", error);
+        setPendingReportItem(resumedItem);
+        setPendingBackgroundSync(true);
+      });
+    }
+    setEditingReport(null);
+    setScreen("daily");
+  };
+
+  const cacheLastReadings = (value) => {
+    try {
+      const cached = JSON.parse(localStorage.getItem("galileo_cache") || "{}");
+      localStorage.setItem("galileo_cache", JSON.stringify({...cached, lastReadings:value, cachedAt:Date.now()}));
+    } catch {}
+  };
+
+  const restoreLastReadingsAfterPendingDelete = async (item, report) => {
+    if (sheetId) {
+      const response = await sheetCall("getLastReadings").catch(() => null);
+      if (response?.lastReadings && typeof response.lastReadings === "object" && !Array.isArray(response.lastReadings)) {
+        setLastReadings(response.lastReadings);
+        cacheLastReadings(response.lastReadings);
+        return;
+      }
+    }
+    const context = item?.completionContext || {};
+    const hasSnapshot = Object.prototype.hasOwnProperty.call(context, "previousLastReading");
+    setLastReadings(previous => {
+      const wantedId = String(report?.clientId || "").trim();
+      const entry = Object.entries(previous || {}).find(([key, value]) =>
+        (wantedId && (String(key) === wantedId || String(value?.clientId || "") === wantedId)) ||
+        (!wantedId && normalizeName(value?.client || key) === normalizeName(report?.client))
+      );
+      if (!entry) return previous;
+      const [readingKey, currentReading] = entry;
+      if (measurementDate(currentReading) !== normalizeDate(report?.reportDate)) return previous;
+      const next = {...previous};
+      if (hasSnapshot) {
+        if (context.previousLastReading) next[readingKey] = context.previousLastReading;
+        else delete next[readingKey];
+      } else {
+        const older = (Array.isArray(currentReading?.previousMeasurements) ? currentReading.previousMeasurements : [])
+          .find(reading => measurementDate(reading) !== normalizeDate(report?.reportDate));
+        if (older) next[readingKey] = older;
+        else delete next[readingKey];
+      }
+      cacheLastReadings(next);
+      return next;
+    });
+  };
+
+  const otherCompletionExistsForReport = (report) =>
+    [...sheetReports, ...reports]
+      .filter(candidate => !sameReportIdentity(candidate, report))
+      .some(candidate =>
+        normalizeDate(candidate?.reportDate) === normalizeDate(report?.reportDate) &&
+        normalizeName(candidate?.operator) === normalizeName(report?.operator) &&
+        samePoolIdentity(candidate, report)
+      );
+
+  const reopenTaskAfterPendingDelete = async (item, report, hasOtherCompletion) => {
+    if (hasOtherCompletion || getPendingUpdateOriginal(item)) return true;
+    const completion = item?.taskCompletion || {};
+    if (!sheetId) return false;
+    const result = await sheetCall("setTaskReportCompletion", {
+      completed:false,
+      taskId:completion.taskId || "",
+      report,
+      actor:user?.name || report?.operator || "",
+      at:nowStr(),
+      completedByReport:completion.synced === true
+    }).catch(() => null);
+    if (!result?.success || !Array.isArray(result?.tasks)) return false;
+    tasksRef.current = result.tasks;
+    setTasks(result.tasks);
+    return true;
+  };
+
+  const discardPendingReportCompletion = async (item, report, hasOtherCompletion) => {
+    const previousLocalReport = item?.completionContext?.previousLocalReport;
+    setReports(previous => {
+      const withoutPending = previous.filter(candidate => !sameReportIdentity(candidate, report));
+      return previousLocalReport ? upsertReportByIdentity(withoutPending, previousLocalReport) : withoutPending;
+    });
+    if (!getPendingUpdateOriginal(item) && !hasOtherCompletion) {
+      forgetCompletedReport(report.reportDate, report.client, report.operator, report.clientId);
+    }
+    await restoreLastReadingsAfterPendingDelete(item, report);
+  };
+
+  const deletePendingReport = async (item, e) => {
     e?.stopPropagation?.();
-    removePendingReport(item);
-    if (pending.length <= 1) setPendingBackgroundSync(false);
-    showToast("הדוח הוסר מהתור המקומי");
+    const pendingId = pendingReportStorageId(item);
+    const report = getPendingReportPayload(item) || {};
+    const actionKey = `deletePending:${pendingId}`;
+    if (isActionLoading(actionKey)) return;
+    if (item?.editingPaused || (pendingId && editingPendingReportIdsRef.current.has(pendingId))) {
+      showToast(subText("סגור את עריכת הדוח לפני המחיקה","Close the report editor before deleting it"));
+      return;
+    }
+    if (report?.id && immediateReportIdsRef.current.has(String(report.id))) {
+      showToast(subText("הדוח עדיין בתהליך שמירה. נסה למחוק שוב בעוד רגע","The report is still being saved. Try deleting it again in a moment"));
+      return;
+    }
+    if (pendingSyncRef.current || isActionLoading("syncPending")) {
+      showToast(subText("הדוח מסתנכרן כרגע. נסה למחוק שוב בעוד רגע","The report is syncing now. Try deleting it again in a moment"));
+      return;
+    }
+    if (!isPendingReportSavedToSheet(item) && typeof navigator !== "undefined" && navigator.onLine === false) {
+      showToast(subText("אין חיבור ולכן לא ניתן לוודא שהדוח לא נשמר. המחיקה לא בוצעה","There is no connection, so the report storage status cannot be verified. It was not deleted"));
+      haptic("medium");
+      return;
+    }
+    setAction(actionKey, "loading");
+    const pausedItem = setPendingEditingPaused(item, true);
+    try {
+      await persistPendingReportItem(pausedItem, {durableFirst:true});
+    } catch (error) {
+      console.warn("Pending report delete pause failed", error);
+      setAction(actionKey, "error", 2200);
+      showToast(subText("לא ניתן לעצור את סנכרון הדוח בבטחה","The report sync could not be paused safely"));
+      haptic("medium");
+      return;
+    }
+
+    const resumePausedItem = async (sourceItem = pausedItem) => {
+      const resumedItem = setPendingEditingPaused(sourceItem, false);
+      await persistPendingReportItem(resumedItem).catch(error => {
+        console.warn("Pending report delete resume failed", error);
+        setPendingReportItem(resumedItem);
+        setPendingBackgroundSync(true);
+      });
+    };
+
+    let storageStatus = isPendingReportSavedToSheet(item)
+      ? {checked:true, confirmed:true}
+      : await getReportSheetStorageStatus(report);
+    if (!storageStatus.checked) {
+      await resumePausedItem();
+      setAction(actionKey, "error", 2200);
+      showToast(subText("לא ניתן לוודא אם הדוח כבר נשמר. המחיקה בוטלה כדי לא לפגוע בנתונים","The report storage status could not be verified. Deletion was cancelled to protect the data"));
+      haptic("medium");
+      return;
+    }
+
+    const prepareSavedItemForDeletion = async (sourceItem) => {
+      const trackedItem = sourceItem?.taskCompletion
+        ? sourceItem
+        : {...sourceItem, taskCompletion:pendingTaskCompletionForReport(report)};
+      return syncPendingReportTaskCompletion(
+        {...trackedItem, savedToSheet:true},
+        report
+      );
+    };
+
+    let itemToDelete = pausedItem;
+    if (storageStatus.confirmed) {
+      itemToDelete = await prepareSavedItemForDeletion(pausedItem);
+      if (pendingReportNeedsTaskCompletion(itemToDelete)) {
+        await resumePausedItem(itemToDelete);
+        setAction(actionKey, "error", 2200);
+        showToast(subText("הדוח כבר נשמר. עדכון המשימה עדיין ממתין לסנכרון","The report is already saved. Its task update is still waiting to sync"));
+        haptic("medium");
+        return;
+      }
+      setReports(previous => upsertReportByIdentity(previous, report));
+      setSheetReports(previous => upsertReportByIdentity(previous, report));
+      rememberCompletedReport(report);
+    } else {
+      const hasOtherCompletion = otherCompletionExistsForReport(report);
+      const taskReopened = await reopenTaskAfterPendingDelete(item, report, hasOtherCompletion);
+      if (!taskReopened) {
+        await resumePausedItem();
+        setAction(actionKey, "error", 2200);
+        showToast(subText("עדכון המשימה נכשל ולכן הדוח לא נמחק. נסה שוב כשיש חיבור","The task could not be updated, so the report was not deleted. Try again when connected"));
+        haptic("medium");
+        return;
+      }
+      const latestStorageStatus = await getReportSheetStorageStatus(report);
+      if (!latestStorageStatus.checked) {
+        await resumePausedItem();
+        setAction(actionKey, "error", 2200);
+        showToast(subText("לא ניתן להשלים את בדיקת המחיקה. הדוח נשאר שמור בטלפון","The deletion check could not be completed. The report remains saved on this device"));
+        haptic("medium");
+        return;
+      }
+      if (latestStorageStatus.confirmed) {
+        storageStatus = latestStorageStatus;
+        itemToDelete = await prepareSavedItemForDeletion(pausedItem);
+        if (pendingReportNeedsTaskCompletion(itemToDelete)) {
+          await resumePausedItem(itemToDelete);
+          setAction(actionKey, "error", 2200);
+          showToast(subText("הדוח נשמר בזמן הבדיקה. עדכון המשימה עדיין ממתין לסנכרון","The report was saved during the check. Its task update is still waiting to sync"));
+          haptic("medium");
+          return;
+        }
+        setReports(previous => upsertReportByIdentity(previous, report));
+        setSheetReports(previous => upsertReportByIdentity(previous, report));
+        rememberCompletedReport(report);
+      } else {
+        itemToDelete = pausedItem;
+      }
+    }
+
+    const deleted = await removePendingReport(itemToDelete);
+    if (!deleted) {
+      await resumePausedItem(itemToDelete);
+      setAction(actionKey, "error", 2200);
+      showToast(subText("מחיקת הדוח נכשלה והוא נשאר בתור המקומי","The report could not be deleted and remains in the local queue"));
+      haptic("medium");
+      return;
+    }
+    if (!storageStatus.confirmed) {
+      await discardPendingReportCompletion(item, report, otherCompletionExistsForReport(report));
+    }
+    if (pendingRef.current.length === 0) setPendingBackgroundSync(false);
+    setAction(actionKey, "success", 1200);
+    showToast(storageStatus.confirmed
+      ? subText("הדוח כבר נשמר והוסר מהתור המקומי בלבד","The report was already saved and was removed from the local queue only")
+      : subText("הדוח נמחק והמשימה מסומנת כממתינה","The report was deleted and the task is marked as pending"));
     haptic("medium");
   };
 
@@ -5895,8 +7419,36 @@ useEffect(() => {
     e?.stopPropagation?.();
     const key = `retryPending:${pendingReportStorageId(item)}`;
     if (isActionLoading(key)) return;
+    let retryItem = item;
+    if (item?.lastError === "delivery_status_unknown") {
+      const approved = window.confirm(
+        "לא ניתן לדעת אם ההודעה הקודמת נשלחה. שליחה מחדש עלולה ליצור הודעה כפולה. לשלוח שוב?"
+      );
+      if (!approved) return;
+      const report = getPendingReportPayload(item) || {};
+      setAction(key, "loading");
+      const reset = await sheetCall("resetGreenApiDeliveryGuard", {
+        reportId:report.id,
+        messageType:"reportCompletion",
+        confirmReset:true
+      }).catch(() => null);
+      if (reset?.error === "delivery_already_confirmed") {
+        retryItem = {...item, whatsappSent:true, lastError:""};
+        await persistPendingReportItem(retryItem).catch(() => null);
+      } else if (!reset?.success) {
+        setAction(key, "error", 2200);
+        showToast(subText(
+          "לא ניתן כרגע לאפשר שליחה מחדש. הדוח נשאר שמור בתור",
+          "The message retry could not be enabled. The report remains in the queue"
+        ));
+        return;
+      } else {
+        retryItem = {...item, lastError:""};
+        await persistPendingReportItem(retryItem).catch(() => null);
+      }
+    }
     setAction(key, "loading");
-    const result = await syncPendingReports(1, item).catch(error => {
+    const result = await syncPendingReports(1, retryItem).catch(error => {
       console.warn("Manual pending report retry failed", error);
       return { success:false };
     });
@@ -5912,38 +7464,149 @@ useEffect(() => {
   const pendingReportSummary = () => pending.reduce((acc, item) => {
     const info = pendingReportQueueInfo(item);
     acc.total += 1;
-    if (info.stage === "sheetPending") acc.sheet += 1;
+    if (info.stage === "editing") acc.editing += 1;
+    else if (info.stage.startsWith("sheetPending")) acc.sheet += 1;
+    else if (info.stage === "taskPending") acc.task += 1;
+    else if (info.stage === "adminIssuePending") acc.issue += 1;
     else acc.message += 1;
     return acc;
-  }, { total:0, sheet:0, message:0 });
+  }, { total:0, sheet:0, task:0, issue:0, message:0, editing:0 });
 
   const pendingReportSummaryText = () => {
     const s = pendingReportSummary();
-    if (s.sheet && s.message) return `${s.sheet} לשיטס · ${s.message} הודעות`;
-    if (s.sheet) return `${s.sheet} ממתינים לשמירה בשיטס`;
-    return `${s.message} ממתינים לווצאפ`;
+    return [
+      s.editing && subText(`${s.editing} בעריכה`,`${s.editing} being edited`),
+      s.sheet && subText(`${s.sheet} לשיטס`,`${s.sheet} for Sheets`),
+      s.task && subText(`${s.task} עדכוני משימה`,`${s.task} task updates`),
+      s.issue && subText(`${s.issue} תקלות לאדמין`,`${s.issue} admin issues`),
+      s.message && subText(`${s.message} הודעות`,`${s.message} messages`)
+    ].filter(Boolean).join(" · ");
+  };
+  const pendingReportLabelText = (info) => {
+    if (!isSubOperatorEnglish) return info.label;
+    const labels = {
+      sheetPendingMessageSent:"Message sent · waiting to save to Sheets",
+      sheetPendingNoMessage:"No message · waiting to save to Sheets",
+      sheetPendingWhatsAppDisabled:"WhatsApp off · waiting to save to Sheets",
+      sheetPendingMissingPhone:"No phone · waiting to save to Sheets",
+      sheetPendingMessageFailed:"WhatsApp message failed · waiting to save to Sheets",
+      sheetPendingMessageUnknown:"Message delivery could not be verified · waiting to save to Sheets",
+      complete:"Saved to Sheets · message sent",
+      sheetSaved:"Saved to Sheets · no message",
+      whatsappDisabled:"Saved to Sheets · WhatsApp off",
+      clientLoading:"Saved to Sheets · waiting for client data",
+      missingPhone:"Saved to Sheets · no phone",
+      messageUnknown:"Saved to Sheets · message delivery could not be verified",
+      adminIssuePending:"Saved to Sheets · waiting to save the admin issue",
+      editing:"Open for editing · sync paused"
+    };
+    if (info.stage === "sheetPending") return info.tone === "error" ? "Saved locally · message failed" : "Saved locally · waiting to send message";
+    if (info.stage === "messagePending") return info.tone === "error" ? "Saved to Sheets · WhatsApp message failed" : "Saved to Sheets · waiting to send message";
+    return labels[info.stage] || info.label;
   };
 
   const renderPendingReportRows = () => pending.map((item,i)=>{
     const r = getPendingReportPayload(item)||{};
     const info = pendingReportQueueInfo(item);
     const retryKey = `retryPending:${pendingReportStorageId(item)}`;
+    const deleteKey = `deletePending:${pendingReportStorageId(item)}`;
     return (
       <div key={r.id||i} style={{display:"grid",gridTemplateColumns:"auto minmax(0,1fr) auto",alignItems:"center",gap:10,padding:"6px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
-        <Press onClick={(e)=>deletePendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#ffebee",color:C.red,fontSize:11,fontWeight:900}}>מחק</Press>
+        <Press disabled={isActionLoading(deleteKey)} onClick={(e)=>deletePendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#ffebee",color:C.red,fontSize:11,fontWeight:900,opacity:isActionLoading(deleteKey)?0.65:1}}>
+          {actionLabel(deleteKey,{idle:subText("מחק","Delete"),loading:subText("בודק...","Checking..."),success:subText("נמחק","Deleted"),error:subText("נסה שוב","Retry")})}
+        </Press>
         <div style={{minWidth:0}}>
-          <div style={{fontSize:12,fontWeight:900,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.client||"לקוח ללא שם"}</div>
-          <div style={{display:"inline-flex",marginTop:4,padding:"3px 8px",borderRadius:99,fontSize:10,fontWeight:900,...pendingReportToneStyle(info.tone)}}>{info.label}</div>
+          <div style={{fontSize:12,fontWeight:900,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.client||subText("לקוח ללא שם","Unnamed client")}</div>
+          <div style={{display:"inline-flex",marginTop:4,padding:"3px 8px",borderRadius:99,fontSize:10,fontWeight:900,...pendingReportToneStyle(info.tone)}}>{pendingReportLabelText(info)}</div>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
           <Press onClick={(e)=>retryPendingReport(item,e)} style={{padding:"5px 9px",borderRadius:9,background:actionStatus[retryKey]==="success"?C.green:actionStatus[retryKey]==="error"?C.orange:"#e8f5e9",color:actionStatus[retryKey]==="success"?"#fff":C.green,fontSize:11,fontWeight:900}}>
-            {actionLabel(retryKey,{idle:"נסה",loading:"שולח...",success:"בוצע",error:"נכשל"})}
+            {actionLabel(retryKey,{idle:subText("נסה","Retry"),loading:subText("שולח...","Sending..."),success:subText("בוצע","Done"),error:subText("נכשל","Failed")})}
           </Press>
-          <Press onClick={(e)=>openPendingReportForEdit(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#e3f2fd",color:C.blue,fontSize:11,fontWeight:900}}>טען</Press>
+          <Press onClick={(e)=>openPendingReportForEdit(item,e)} style={{padding:"5px 9px",borderRadius:9,background:"#e3f2fd",color:C.blue,fontSize:11,fontWeight:900}}>{subText("טען","Load")}</Press>
         </div>
       </div>
     );
   });
+
+  const pendingOperatorIssueStatusText = (issue) => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      return subText("אין חיבור · נשמר בטלפון","Offline · saved on this device");
+    }
+    if (issue?.lastError) {
+      return subText("ניסיון השליחה נכשל · נשמר בטלפון","Sending failed · saved on this device");
+    }
+    if (issue?.lastAttemptAt) {
+      return subText("ממתין לאישור שליחה","Waiting for delivery confirmation");
+    }
+    return subText("נשמר בטלפון · ממתין לשליחה","Saved on this device · waiting to send");
+  };
+
+  const retryPendingOperatorIssue = async (issue, e) => {
+    e?.stopPropagation?.();
+    const key = `retryPendingIssue:${pendingOperatorIssueKey(issue)}`;
+    if (isActionLoading(key)) return;
+    setAction(key, "loading");
+    const result = await syncPendingOperatorIssues(1, true, issue).catch(error => {
+      console.warn("Manual pending operator issue retry failed", error);
+      return {success:false};
+    });
+    if (result?.skipped) {
+      setAction(key, "idle");
+      showToast(subText("השליחה כבר מתבצעת","Sending is already in progress"));
+      return;
+    }
+    const success = !!result?.success;
+    setAction(key, success ? "success" : "error", success ? 1400 : 2200);
+    showToast(success
+      ? subText("התקלה נשלחה לאדמין","The issue was sent to the admin")
+      : result?.offline
+        ? subText("אין חיבור · התקלה נשארה שמורה בטלפון","Offline · the issue remains saved on this device")
+        : subText("השליחה נכשלה · התקלה נשארה שמורה בטלפון","Sending failed · the issue remains saved on this device"));
+    haptic(success ? "success" : "medium");
+  };
+
+  const retryAllPendingOperatorIssues = async (e) => {
+    e?.stopPropagation?.();
+    const key = "syncPendingIssues";
+    if (isActionLoading(key)) return;
+    setAction(key, "loading");
+    const result = await syncPendingOperatorIssues(Infinity, true).catch(error => {
+      console.warn("Manual pending operator issue sync failed", error);
+      return {success:false};
+    });
+    const success = !!result?.success;
+    setAction(key, success ? "success" : "error", success ? 1400 : 2200);
+    showToast(success
+      ? subText("כל התקלות נשלחו לאדמין","All issues were sent to the admin")
+      : result?.offline
+        ? subText("אין חיבור · התקלות נשארו שמורות בטלפון","Offline · the issues remain saved on this device")
+        : subText("חלק מהתקלות עדיין ממתינות לשליחה","Some issues are still waiting to be sent"));
+    haptic(success ? "success" : "medium");
+  };
+
+  const renderPendingOperatorIssueRows = () => pendingOperatorIssues.map((issue, i) => {
+    const retryKey = `retryPendingIssue:${pendingOperatorIssueKey(issue)}`;
+    const priorityColor = isCriticalIssue(issue.priority) ? C.red : issue.priority === "דחוף" ? C.orange : C.blue;
+    return (
+      <div key={pendingOperatorIssueKey(issue)} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",alignItems:"center",gap:10,padding:"9px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+        <div style={{minWidth:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,fontWeight:900,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{issue.client || subText("תקלה כללית","General issue")}</span>
+            <span style={{padding:"2px 7px",borderRadius:99,background:`${priorityColor}14`,border:`1px solid ${priorityColor}35`,color:priorityColor,fontSize:9,fontWeight:900}}>{issue.priority || subText("רגיל","Normal")}</span>
+          </div>
+          <div style={{fontSize:11,fontWeight:700,color:C.muted,marginTop:3,lineHeight:1.4,overflowWrap:"anywhere"}}>{issue.desc}</div>
+          <div style={{fontSize:10,fontWeight:900,color:issue.lastError?C.orange:C.muted,marginTop:4}}>{pendingOperatorIssueStatusText(issue)}</div>
+        </div>
+        <button type="button" disabled={isActionLoading(retryKey)} onClick={(e)=>retryPendingOperatorIssue(issue,e)} style={{minWidth:44,minHeight:44,padding:"7px 10px",borderRadius:9,background:actionStatus[retryKey]==="success"?C.green:actionStatus[retryKey]==="error"?"#fff7ed":"#e3f2fd",border:`1px solid ${actionStatus[retryKey]==="error"?"#fed7aa":C.border}`,color:actionStatus[retryKey]==="success"?"#fff":actionStatus[retryKey]==="error"?C.orange:C.blue,fontFamily:"inherit",fontSize:11,fontWeight:900,opacity:isActionLoading(retryKey)?0.7:1,cursor:isActionLoading(retryKey)?"wait":"pointer"}}>
+          {actionLabel(retryKey,{idle:subText("נסה שוב","Retry"),loading:subText("שולח...","Sending..."),success:subText("נשלח","Sent"),error:subText("נכשל","Failed")})}
+        </button>
+      </div>
+    );
+  });
+
+  pendingReportSyncRunnerRef.current = syncPendingReports;
+  pendingIssueSyncRunnerRef.current = syncPendingOperatorIssues;
 
   useEffect(() => {
     if (pending.length || pendingOperatorIssues.length) setPendingBackgroundSync(true);
@@ -5954,14 +7617,14 @@ useEffect(() => {
     if (!pending.length && !pendingOperatorIssues.length) return;
 
     const retryPending = (maxItems = Infinity) => {
-      if (isActionLoading("syncPending")) return;
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        void requestPendingReportBackgroundSync();
+        if (pendingOperatorIssuesRef.current.length) void pendingIssueSyncRunnerRef.current?.(maxItems, true);
+        if (pendingRef.current.length) void requestPendingReportBackgroundSync();
         return;
       }
-      if (pending.length) void syncPendingReports(maxItems);
-      if (pendingOperatorIssues.length) void syncPendingOperatorIssues(maxItems, true);
+      if (pendingRef.current.length) void pendingReportSyncRunnerRef.current?.(maxItems);
+      if (pendingOperatorIssuesRef.current.length) void pendingIssueSyncRunnerRef.current?.(maxItems, true);
     };
     const retryAllPending = () => retryPending();
     const retryOnePending = () => retryPending(1);
@@ -5981,29 +7644,18 @@ useEffect(() => {
     };
   }, [pending.length, pendingOperatorIssues.length, pendingBackgroundSync]);
 
-  const openManualReport = async () => {
+  const openManualReport = () => {
     if (isActionLoading("openManualReport")) return;
     setAction("openManualReport", "loading");
     haptic("medium");
-
-    try {
-      if(freeClients.length===0){
-        const res = await sheetCall("getFreeClients");
-        if(res?.clients?.length) setFreeClients(res.clients);
-      }
-      setClientSearch("");
-      setEditingReport(null);
-      setForm(blank());
-      setScreen("form");
-    } finally {
-      setAction("openManualReport", "idle");
-    }
+    setClientSearch("");
+    setEditingReport(null);
+    setForm(blank());
+    setScreen("form");
+    setAction("openManualReport", "idle");
   };
-
-
-  const clientSupply = (name) => supplyDB[name]||null;
   const largeSlider = String(user?.username||"").toLowerCase()==="or";
-  const currentPoolType = (clients.find(c=>c.name===client)||{}).poolType || "מלח";
+  const currentPoolType = (findClientByName(client, form.clientId)||{}).poolType || "מלח";
   const currentPrimaryPool = primaryPoolType(currentPoolType);
 
   const SLIDER_CONFIGS = [
@@ -6020,6 +7672,25 @@ useEffect(() => {
     ? {...s, label:"רמת מלח", min:0, max:6000, step:100, unit:" PPM", optimal:3500, disabledReason:"נעול בבריכת כלור"}
     : s
   );
+  const subSliderLabel = (slider) => {
+    if (!isSubOperatorEnglish) return slider.label;
+    return {
+      chlorine:"Chlorine",
+      ph:"pH",
+      salt:"Salt level",
+      chlora:"Chlorine tablets (TAB)",
+      hth:"HTH",
+      phUp:"pH increaser",
+      acidLiters:"Hydrochloric acid"
+    }[slider.key] || slider.label;
+  };
+  const subSliderUnit = (slider) => isSubOperatorEnglish && slider.key === "phUp" ? " cups" : slider.unit;
+  const subSliderDisabledReason = (slider) => {
+    if (!isSubOperatorEnglish) return slider.disabledReason;
+    if (slider.disabledReason === "נעול בבריכת כלור") return "Locked for a chlorine pool";
+    if (slider.disabledReason === "נעול בבריכת מלח") return "Locked for a salt pool";
+    return slider.disabledReason;
+  };
 
   if (showSetup) return (
     <>
@@ -6086,6 +7757,9 @@ useEffect(() => {
 
   if(screen==="daily") {
     const isSubOperator = isSubOperatorRole(user?.role);
+    const displayedDayName = (date) => isSubOperatorEnglish
+      ? new Intl.DateTimeFormat("en-US",{weekday:"long"}).format(new Date(`${date}T12:00:00`))
+      : dateDayName(date);
     const currentDailyOwner = dailyOwnerName(dailyDate);
     const canSubOperatorReport = !isSubOperator || (currentDailyOwner && isSubOperatorApproved(dailyDate, currentDailyOwner, user?.username));
     const assignedSubOperators = isSubOperator ? [] : subOperatorUsers.filter(su => normalizeName(linkedOperatorName(su, dailyDate)) === normalizeName(user?.name) || isSameSubOperator(getAssignedSubOperator(dailyDate, user?.name), su));
@@ -6118,32 +7792,50 @@ useEffect(() => {
       : pendingSubReportsForOperator.find(item => !deferredSubReportIds.includes(item.id));
     const orderedDayTasks = getOperatorDailyView(dailyDate);
     const hasSharedOrderForSub = isSubOperator ? getSharedSubOrderEntries(dailyDate, currentDailyOwner, user?.username || user?.name).length > 0 : true;
+    const explicitSupplyKey = (entry = {}) => {
+      const resolvedId = String(entry.clientId || clientIdByName(entry.client) || "").trim();
+      return resolvedId ? poolIdentityKey({client:entry.client,clientId:resolvedId}) : "";
+    };
+    const storedSupplyKey = (value) => {
+      const raw = String(value || "").trim();
+      if (raw.startsWith("id:")) return raw;
+      if (!raw || raw.startsWith("unresolved:")) return "";
+      const resolvedId = clientIdByName(raw);
+      return resolvedId ? poolIdentityKey({client:raw,clientId:resolvedId}) : "";
+    };
     const explicitSupplyClients = new Set([
-      ...getAdminOrderEntries(dailyDate, currentDailyOwner).map(entry=>normalizeName(entry.client)),
-      ...getSharedSubOrderEntries(dailyDate, currentDailyOwner, user?.username || user?.name).map(entry=>normalizeName(entry.client)),
-      ...readLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate)).map(normalizeName)
+      ...getAdminOrderEntries(dailyDate, currentDailyOwner).map(explicitSupplyKey),
+      ...getSharedSubOrderEntries(dailyDate, currentDailyOwner, user?.username || user?.name).map(explicitSupplyKey),
+      ...readLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate)).map(storedSupplyKey)
     ].filter(Boolean));
     const lockedClients = getLockedClients(dailyDate);
-    const lockedDayTasks = orderedDayTasks.filter(t=>lockedClients.has(t.client));
-    const activeDayTasks = orderedDayTasks.filter(t=>!lockedClients.has(t.client));
+    const isTaskLocked = task => lockedClients.has(dailyTaskClientKey(task)) ||
+      (!task.clientId && !!clientIdByName(task.client) && lockedClients.has(task.client));
+    const lockedDayTasks = orderedDayTasks.filter(isTaskLocked);
+    const activeDayTasks = orderedDayTasks.filter(t=>!isTaskLocked(t));
     const dayTasks = (!isSubOperator && operatorEditOrder) ? operatorOrderDraft : activeDayTasks;
     const todayManualTasks = myTasks(dailyDate);
     const todayVisibleManualTasks = todayManualTasks.filter(t=>t.adminApproval !== "rejected");
     const isDailyTaskDone = (task) => {
-      const freeClientTasks = todayManualTasks
-        .filter(ft => normalizeName(ft.client) === normalizeName(task.client) && !ft.createdByAdminOrder && Number(ft.orderIndex || 0) <= 0 && ft.adminApproval !== "pending" && ft.adminApproval !== "rejected");
-      return task.status === "done" || isClientReportedDone(dailyDate, task.client) || freeClientTasks.some(ft => ft.status === "done");
+      const additionalClientTasks = todayManualTasks
+        .filter(ft => samePoolIdentity(ft, task) && !ft.createdByAdminOrder && Number(ft.orderIndex || 0) <= 0 && ft.adminApproval !== "pending" && ft.adminApproval !== "rejected");
+      return task.status === "done" || isClientReportedDone(dailyDate, task.client, task.clientId) || additionalClientTasks.some(ft => ft.status === "done");
     };
+    const isManualTaskDone = (task) =>
+      task.status === "done" || isClientReportedDone(normalizeDate(task.date), task.client, task.clientId);
     const displayDayTasks = operatorEditOrder
       ? dayTasks
       : dayTasks
         .map((task, sourceIndex)=>({task, sourceIndex, done:isDailyTaskDone(task)}))
         .sort((a,b)=>Number(a.done)-Number(b.done) || a.sourceIndex-b.sourceIndex)
         .map(x=>x.task);
-    const dailyWhatsAppClients = displayDayTasks.map(t=>t.client).filter(Boolean);
-    const allDailyWhatsAppDisabled = dailyWhatsAppClients.length > 0 && dailyWhatsAppClients.every(clientName => isWhatsAppDisabledForClient(clientName));
+    const dailyWhatsAppClients = displayDayTasks.filter(t=>t.client);
+    const allDailyWhatsAppDisabled = dailyWhatsAppClients.length > 0 && dailyWhatsAppClients.every(task => isWhatsAppDisabledForClient(task));
     const toggleDailyWhatsAppClients = () => setWhatsAppForClients(dailyWhatsAppClients, !allDailyWhatsAppDisabled);
-    const dailySupplyTasks = orderedDayTasks.filter(t=>explicitSupplyClients.has(normalizeName(t.client)) && isSupplyDueForDate(t.client, dailyDate));
+    const dailySupplyTasks = orderedDayTasks.filter(t =>
+      explicitSupplyClients.has(dailyTaskClientKey(t)) &&
+      isSupplyDueForDate(t.client, dailyDate, clientSupply(t.client, t.clientId), t.clientId)
+    );
     const taskChangesCount = orderedDayTasks.filter(t => {
       const lastLog = t.changeLog?.[t.changeLog.length - 1];
       return !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy || []).includes(user?.name);
@@ -6163,7 +7855,7 @@ useEffect(() => {
         clientId:t.clientId||clientIdByName(t.client),
         note:t.adminNote || t.note || "",
         orderIndex:Number(t.orderIndex || i + 1),
-        status:t.status === "done" || isClientReportedDone(dailyDate, t.client) ? "done" : "pending",
+        status:t.status === "done" || isClientReportedDone(dailyDate, t.client, t.clientId) ? "done" : "pending",
         changeLog:t.changeLog || [],
         completedAt:t.completedAt || "",
         completedBy:t.completedBy || "",
@@ -6209,7 +7901,7 @@ useEffect(() => {
       }
       subs.forEach(su => writeLocalArray(sharedSubOrderKey(dailyDate, opName, su.username || su.name), sharedEntries));
       if (operatorEditOrder) {
-        writeLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate), sharedEntries.map(x=>x.client));
+        writeLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate), sharedEntries.map(dailyTaskClientKey));
         setOperatorEditOrder(false);
       }
       setSubOperatorRefresh(x=>x+1);
@@ -6224,7 +7916,7 @@ useEffect(() => {
     const completedDayTasks = dayTasks.filter(isDailyTaskDone);
     const operatorProgressEntries = getOperatorProgressEntries(dailyDate, dailyOwnerName(dailyDate) || user?.name || "");
     const operatorProgressDone = operatorProgressEntries.filter(entry => entry.reported).length;
-    const doneManualTasks = todayVisibleManualTasks.filter(t=>t.status==="done").length;
+    const doneManualTasks = todayVisibleManualTasks.filter(isManualTaskDone).length;
     const workMonthKey = normalizeDate(dailyDate).slice(0,7);
     const operatorWorkLogs = workLogs.filter(log=>normalizeName(log.operator)===normalizeName(user?.name));
     const monthWorkLogs = operatorWorkLogs.filter(log=>normalizeDate(log.date).slice(0,7)===workMonthKey);
@@ -6237,7 +7929,7 @@ useEffect(() => {
       if (!inputEl?.showPicker) inputEl?.click?.();
     };
     const dailySupplySummary = dailySupplyTasks.reduce((acc, task) => {
-      const supply = supplyDB[task.client];
+      const supply = clientSupply(task.client, task.clientId);
       if (!supply) return acc;
       if (supply.acid) acc.acid += 1;
       if (supply.phUpSupply) acc.phUpSupply += 1;
@@ -6245,12 +7937,13 @@ useEffect(() => {
       return acc;
     }, { acid:0, phUpSupply:0, saltBags:0 });
     const dailySupplyRecipients = dailySupplyTasks.reduce((acc, task) => {
-      const supply = supplyDB[task.client];
+      const supply = clientSupply(task.client, task.clientId);
       if (!supply) return acc;
       const clientName = String(task.client || "").split(" - ")[0];
-      if (supply.acid) acc.acid.push(clientName);
-      if (supply.phUpSupply) acc.phUpSupply.push(clientName);
-      if (supply.saltPkg && Number(supply.saltBags || 0) > 0) acc.saltBags.push(`${clientName} ×${Number(supply.saltBags || 0)}`);
+      const destination = [clientName, clientAddress(task.client, task.clientId)].filter(Boolean).join(" · ");
+      if (supply.acid) acc.acid.push(destination);
+      if (supply.phUpSupply) acc.phUpSupply.push(destination);
+      if (supply.saltPkg && Number(supply.saltBags || 0) > 0) acc.saltBags.push(`${destination} ×${Number(supply.saltBags || 0)}`);
       return acc;
     }, { acid:[], phUpSupply:[], saltBags:[] });
     const hasDailySupply = dailySupplySummary.acid || dailySupplySummary.phUpSupply || dailySupplySummary.saltBags;
@@ -6258,49 +7951,66 @@ useEffect(() => {
     const operatorHeroBg = "linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))";
     const operatorPrimaryGradient = "linear-gradient(135deg,#2563eb,#7c3aed)";
     return (
-      <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:"calc(112px + env(safe-area-inset-bottom, 0px))"}}>
+      <div dir={isSubOperatorEnglish?"ltr":"rtl"} lang={isSubOperatorEnglish?"en":"he"} className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:operatorShellBg,fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:"calc(112px + env(safe-area-inset-bottom, 0px))"}}>
         <IPhoneComfortLayer/>
+        {isSubOperator&&showSubLanguagePrompt&&(
+          <BottomSheet title={isSubOperatorEnglish?"החלפת שפה":"Switch language"} onClose={()=>setShowSubLanguagePrompt(false)}>
+            <div dir={isSubOperatorEnglish?"rtl":"ltr"}>
+              <div style={{fontSize:17,fontWeight:900,color:C.text,marginBottom:16,textAlign:"center",lineHeight:1.5}}>
+                {isSubOperatorEnglish?"האם אתה רוצה לעבור לעברית?":"Do you want to switch to English?"}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <Press onClick={confirmSubOperatorLanguageChange} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:14,fontWeight:900,textAlign:"center"}}>
+                  {isSubOperatorEnglish?"כן, עבור לעברית":"Yes, switch to English"}
+                </Press>
+                <Press onClick={()=>setShowSubLanguagePrompt(false)} style={{padding:"13px",borderRadius:14,background:"#f0f4f8",color:C.muted,fontSize:14,fontWeight:900,textAlign:"center",border:`1px solid ${C.border}`}}>
+                  {isSubOperatorEnglish?"לא":"No"}
+                </Press>
+              </div>
+            </div>
+          </BottomSheet>
+        )}
         <WelcomeMediaModal media={welcomeMedia} onClose={()=>setWelcomeMedia(null)}/>
-        {showDailyBriefing&&!welcomeMedia&&!isDailyOrderComplete&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)}/>}
-        {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}}/>}
+        {showDailyBriefing&&!welcomeMedia&&!isDailyOrderComplete&&<DailyBriefingModal tasks={orderedDayTasks} supplyTasks={dailySupplyTasks} workStart={workStart} supplyDB={supplyDB} supplyForPool={clientSupply} subOperators={!isSubOperator?linkedSubOperators:[]} equipmentChecklist={equipmentChecklist} onStartWork={handleStartWork} onConfirm={()=>setShowDailyBriefing(false)} onClose={()=>setShowDailyBriefing(false)} english={isSubOperatorEnglish}/>}
+        {showClockReminder&&!welcomeMedia&&!showDailyBriefing&&<WorkClockReminderModal workStart={workStart} onClose={()=>setShowClockReminder(false)} onStop={()=>{setShowClockReminder(false);handleEndWork();}} english={isSubOperatorEnglish}/>}
         {workClockEditor&&(
           <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.48)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(10px)"}}>
             <div style={{width:"100%",maxWidth:430,maxHeight:"88vh",overflowY:"auto",background:"rgba(255,255,255,0.92)",borderRadius:26,padding:16,boxShadow:"0 28px 90px rgba(15,23,42,0.28)",border:"1px solid rgba(148,163,184,0.24)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:12}}>
                 <div>
-                  <div style={{fontSize:18,fontWeight:900,color:C.text}}>ניהול שעות עבודה</div>
-                  <div style={{fontSize:12,fontWeight:800,color:C.muted,marginTop:2}}>אפשר להזין גם תאריכים קודמים</div>
+                  <div style={{fontSize:18,fontWeight:900,color:C.text}}>{subText("ניהול שעות עבודה","Work hours")}</div>
+                  <div style={{fontSize:12,fontWeight:800,color:C.muted,marginTop:2}}>{subText("אפשר להזין גם תאריכים קודמים","Previous dates can also be entered")}</div>
                 </div>
                 <Press onClick={()=>setWorkClockEditor(null)} style={{width:34,height:34,borderRadius:12,background:"#f0f4f8",color:C.muted,fontWeight:900,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>×</Press>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
                 <Press onClick={()=>openWorkClockPicker("work-clock-date")} style={{gridColumn:"1 / -1",cursor:"pointer"}}>
-                  <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>תאריך עבודה</label>
+                  <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>{subText("תאריך עבודה","Work date")}</label>
                   <input id="work-clock-date" type="date" value={workClockEditor.date} onChange={e=>setWorkClockEditor(x=>({...x,date:e.target.value}))} style={{...inp,cursor:"pointer",pointerEvents:"none"}}/>
                 </Press>
                 <Press onClick={()=>openWorkClockPicker("work-clock-start")} style={{cursor:"pointer"}}>
-                  <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>שעת כניסה</label>
+                  <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>{subText("שעת כניסה","Start time")}</label>
                   <input id="work-clock-start" type="time" value={workClockEditor.start} onChange={e=>setWorkClockEditor(x=>({...x,start:e.target.value}))} style={{...inp,fontSize:20,fontWeight:900,color:C.blue,textAlign:"center",cursor:"pointer",pointerEvents:"none"}}/>
                 </Press>
                 <Press onClick={()=>openWorkClockPicker("work-clock-end")} style={{cursor:"pointer"}}>
-                  <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>שעת יציאה</label>
+                  <label style={{fontSize:11,fontWeight:800,color:C.muted,display:"block",marginBottom:6}}>{subText("שעת יציאה","End time")}</label>
                   <input id="work-clock-end" type="time" value={workClockEditor.end} onChange={e=>setWorkClockEditor(x=>({...x,end:e.target.value}))} style={{...inp,fontSize:20,fontWeight:900,color:C.blue,textAlign:"center",cursor:"pointer",pointerEvents:"none"}}/>
                 </Press>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
                 <div style={{background:"#e3f2fd",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
                   <div style={{fontSize:22,fontWeight:900,color:C.blue}}>{workClockEditor.end ? minutesToHM(editorTotalMinutes) : "--:--"}</div>
-                  <div style={{fontSize:11,fontWeight:900,color:C.muted}}>סך הכל משמרת</div>
+                  <div style={{fontSize:11,fontWeight:900,color:C.muted}}>{subText("סך הכל משמרת","Shift total")}</div>
                 </div>
                 <div style={{background:"#e8f5e9",borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
                   <div style={{fontSize:22,fontWeight:900,color:C.green}}>{minutesToHM(monthWorkMinutes)}</div>
-                  <div style={{fontSize:11,fontWeight:900,color:C.muted}}>סיכום החודש</div>
+                  <div style={{fontSize:11,fontWeight:900,color:C.muted}}>{subText("סיכום החודש","Monthly total")}</div>
                 </div>
               </div>
-              <Press onClick={saveWorkClockEditor} style={{padding:"14px",borderRadius:16,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:15,fontWeight:900,textAlign:"center",boxShadow:"0 14px 32px rgba(79,70,229,0.24)",marginBottom:12}}>שמור שעות</Press>
+              <Press onClick={saveWorkClockEditor} style={{padding:"14px",borderRadius:16,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:15,fontWeight:900,textAlign:"center",boxShadow:"0 14px 32px rgba(79,70,229,0.24)",marginBottom:12}}>{subText("שמור שעות","Save hours")}</Press>
               <div style={{border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden"}}>
-                <div style={{padding:"10px 12px",background:"#f5f9ff",fontSize:12,fontWeight:900,color:C.text}}>רישומי שעות</div>
-                {operatorWorkLogs.length===0&&<div style={{padding:14,textAlign:"center",fontSize:12,fontWeight:800,color:C.muted}}>אין רישומי שעות עדיין</div>}
+                <div style={{padding:"10px 12px",background:"#f5f9ff",fontSize:12,fontWeight:900,color:C.text}}>{subText("רישומי שעות","Work logs")}</div>
+                {operatorWorkLogs.length===0&&<div style={{padding:14,textAlign:"center",fontSize:12,fontWeight:800,color:C.muted}}>{subText("אין רישומי שעות עדיין","No work logs yet")}</div>}
                 {operatorWorkLogs.slice(0,8).map((log,i)=>(
                   <div key={log.id || `${log.date}-${log.start}-${i}`} style={{display:"flex",justifyContent:"space-between",gap:10,padding:"10px 12px",borderTop:`1px solid ${C.border}`,background:i%2?"#fff":"#fbfdff"}}>
                     <div><div style={{fontSize:13,fontWeight:900,color:C.text}}>{fmtDate(log.date)}</div><div style={{fontSize:11,fontWeight:800,color:C.muted}}>{log.start} - {log.end}</div></div>
@@ -6311,20 +8021,25 @@ useEffect(() => {
             </div>
           </div>
         )}
-        {pendingSubReportForOperator&&(()=>{ const item=pendingSubReportForOperator; const r=item.report||{}; return (
+        {pendingSubReportForOperator&&(()=>{ const item=pendingSubReportForOperator; const r=item.report||{}; const approvalClient=findClientByName(r.client,r.clientId); const approvalMeasurements=[
+          ["תאריך",fmtDate(r.reportDate),C.text],
+          ["זרימה",r.flow || "-",r.flow==="לא תקין"?C.red:C.text],
+          ["כלור",hasMeasurementValue(r.chlorine)?r.chlorine:"-",C.text],
+          !r.waterCheckOnly&&hasMeasurementValue(r.ph)&&["pH",r.ph,C.text],
+          !r.waterCheckOnly&&primaryPoolType(approvalClient?.poolType)!=="כלור"&&hasMeasurementValue(r.salt)&&["מלח",r.salt,C.text],
+          r.waterCheckOnly&&Number(r.chlora)>0&&["טבליות כלור",r.chlora,C.text],
+          r.waterCheckOnly&&Number(r.hth)>0&&["HTH",r.hth,C.text],
+          !r.waterCheckOnly&&["מצב",r.poolStatus || "-",C.text]
+        ].filter(Boolean); return (
           <div style={{position:"fixed",inset:0,zIndex:1500,background:"rgba(15,23,42,0.62)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
             <div style={{width:"100%",maxWidth:420,background:"rgba(255,255,255,0.96)",borderRadius:24,padding:18,boxShadow:"0 28px 90px rgba(15,23,42,0.34)",border:"1px solid rgba(148,163,184,0.32)"}}>
               <div style={{fontSize:18,fontWeight:900,color:C.text,marginBottom:4}}>דוח ממתין לאישור</div>
               <div style={{fontSize:12,fontWeight:800,color:C.muted,marginBottom:12}}>נשלח על ידי {item.subName || item.subUsername || "עוזר מפעיל"}</div>
               <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:16,padding:12,display:"grid",gap:8,marginBottom:12}}>
                 <div style={{fontSize:15,fontWeight:900,color:C.text}}>{String(r.client||"").split(" - ")[0]}</div>
+                <div style={{fontSize:11,fontWeight:800,color:C.muted}}>{[approvalClient?.address,formatPoolType(approvalClient?.poolType)].filter(Boolean).join(" · ")}</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>תאריך<br/><b style={{color:C.text}}>{fmtDate(r.reportDate)}</b></div>
-                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>זרימה<br/><b style={{color:r.flow==="לא תקין"?C.red:C.text}}>{r.flow || "-"}</b></div>
-                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>כלור<br/><b style={{color:C.text}}>{r.chlorine}</b></div>
-                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>pH<br/><b style={{color:C.text}}>{r.ph}</b></div>
-                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>מלח<br/><b style={{color:C.text}}>{r.salt || 0}</b></div>
-                  <div style={{fontSize:12,fontWeight:800,color:C.muted}}>מצב<br/><b style={{color:C.text}}>{r.poolStatus || "-"}</b></div>
+                  {approvalMeasurements.map(([label,value,color])=><div key={label} style={{fontSize:12,fontWeight:800,color:C.muted}}>{label}<br/><b style={{color}}>{value}</b></div>)}
                 </div>
                 {(r.customStatusText||r.notes)&&<div style={{fontSize:12,fontWeight:800,color:C.text,lineHeight:1.5,background:"#fff",borderRadius:12,padding:"8px 10px"}}>{r.customStatusText || r.notes}</div>}
               </div>
@@ -6367,21 +8082,24 @@ useEffect(() => {
             <div>
               <p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px",letterSpacing:"0.04em"}}>{fmtDate(dailyDate)} 🌊</p>
               <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                <h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>שלום, {user?.name || user?.username || "מפעיל"}! {user?.icon}</h1>
+                <h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>{subText("שלום","Hello")}, {user?.name || user?.username || subText("מפעיל","Operator")}! {user?.icon}</h1>
                 <SuperMessageInbox user={user} C={C} showToast={showToast} showHomeCue={navTab===0} inline/>
               </div>
-              <p style={{color:C.muted,fontSize:13,margin:"5px 0 0",fontWeight:700}}>{greeting || user?.welcomeMessage}</p>
+              <p style={{color:C.muted,fontSize:13,margin:"5px 0 0",fontWeight:700}}>{isSubOperatorEnglish?"Ready for today's route":greeting || user?.welcomeMessage}</p>
               {clientPlan.plan&&(
                 <div style={{display:"flex",gap:6,marginTop:8}}>
-                  <span style={{background:"rgba(30,64,175,0.14)",border:"1px solid rgba(37,99,235,0.18)",borderRadius:99,padding:"4px 11px",fontSize:11,fontWeight:900,color:C.blue}}>{clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":"🔬 ניסיון"}</span>
-                  <span style={{background:clientPlan.status==="פעיל"?"rgba(21,128,61,0.10)":"rgba(185,28,28,0.10)",borderRadius:99,padding:"4px 11px",fontSize:11,fontWeight:900,color:clientPlan.status==="פעיל"?C.green:C.red}}>{clientPlan.status==="פעיל"?"✅ פעיל":"⛔ "+clientPlan.status}</span>
+                  <span style={{background:"rgba(30,64,175,0.14)",border:"1px solid rgba(37,99,235,0.18)",borderRadius:99,padding:"4px 11px",fontSize:11,fontWeight:900,color:C.blue}}>{clientPlan.plan==="PRO"?"💎 PRO":clientPlan.plan==="Basic"?"⚡ Basic":subText("🔬 ניסיון","🔬 Trial")}</span>
+                  <span style={{background:clientPlan.status==="פעיל"?"rgba(21,128,61,0.10)":"rgba(185,28,28,0.10)",borderRadius:99,padding:"4px 11px",fontSize:11,fontWeight:900,color:clientPlan.status==="פעיל"?C.green:C.red}}>{clientPlan.status==="פעיל"?subText("✅ פעיל","✅ Active"):"⛔ "+subPlanStatus(clientPlan.status)}</span>
                 </div>
               )}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {isSubOperator&&<Press onClick={()=>{setShowSubLanguagePrompt(true);haptic();}} title={subText("שפה נוכחית: עברית","Current language: English")} style={{width:42,height:42,borderRadius:16,background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:21,boxShadow:"0 10px 26px rgba(30,64,175,0.12)"}}>
+                {isSubOperatorEnglish?"🇬🇧":"🇮🇱"}
+              </Press>}
               <RefreshTopButton compact/>
               {isAdminPanelRole(user?.role)&&<Press onClick={()=>{setScreen("admin");setAdminTab("dashboard");window.scrollTo(0,0);haptic("medium");}} style={{background:adminPrimaryGradient,border:"1px solid rgba(255,255,255,0.38)",borderRadius:16,padding:"9px 12px",color:"#fff",fontSize:12,fontWeight:900,whiteSpace:"nowrap",boxShadow:"0 14px 32px rgba(79,70,229,0.24)"}}>מחוונים</Press>}
-              {!isAdminPanelRole(user?.role)&&<Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>יציאה</Press>}
+              {!isAdminPanelRole(user?.role)&&<Press onClick={handleLogout} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 12px",color:C.muted,fontSize:12,fontWeight:900}}>{subText("יציאה","Log out")}</Press>}
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1.35fr 1fr 1fr",gap:10,position:"relative"}}>
@@ -6390,46 +8108,47 @@ useEffect(() => {
                 <div>
                   <div style={{fontSize:16,marginBottom:2}}>📋</div>
                   <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{done}/{dayTasks.length}</div>
-                  <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>בריכות</div>
+                  <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>{subText("בריכות","Pools")}</div>
                 </div>
                 <div>
                   <div style={{fontSize:16,marginBottom:2}}>✅</div>
                   <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{dayTasks.length>0?Math.round((done/dayTasks.length)*100):0}%</div>
-                  <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>הושלם</div>
+                  <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>{subText("הושלם","Complete")}</div>
                 </div>
               </div>
             </Press>
             <Press onClick={()=>{setOpenTodayTasks(v=>!v);haptic();}} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:`1px solid ${openTodayTasks?"rgba(21,101,192,0.62)":"rgba(148,163,184,0.20)"}`,boxShadow:"0 12px 28px rgba(30,64,175,0.12)",cursor:"pointer"}}>
               <div style={{fontSize:16,marginBottom:2}}>📌</div>
               <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{doneManualTasks}/{todayVisibleManualTasks.length}</div>
-              <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>משימות</div>
+              <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>{subText("משימות","Tasks")}</div>
             </Press>
             <Press onClick={()=>openWorkClockEditor(workStart?"end":"start")} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",borderRadius:18,padding:"12px 8px",textAlign:"center",border:"1px solid rgba(148,163,184,0.20)",boxShadow:"0 12px 28px rgba(30,64,175,0.12)",cursor:"pointer"}}>
               <div style={{fontSize:16,marginBottom:2}}>⏱️</div>
               <div style={{color:C.text,fontSize:20,fontWeight:900,lineHeight:1}}>{workStart?workStart:"--:--"}</div>
-              <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>התחלה</div>
+              <div style={{color:C.muted,fontSize:10,fontWeight:800,marginTop:3}}>{subText("התחלה","Start")}</div>
             </Press>
           </div>
           {openTodayTasks&&(
             <div style={{marginTop:10,background:"rgba(244,249,255,0.82)",border:`1px solid ${C.border}`,borderRadius:16,padding:"10px 12px",boxShadow:"0 12px 28px rgba(30,64,175,0.10)"}}>
-              <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>משימות היום</div>
+              <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>{subText("משימות היום","Today's tasks")}</div>
               {todayVisibleManualTasks.length ? todayVisibleManualTasks.map((t,i)=>{
-                const note = freeTaskLogNote(t);
+                const note = additionalTaskLogNote(t);
+                const effectiveTask = isManualTaskDone(t) ? {...t,status:"done"} : t;
                 return (
                   <div key={`${t.id || t.client}-task-${i}`} style={{padding:"8px 0",borderBottom:i<todayVisibleManualTasks.length-1?`1px solid ${C.border}`:"none",display:"grid",gap:6}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                       <span style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(t.client || "").split(" - ")[0]}</span>
-                      <Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/>
+                      <Badge label={taskStatusLabel(effectiveTask)} col={taskStatusColor(effectiveTask)}/>
                     </div>
-                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערת משימה: {note}</div>}
+                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>{subText("הערת משימה:","Task note:")} {note}</div>}
                   </div>
                 );
-              }) : <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין משימות להיום</div>}
+              }) : <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>{subText("אין משימות להיום","No tasks for today")}</div>}
             </div>
           )}
           {openCompletedPools&&(
             <div style={{marginTop:10,background:"rgba(244,249,255,0.82)",border:`1px solid ${C.border}`,borderRadius:16,padding:"10px 12px",boxShadow:"0 12px 28px rgba(30,64,175,0.10)"}}>
-              <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>בריכות שהושלמו</div>
+              <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>{subText("בריכות שהושלמו","Completed pools")}</div>
               {completedDayTasks.length ? completedDayTasks.map((t,i)=>{
                 const lr = lastReadingForClient(t.client, t.clientId) || {};
                 const note = String(lr.customStatusText || "").trim();
@@ -6438,20 +8157,20 @@ useEffect(() => {
                   <Press key={`${t.id || t.client}-done-${i}`} onClick={()=>openDoneReportEditor(t)} style={{padding:"8px 0",borderBottom:i<completedDayTasks.length-1?`1px solid ${C.border}`:"none",display:"grid",gap:5}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                       <span style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(t.client || "").split(" - ")[0]}</span>
-                      <span style={{fontSize:11,fontWeight:900,color:C.green,background:"#e8f5e9",borderRadius:99,padding:"3px 9px",flexShrink:0}}>בוצע</span>
+                      <span style={{fontSize:11,fontWeight:900,color:C.green,background:"#e8f5e9",borderRadius:99,padding:"3px 9px",flexShrink:0}}>{subText("בוצע","Done")}</span>
                     </div>
                     {(lr.chlorine!==undefined || lr.ph!==undefined || lr.salt!==undefined)&&(
                       <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,fontWeight:800,color:C.muted}}>
-                        {lr.chlorine!==undefined&&<span>כלור: {lr.chlorine}</span>}
+                        {lr.chlorine!==undefined&&<span>{subText("כלור:","Chlorine:")} {lr.chlorine}</span>}
                         {lr.ph!==undefined&&<span>pH: {lr.ph}</span>}
                         {lr.chlora!==undefined&&<span>TAB: {lr.chlora}</span>}
                         {lr.date&&<span>{fmtDate(String(lr.date).slice(0,10))}</span>}
                       </div>
                     )}
-                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>הערה פנימית{noteDate ? ` (${fmtDate(noteDate)})` : ""}: {note}</div>}
+                    {note&&<div style={{fontSize:11,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:9,padding:"6px 8px",lineHeight:1.4}}>{subText("הערה פנימית","Internal note")}{noteDate ? ` (${fmtDate(noteDate)})` : ""}: {note}</div>}
                   </Press>
                 );
-              }) : <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין בריכות שהושלמו עדיין</div>}
+              }) : <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>{subText("אין בריכות שהושלמו עדיין","No completed pools yet")}</div>}
             </div>
           )}
         </div>
@@ -6460,11 +8179,11 @@ useEffect(() => {
           <IOSInstallHint compact/>
           <div style={{...card({marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}),padding:"14px 18px"}}>
             <div>
-              <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4}}>שעון עבודה</div>
-              <div style={{fontSize:16,fontWeight:800,color:workStart?C.blue:C.muted}}>{workStart?`▶ פעיל מ-${workStart}`:"לא התחיל"}</div>
+              <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4}}>{subText("שעון עבודה","Work clock")}</div>
+              <div style={{fontSize:16,fontWeight:800,color:workStart?C.blue:C.muted}}>{workStart?subText(`▶ פעיל מ-${workStart}`,`▶ Active since ${workStart}`):subText("לא התחיל","Not started")}</div>
             </div>
             <Press onClick={workStart?handleEndWork:handleStartWork} style={{padding:"11px 18px",borderRadius:16,border:"none",color:"#fff",fontWeight:900,fontSize:13,background:workStart?`linear-gradient(135deg,#b91c1c,#ef4444)`:operatorPrimaryGradient,boxShadow:`0 14px 32px ${workStart?"rgba(185,28,28,0.22)":"rgba(79,70,229,0.24)"}`}}>
-              {workStart?"⏹ סיום":"▶ התחלה"}
+              {workStart?subText("⏹ סיום","⏹ Stop"):subText("▶ התחלה","▶ Start")}
             </Press>
           </div>
           {!isSubOperator&&linkedSubOperators.length>0&&<div style={{...card({marginBottom:12})}}>
@@ -6501,35 +8220,53 @@ useEffect(() => {
               </div>
             );})}
           </div>}
-          {dayTasks.length>0&&<div style={{...card(),padding:"14px 18px",marginBottom:4}}><PBar done={done} total={dayTasks.length} label="בריכות"/></div>}
+          {dayTasks.length>0&&<div style={{...card(),padding:"14px 18px",marginBottom:4}}><PBar done={done} total={dayTasks.length} label={subText("בריכות","pools")}/></div>}
           <div style={{...card({marginBottom:4})}}>
-            <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>חומרים לסיפוק היום</div>
+            <div style={{fontSize:12,fontWeight:900,color:C.text,marginBottom:8}}>{subText("חומרים לסיפוק היום","Materials to supply today")}</div>
             {hasDailySupply ? (
               <>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                  <Press onClick={()=>setOpenDailySupplyType(openDailySupplyType==="acid"?null:"acid")} style={{background:"#ffebee",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.red}}>{dailySupplySummary.acid}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>חומצה</div></Press>
-                  <Press onClick={()=>setOpenDailySupplyType(openDailySupplyType==="phUpSupply"?null:"phUpSupply")} style={{background:"#f3e5f5",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:"#6a1b9a"}}>{dailySupplySummary.phUpSupply}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>מעלה pH</div></Press>
-                  <Press onClick={()=>setOpenDailySupplyType(openDailySupplyType==="saltBags"?null:"saltBags")} style={{background:"#e8f5e9",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.green}}>{dailySupplySummary.saltBags}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>שקי מלח</div></Press>
+                  <Press onClick={()=>setOpenDailySupplyType(openDailySupplyType==="acid"?null:"acid")} style={{background:"#ffebee",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.red}}>{dailySupplySummary.acid}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>{subText("חומצה","Acid")}</div></Press>
+                  <Press onClick={()=>setOpenDailySupplyType(openDailySupplyType==="phUpSupply"?null:"phUpSupply")} style={{background:"#f3e5f5",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:"#6a1b9a"}}>{dailySupplySummary.phUpSupply}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>{subText("מעלה pH","pH increaser")}</div></Press>
+                  <Press onClick={()=>setOpenDailySupplyType(openDailySupplyType==="saltBags"?null:"saltBags")} style={{background:"#e8f5e9",borderRadius:12,padding:"9px 6px",textAlign:"center"}}><div style={{fontSize:18,fontWeight:900,color:C.green}}>{dailySupplySummary.saltBags}</div><div style={{fontSize:10,fontWeight:800,color:C.muted}}>{subText("שקי מלח","Salt bags")}</div></Press>
                 </div>
                 {openDailySupplyType&&(
                   <div style={{marginTop:8,background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:12,padding:"9px 10px"}}>
-                    <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>מיועד ל:</div>
-                    {(dailySupplyRecipients[openDailySupplyType] || []).length ? (dailySupplyRecipients[openDailySupplyType] || []).map((name,i)=><div key={`${openDailySupplyType}-${i}`} style={{fontSize:12,fontWeight:800,color:C.text,padding:"3px 0"}}>{name}</div>) : <div style={{fontSize:12,fontWeight:800,color:C.muted}}>אין נמענים לחומר הזה</div>}
+                    <div style={{fontSize:11,fontWeight:900,color:C.muted,marginBottom:6}}>{subText("מיועד ל:","For:")}</div>
+                    {(dailySupplyRecipients[openDailySupplyType] || []).length ? (dailySupplyRecipients[openDailySupplyType] || []).map((name,i)=><div key={`${openDailySupplyType}-${i}`} style={{fontSize:12,fontWeight:800,color:C.text,padding:"3px 0"}}>{name}</div>) : <div style={{fontSize:12,fontWeight:800,color:C.muted}}>{subText("אין נמענים לחומר הזה","No recipients for this material")}</div>}
                   </div>
                 )}
               </>
             ) : (
-              <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>אין חומרים מסומנים לסיפוק</div>
+              <div style={{fontSize:12,fontWeight:800,color:C.muted,textAlign:"center",padding:"4px 0"}}>{subText("אין חומרים מסומנים לסיפוק","No materials marked for supply")}</div>
             )}
           </div>
         </div>
         <div style={{padding:"16px 16px 0"}}>
+          {pendingOperatorIssues.length>0&&(
+            <div style={{...card({background:"#fff8e1",border:"1px solid #ffe082",marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}),padding:"12px 16px"}}>
+              <span style={{fontSize:18}}>🔧</span>
+              <div style={{flex:1,minWidth:150}}>
+                <div style={{fontWeight:900,fontSize:13,color:C.orange}}>{pendingOperatorIssues.length} {subText("תקלות שממתינות לאדמין","issues waiting for the admin")}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>{subText("שמורות בטלפון עד לקבלת אישור שליחה","Saved on this device until delivery is confirmed")}</div>
+              </div>
+              <button type="button" disabled={isActionLoading("syncPendingIssues")} onClick={retryAllPendingOperatorIssues} style={{minHeight:44,background:actionStatus.syncPendingIssues==="success"?C.green:actionStatus.syncPendingIssues==="error"?"#fff7ed":C.orange,border:`1px solid ${actionStatus.syncPendingIssues==="error"?"#fed7aa":"transparent"}`,borderRadius:10,padding:"7px 11px",color:actionStatus.syncPendingIssues==="error"?C.orange:"#fff",fontFamily:"inherit",fontWeight:900,fontSize:12,opacity:isActionLoading("syncPendingIssues")?0.7:1,cursor:isActionLoading("syncPendingIssues")?"wait":"pointer"}}>
+                {actionLabel("syncPendingIssues",{idle:subText("נסה לשלוח הכל","Retry all"),loading:subText("שולח...","Sending..."),success:subText("נשלח","Sent"),error:subText("נסה שוב","Retry")})}
+              </button>
+              <button type="button" aria-expanded={showPendingIssueDetails} aria-label={showPendingIssueDetails?"הסתר פרטי תקלות":"הצג פרטי תקלות"} onClick={()=>setShowPendingIssueDetails(v=>!v)} style={{width:44,height:44,display:"grid",placeItems:"center",border:0,background:"transparent",color:C.muted,fontFamily:"inherit",fontSize:18,fontWeight:900,cursor:"pointer"}}>
+                <span aria-hidden="true" style={{transform:showPendingIssueDetails?"rotate(180deg)":"none",transition:"transform .18s"}}>⌄</span>
+              </button>
+              {showPendingIssueDetails&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.76)",borderRadius:12,padding:"4px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
+                {renderPendingOperatorIssueRows()}
+              </div>}
+            </div>
+          )}
           {pending.length>0&&!dismissed&&(
             <div onClick={()=>setShowPendingReportNames(v=>!v)} style={{...card({background:"#fff8e1",border:"1px solid #ffe082",marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}),padding:"12px 16px",cursor:"pointer"}}>
               <span style={{fontSize:18}}>⚠️</span>
-              <div style={{flex:1}}><div style={{fontWeight:800,fontSize:13,color:C.orange}}>{pending.length} דוחות בתור</div><div style={{fontSize:11,color:C.muted}}>{pendingReportSummaryText()} · {pendingBackgroundSync ? "סנכרון ברקע פעיל" : "שמורים מקומית — אפשר לנסות ידנית"}</div></div>
-              <Press onClick={togglePendingBackgroundSync} style={{background:pendingBackgroundSync?C.green:"#fff7ed",border:`1px solid ${pendingBackgroundSync?"#86efac":"#fed7aa"}`,borderRadius:99,padding:"6px 12px",color:pendingBackgroundSync?"#fff":C.orange,fontWeight:900,fontSize:12}}>{pendingBackgroundSync?"עצור רקע":"הפעל רקע"}</Press>
-              <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
+              <div style={{flex:1}}><div style={{fontWeight:800,fontSize:13,color:C.orange}}>{pending.length} {subText("דוחות בתור","queued reports")}</div><div style={{fontSize:11,color:C.muted}}>{pendingReportSummaryText()} · {pendingBackgroundSync ? subText("סנכרון ברקע פעיל","Background sync active") : subText("שמורים מקומית — אפשר לנסות ידנית","Saved locally — manual retry is available")}</div></div>
+              <Press onClick={togglePendingBackgroundSync} style={{background:pendingBackgroundSync?C.green:"#fff7ed",border:`1px solid ${pendingBackgroundSync?"#86efac":"#fed7aa"}`,borderRadius:99,padding:"6px 12px",color:pendingBackgroundSync?"#fff":C.orange,fontWeight:900,fontSize:12}}>{pendingBackgroundSync?subText("עצור רקע","Stop sync"):subText("הפעל רקע","Start sync")}</Press>
+              <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:subText("שלח","Send"),loading:subText("⏳ שולח...","⏳ Sending..."),success:subText("✅ נשלח","✅ Sent"),error:subText("⚠️ נסה שוב","⚠️ Retry")})}</Press>
               <Press onClick={(e)=>{e.stopPropagation();setDismissed(true);}} style={{color:C.muted,fontSize:18,padding:"0 4px"}}>✕</Press>
               {showPendingReportNames&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.72)",borderRadius:12,padding:"8px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
                 {renderPendingReportRows()}
@@ -6539,19 +8276,19 @@ useEffect(() => {
           <div style={{...card({marginBottom:12})}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
               <div>
-                <div style={{fontSize:13,fontWeight:900,color:C.text}}>צ׳ק ליסט ציוד אישי</div>
-                <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:2}}>{normalizeEquipmentChecklist(equipmentChecklist).reduce((n,g)=>n+g.items.length,0)} פריטים שיופיעו בפתיחת יום</div>
+                <div style={{fontSize:13,fontWeight:900,color:C.text}}>{subText("צ׳ק ליסט ציוד אישי","Personal equipment checklist")}</div>
+                <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:2}}>{normalizeEquipmentChecklist(equipmentChecklist).reduce((n,g)=>n+g.items.length,0)} {subText("פריטים שיופיעו בפתיחת יום","items shown at the start of the day")}</div>
               </div>
               <Press onClick={()=>setShowEquipmentChecklistEditor(v=>!v)} style={{padding:"7px 11px",borderRadius:10,background:showEquipmentChecklistEditor?"#fff8e1":"#e3f2fd",color:showEquipmentChecklistEditor?C.orange:C.blue,fontSize:12,fontWeight:900,border:`1px solid ${showEquipmentChecklistEditor?"#ffe082":C.lightBlue}`}}>
-                {showEquipmentChecklistEditor?"סגור":"ערוך"}
+                {showEquipmentChecklistEditor?subText("סגור","Close"):subText("ערוך","Edit")}
               </Press>
             </div>
             {showEquipmentChecklistEditor&&(
               <div style={{marginTop:10}}>
-                <textarea value={equipmentChecklistDraft} onChange={e=>setEquipmentChecklistDraft(e.target.value)} rows={7} placeholder={"פריט אחד בכל שורה\nערכת בדיקה\nרשת עלים\nכפפות"} style={{...inp,minHeight:130,resize:"vertical",lineHeight:1.5,fontSize:13}}/>
+                <textarea value={equipmentChecklistDraft} onChange={e=>setEquipmentChecklistDraft(e.target.value)} rows={7} placeholder={subText("פריט אחד בכל שורה\nערכת בדיקה\nרשת עלים\nכפפות","One item per line\nTest kit\nLeaf net\nGloves")} style={{...inp,minHeight:130,resize:"vertical",lineHeight:1.5,fontSize:13}}/>
                 <div style={{display:"flex",gap:8,marginTop:8}}>
-                  <Press onClick={saveEquipmentChecklist} style={{flex:1,padding:"10px 12px",borderRadius:12,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:13,fontWeight:900,textAlign:"center"}}>שמור רשימה</Press>
-                  <Press onClick={resetEquipmentChecklist} style={{padding:"10px 12px",borderRadius:12,background:"#f0f4f8",color:C.muted,fontSize:13,fontWeight:900,border:`1px solid ${C.border}`}}>ברירת מחדל</Press>
+                  <Press onClick={saveEquipmentChecklist} style={{flex:1,padding:"10px 12px",borderRadius:12,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontSize:13,fontWeight:900,textAlign:"center"}}>{subText("שמור רשימה","Save list")}</Press>
+                  <Press onClick={resetEquipmentChecklist} style={{padding:"10px 12px",borderRadius:12,background:"#f0f4f8",color:C.muted,fontSize:13,fontWeight:900,border:`1px solid ${C.border}`}}>{subText("ברירת מחדל","Default")}</Press>
                 </div>
               </div>
             )}
@@ -6561,26 +8298,28 @@ useEffect(() => {
             <div><div style={{fontWeight:800,fontSize:15,color:C.blue}}>{isActionLoading("openManualReport")?"⏳ פותח דוח...":"+ פתח דוח חדש"}</div><div style={{fontSize:12,color:C.muted}}>דוח ידני — לקוח מכל הרשימה</div></div>
           </Press>}
           {canSubOperatorReport&&hasSharedOrderForSub&&dayTasks.length>0&&(
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,margin:"-4px 0 14px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",margin:"-4px 0 14px"}}>
               <Press onClick={()=>{setAllDailyCardsCollapsed(v=>!v);haptic("medium");}} style={{padding:"9px 15px",borderRadius:12,background:allDailyCardsCollapsed?"#fff8e1":"#e3f2fd",color:allDailyCardsCollapsed?C.orange:C.blue,fontWeight:900,fontSize:12,border:`2px solid ${allDailyCardsCollapsed?"#ffe082":C.lightBlue}`,boxShadow:"0 8px 18px rgba(37,99,235,0.08)"}}>
-                {allDailyCardsCollapsed?"בטל":"כווץ"}
+                {allDailyCardsCollapsed?subText("בטל","Expand"):subText("כווץ","Collapse")}
               </Press>
               <Press onClick={toggleDailyWhatsAppClients} style={{padding:"9px 13px",borderRadius:12,background:allDailyWhatsAppDisabled?"#ffebee":"#e8f5e9",color:allDailyWhatsAppDisabled?C.red:C.green,fontWeight:900,fontSize:12,border:`2px solid ${allDailyWhatsAppDisabled?"rgba(185,28,28,0.18)":"#c8e6c9"}`,boxShadow:"0 8px 18px rgba(21,128,61,0.08)",whiteSpace:"nowrap"}}>
-                {allDailyWhatsAppDisabled?"ווצאפ כבוי לכולם":"ווצאפ פעיל לכולם"}
+                {allDailyWhatsAppDisabled?subText("ווצאפ כבוי לכולם","WhatsApp off for all"):subText("ווצאפ פעיל לכולם","WhatsApp on for all")}
+              </Press>
+              <Press disabled={isActionLoading("sendSelfWhatsApp")} onClick={sendSelfWhatsAppTest} style={{padding:"9px 12px",borderRadius:12,background:C.red,color:"#fff",fontWeight:900,fontSize:12,border:"2px solid rgba(127,29,29,0.18)",boxShadow:"0 8px 18px rgba(185,28,28,0.18)",whiteSpace:"nowrap",opacity:isActionLoading("sendSelfWhatsApp")?0.7:1}}>
+                {actionLabel("sendSelfWhatsApp",{idle:subText("שליחה לעצמי","Send to myself"),loading:subText("שולח...","Sending..."),success:subText("נשלח","Sent"),error:subText("נכשל","Failed")})}
               </Press>
             </div>
           )}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
             <div>
-              <h2 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:0}}>סידור יומי</h2>
-              <div style={{fontSize:13,fontWeight:800,color:C.blue,marginTop:2}}>יום {dateDayName(dailyDate)}</div>
+              <h2 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:0}}>{subText("סידור יומי","Daily route")}</h2>
+              <div style={{fontSize:13,fontWeight:800,color:C.blue,marginTop:2}}>{displayedDayName(dailyDate)}</div>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               {!isSubOperator&&<Press onClick={()=>{
                 if(operatorEditOrder) {
-                  writeLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate), operatorOrderDraft.map(t=>t.client));
+                  writeLocalArray(operatorOrderKey(user?.username || user?.name, dailyDate), operatorOrderDraft.map(dailyTaskClientKey));
                   setOperatorEditOrder(false);
-                  void sendNotificationToAdmins("סדר יום נערך", `${user?.name || "מפעיל"} ערך סדר יום לתאריך ${fmtDate(dailyDate)} (${operatorOrderDraft.length} בריכות)`).catch(e=>console.warn("Operator order admin notification failed", e));
                   showToast("סדר מקומי נשמר");
                 } else {
                   setOperatorOrderDraft(activeDayTasks);
@@ -6599,43 +8338,42 @@ useEffect(() => {
           {isSubOperator&&!hasSharedOrderForSub&&(
             <div style={{...card({textAlign:"center",marginBottom:12,border:"2px dashed rgba(37,99,235,0.24)",background:"#f5f9ff"}),padding:28}}>
               <div style={{fontSize:34,marginBottom:8}}>⏳</div>
-              <div style={{fontWeight:900,color:C.text,fontSize:15}}>ממתין לשיתוף מהמפעיל</div>
+              <div style={{fontWeight:900,color:C.text,fontSize:15}}>{subText("ממתין לשיתוף מהמפעיל","Waiting for the operator to share the route")}</div>
               <div style={{fontWeight:800,color:C.muted,fontSize:12,marginTop:6,lineHeight:1.45}}>
-                הסדר יוצג כאן רק אחרי ש-{currentDailyOwner || "המפעיל המשויך"} ילחץ על שתף סדר.
+                {subText(`הסדר יוצג כאן רק אחרי ש-${currentDailyOwner || "המפעיל המשויך"} ילחץ על שתף סדר.`, `The route will appear after ${currentDailyOwner || "the assigned operator"} shares it.`)}
               </div>
             </div>
           )}
           {canSubOperatorReport&&hasSharedOrderForSub&&<div style={{marginBottom:12,position:"relative"}}>
-            <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="🔍 חפש לקוח מכל הימים לפי א-ב..." style={{...inp,fontSize:13}}/>
+            <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder={subText("🔍 חפש לקוח מכל הימים לפי א-ב...","🔍 Search clients from all days...")} style={{...inp,fontSize:13}}/>
             {clientSearch&&(
               <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:240,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
-                {filterClientOptions([...clients,...unassignedClients.filter(uc=>!clients.find(c=>c.name===uc.name))], clientSearch).map(c=>(
-                  <Press key={c.name} onClick={()=>{ setEditingReport(null); setForm({...blank(),client:c.name,reportDate:dailyDate,clientLocked:true}); setClientSearch(""); setScreen("form"); haptic(); }} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
+                {filterClientOptions(clients, clientSearch).map(c=>(
+                  <Press key={clientId(c)} onClick={()=>{ setEditingReport(null); setForm({...blank(),client:c.name,clientId:clientId(c),reportDate:dailyDate,clientLocked:true}); setClientSearch(""); setScreen("form"); haptic(); }} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
                     <div style={{width:32,height:32,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>{poolIconForType(c.poolType)}</div>
-                    <div><div style={{fontWeight:700,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div>{c.address&&<div style={{fontSize:11,color:C.muted}}>{c.address}</div>}{c.regularOperator&&<div style={{fontSize:11,color:C.blue,fontWeight:800,marginTop:2}}>מפעיל משויך: {c.regularOperator}</div>}</div>
+                    <div><div style={{fontWeight:700,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div>{c.address&&<div style={{fontSize:11,color:C.muted}}>{c.address}</div>}{c.regularOperator&&<div style={{fontSize:11,color:C.blue,fontWeight:800,marginTop:2}}>{subText("מפעיל משויך:","Assigned operator:")} {c.regularOperator}</div>}</div>
                   </Press>
                 ))}
-                {filterClientOptions([...clients,...unassignedClients], clientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות מתחילת שם הלקוח</div>}
+                {filterClientOptions(clients, clientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>{subText("הקלד לפחות 2 אותיות מתחילת שם הלקוח","Type at least 2 letters from the client's name")}</div>}
               </div>
             )}
           </div>}
           {dayTasks.length===0&&!isSubOperator&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>אין לקוחות לתאריך זה</div></div>}
-          {dayTasks.length===0&&isSubOperator&&hasSharedOrderForSub&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>הסדר שותף ללא לקוחות לתאריך זה</div></div>}
+          {dayTasks.length===0&&isSubOperator&&hasSharedOrderForSub&&<div style={{...card({textAlign:"center"}),padding:32}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700,color:C.muted,fontSize:14}}>{subText("הסדר שותף ללא לקוחות לתאריך זה","The shared route has no clients for this date")}</div></div>}
           {!isDailyOrderComplete&&displayDayTasks.map((t,i)=>{
             const doneKey = `${dailyDate}:${t.id || t.client}`;
             const isDoneOpen = !!openDoneTasks[doneKey];
-            const supply = clientSupply(t.client);
-            const supplyApprovalStatus = materialApprovalStatusForSupply(t.client, supply);
-            const showTaskSupply = explicitSupplyClients.has(normalizeName(t.client)) && isSupplyDueForDate(t.client, dailyDate, supply);
+            const supply = clientSupply(t.client, t.clientId);
+            const showTaskSupply = explicitSupplyClients.has(dailyTaskClientKey(t)) && isSupplyDueForDate(t.client, dailyDate, supply, t.clientId);
             const lastLog = t.changeLog?.[t.changeLog.length-1];
             const needsAck = !isSubOperator && !t._adminOrder && lastLog?.needsAck && !(lastLog?.ackedBy||[]).includes(user?.name);
             const logIdx = t.changeLog?t.changeLog.length-1:-1;
-            const freeClientTasks = myTasks(dailyDate)
-              .filter(ft => normalizeName(ft.client) === normalizeName(t.client) && !ft.createdByAdminOrder && Number(ft.orderIndex || 0) <= 0 && ft.adminApproval !== "pending" && ft.adminApproval !== "rejected");
-            const freeClientTaskNotes = freeClientTasks.map(freeTaskLogNote).filter(Boolean);
-            const hasFreeClientTasks = freeClientTasks.length > 0;
-            const isFreeClientTaskDone = freeClientTasks.some(ft => ft.status === "done");
-            const isDone = t.status==="done" || isClientReportedDone(dailyDate, t.client) || isFreeClientTaskDone;
+            const additionalClientTasks = myTasks(dailyDate)
+              .filter(ft => samePoolIdentity(ft, t) && !ft.createdByAdminOrder && Number(ft.orderIndex || 0) <= 0 && ft.adminApproval !== "pending" && ft.adminApproval !== "rejected");
+            const additionalTaskNotes = additionalClientTasks.map(additionalTaskLogNote).filter(Boolean);
+            const hasAdditionalTasks = additionalClientTasks.length > 0;
+            const isAdditionalTaskDone = additionalClientTasks.some(ft => ft.status === "done");
+            const isDone = t.status==="done" || isClientReportedDone(dailyDate, t.client, t.clientId) || isAdditionalTaskDone;
             const isWaterCheckTask = !!t._waterCheck;
             const forceCollapsed = allDailyCardsCollapsed && !operatorEditOrder;
             if(isDone && !isDoneOpen) {
@@ -6646,26 +8384,26 @@ useEffect(() => {
                   onDragStart={e=>!isSubOperator&&operatorEditOrder&&e.dataTransfer.setData("text/plain", String(i))}
                   onDragOver={e=>!isSubOperator&&operatorEditOrder&&e.preventDefault()}
                   onDrop={e=>{ if(!isSubOperator&&operatorEditOrder){ e.preventDefault(); moveDraftItem(Number(e.dataTransfer.getData("text/plain")), i); } }}
-                  onPointerDown={()=>!isSubOperator&&!operatorEditOrder&&startClientLongPress(t.client, false)}
-                  onPointerUp={()=>stopClientLongPress(t.client)}
-                  onPointerLeave={()=>stopClientLongPress(t.client)}
+                  onPointerDown={()=>!isSubOperator&&!operatorEditOrder&&startClientLongPress(t, false)}
+                  onPointerUp={()=>stopClientLongPress(t)}
+                  onPointerLeave={()=>stopClientLongPress(t)}
                   onClick={()=>canSubOperatorReport&&!operatorEditOrder&&openDoneReportEditor(t)}
                   style={{...card({marginBottom:8,opacity:0.82,border:"2px solid #c8e6c9",padding:"10px 12px",display:"grid",gridTemplateColumns:"34px minmax(0,1fr) 34px",gridTemplateAreas:'"expand body status" "actions actions actions"',alignItems:"center",columnGap:10,rowGap:8,background:operatorEditOrder?"#fffde7":isWaterCheckTask?"#ecfdf5":"#fff",direction:"ltr"})}}
                 >
                   <div style={{gridArea:"status",width:30,height:30,borderRadius:"50%",background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",color:C.green,fontWeight:900,justifySelf:"end",direction:"rtl"}}>✓</div>
-                  <div style={{gridArea:"body",minWidth:0,textAlign:"right",direction:"rtl"}}>
+                  <div style={{gridArea:"body",minWidth:0,textAlign:isSubOperatorEnglish?"left":"right",direction:isSubOperatorEnglish?"ltr":"rtl"}}>
                     <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start"}}>
                       <div style={{fontWeight:900,fontSize:14,color:C.text,textDecoration:"line-through",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",minWidth:0,maxWidth:"100%"}}>{t.client.split(" - ")[0]}</div>
-                      <WhatsAppClientToggle client={t.client} compact/>{isWaterCheckTask&&<Badge label={"בדיקת מים"} col={C.green}/>}
+                      <WhatsAppClientToggle client={{client:t.client,clientId:t.clientId}} compact/>{isWaterCheckTask&&<Badge label={subText("בדיקת מים","Water test")} col={C.green}/>}
                     </div>
-                    {hasFreeClientTasks&&<div style={{fontWeight:900,fontSize:15,color:C.blue,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>משימה חופשית</div>}
-                    {clientAddress(t.client)&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{clientAddress(t.client)}</div>}
+                    {hasAdditionalTasks&&<div style={{fontWeight:900,fontSize:15,color:C.blue,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>{subText("משימה נוספת","Additional task")}</div>}
+                    {clientAddress(t.client,t.clientId)&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{clientAddress(t.client,t.clientId)}</div>}
                   </div>
-                  <div style={{gridArea:"actions",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap",minWidth:0,direction:"rtl"}}>
-                    <Badge label="בוצע" col={C.green}/>
-                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start",direction:"rtl"}}>
-                      {canSubOperatorReport&&<Press onClick={(e)=>{e.stopPropagation();openDoneReportEditor(t);}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12}}>ערוך</Press>}
-                      <Press onClick={(e)=>{e.stopPropagation();forgetCompletedReport(dailyDate,t.client);setOpenDoneTasks(x=>({...x,[doneKey]:true}));showToast("הכיווץ בוטל");haptic("medium");}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#ffebee",color:C.red,fontWeight:900,fontSize:12}}>בטל כיווץ</Press>
+                  <div style={{gridArea:"actions",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap",minWidth:0,direction:isSubOperatorEnglish?"ltr":"rtl"}}>
+                    <Badge label={subText("בוצע","Done")} col={C.green}/>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start",direction:isSubOperatorEnglish?"ltr":"rtl"}}>
+                      {canSubOperatorReport&&<Press onClick={(e)=>{e.stopPropagation();openDoneReportEditor(t);}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:12}}>{subText("ערוך","Edit")}</Press>}
+                      <Press onClick={(e)=>{e.stopPropagation();forgetCompletedReport(dailyDate,t.client,undefined,t.clientId);setOpenDoneTasks(x=>({...x,[doneKey]:true}));showToast(subText("הכיווץ בוטל","Card expanded"));haptic("medium");}} style={{height:28,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 10px",borderRadius:10,background:"#ffebee",color:C.red,fontWeight:900,fontSize:12}}>{subText("בטל כיווץ","Expand")}</Press>
                       {!isSubOperator&&operatorEditOrder&&(
                         <div style={{display:"flex",gap:4}}>
                           <Press onClick={()=>moveDraftItem(i, Math.max(0, i-1))} style={{width:28,height:28,borderRadius:8,background:"#fff8e1",color:C.orange,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>↑</Press>
@@ -6680,7 +8418,7 @@ useEffect(() => {
                 </div>
               );
             }
-            const poolType = (clients.find(c=>c.name===t.client)||{}).poolType||"מלח";
+            const poolType = (findClientByName(t.client,t.clientId)||{}).poolType||"מלח";
             const poolLabel = formatPoolType(poolType);
             const poolIcon = isWaterCheckTask ? "💧" : poolIconForType(poolType);
             return (
@@ -6690,31 +8428,31 @@ useEffect(() => {
                 onDragStart={e=>!isSubOperator&&operatorEditOrder&&e.dataTransfer.setData("text/plain", String(i))}
                 onDragOver={e=>!isSubOperator&&operatorEditOrder&&e.preventDefault()}
                 onDrop={e=>{ if(!isSubOperator&&operatorEditOrder){ e.preventDefault(); moveDraftItem(Number(e.dataTransfer.getData("text/plain")), i); } }}
-                onPointerDown={()=>!isSubOperator&&!operatorEditOrder&&startClientLongPress(t.client, false)}
-                onPointerUp={()=>stopClientLongPress(t.client)}
-                onPointerLeave={()=>stopClientLongPress(t.client)}
+                onPointerDown={()=>!isSubOperator&&!operatorEditOrder&&startClientLongPress(t, false)}
+                onPointerUp={()=>stopClientLongPress(t)}
+                onPointerLeave={()=>stopClientLongPress(t)}
                 style={{...card({marginBottom:12,opacity:isDone?0.65:1,border:`2px solid ${operatorEditOrder?"#ffe082":needsAck?"#ff9800":isWaterCheckTask?"#16a34a":isDone?"#c8e6c9":C.border}`,transition:"all 0.3s",background:operatorEditOrder?"#fffde7":isWaterCheckTask?"#ecfdf5":"#fff"})}}
               >
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:10}}>
-                  <div style={{flex:1,minWidth:0,textAlign:"right"}}>
+                  <div style={{flex:1,minWidth:0,textAlign:isSubOperatorEnglish?"left":"right"}}>
                     <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:4}}>
                       <div style={{width:40,height:40,borderRadius:"50%",background:isWaterCheckTask?"#16a34a":`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{poolIcon}</div>
-                      <div style={{minWidth:0,textAlign:"right",display:"grid",gap:4,justifyItems:"start"}}>
+                      <div style={{minWidth:0,textAlign:isSubOperatorEnglish?"left":"right",display:"grid",gap:4,justifyItems:"start"}}>
                         <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start"}}>
                           <div style={{fontWeight:900,fontSize:16,color:C.text,textDecoration:isDone?"line-through":"none"}}>{t.client.split(" - ")[0]}</div>
-                          <WhatsAppClientToggle client={t.client} compact/>{isWaterCheckTask&&<Badge label={"בדיקת מים"} col={C.green}/>}
+                          <WhatsAppClientToggle client={{client:t.client,clientId:t.clientId}} compact/>{isWaterCheckTask&&<Badge label={subText("בדיקת מים","Water test")} col={C.green}/>}
                         </div>
                         <div style={{minHeight:24,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-start"}}>
-                          <span style={{minHeight:22,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,background:primaryPoolType(poolType)==="כלור"?"#e3f2fd":secondaryPoolType(poolType)==="גלישה"?"#e0f7fa":secondaryPoolType(poolType)==="סקימר"?"#e8eaf6":"#e8f5e9",color:primaryPoolType(poolType)==="כלור"?C.blue:secondaryPoolType(poolType)==="גלישה"?"#006064":secondaryPoolType(poolType)==="סקימר"?"#3949ab":C.green,borderRadius:99,padding:"0 8px",lineHeight:1}}>{poolLabel}</span>
-                          {clientAddress(t.client)&&<span style={{minHeight:22,display:"inline-flex",alignItems:"center",fontSize:11,color:C.muted}}>📍 {clientAddress(t.client)}</span>}
+                          <span style={{minHeight:22,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,background:primaryPoolType(poolType)==="כלור"?"#e3f2fd":secondaryPoolType(poolType)==="גלישה"?"#e0f7fa":secondaryPoolType(poolType)==="סקימר"?"#e8eaf6":"#e8f5e9",color:primaryPoolType(poolType)==="כלור"?C.blue:secondaryPoolType(poolType)==="גלישה"?"#006064":secondaryPoolType(poolType)==="סקימר"?"#3949ab":C.green,borderRadius:99,padding:"0 8px",lineHeight:1}}>{subPoolLabel(poolLabel)}</span>
+                          {clientAddress(t.client,t.clientId)&&<span style={{minHeight:22,display:"inline-flex",alignItems:"center",fontSize:11,color:C.muted}}>📍 {clientAddress(t.client,t.clientId)}</span>}
                         </div>
                       </div>
                     </div>
                   </div>
                   <div style={{width:84,display:"flex",flexDirection:"column",alignItems:"stretch",gap:6,flexShrink:0}}>
-                    <Badge label={isDone?"✓ בוצע":"⏳ ממתין"} col={isDone?C.green:C.orange}/>
-                    {isDone&&<Press onClick={()=>{setOpenDoneTasks(x=>({...x,[doneKey]:false}));haptic();}} style={{padding:"6px 10px",borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:12}}>סגור</Press>}
-                    {!isDone&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setScreen("form");}} style={{height:32,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 12px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 דוח</Press>}
+                    <Badge label={isDone?subText("✓ בוצע","✓ Done"):subText("⏳ ממתין","⏳ Pending")} col={isDone?C.green:C.orange}/>
+                    {isDone&&<Press onClick={()=>{setOpenDoneTasks(x=>({...x,[doneKey]:false}));haptic();}} style={{padding:"6px 10px",borderRadius:10,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:12}}>{subText("סגור","Close")}</Press>}
+                    {!isDone&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,clientId:t.clientId||clientIdByName(t.client),reportDate:dailyDate,clientLocked:true,waterCheckOnly:isWaterCheckTask});setScreen("form");}} style={{height:32,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 12px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,boxShadow:"0 3px 10px rgba(21,101,192,0.3)"}}>📝 {subText("דוח","Report")}</Press>}
                   </div>
                 </div>
                 {!forceCollapsed&&<>
@@ -6735,24 +8473,24 @@ useEffect(() => {
                 )}
                 {String(t.adminNote||"").trim()&&(
                   <div style={{background:"#fff8e1",borderRadius:10,padding:"9px 12px",marginBottom:10,border:"1px solid #ffe082",fontSize:12,color:C.text,fontWeight:800,lineHeight:1.5}}>
-                    <div style={{color:C.orange,fontWeight:900,marginBottom:2}}>📝 הערה לטיפול</div>
+                    <div style={{color:C.orange,fontWeight:900,marginBottom:2}}>📝 {subText("הערה לטיפול","Treatment note")}</div>
                     <div>{t.adminNote}</div>
                   </div>
                 )}
-                {hasFreeClientTasks&&(
+                {hasAdditionalTasks&&(
                   <div style={{background:"#eef6ff",borderRadius:12,padding:"12px 14px",marginBottom:10,border:`2px solid rgba(21,101,192,0.24)`,color:C.text,lineHeight:1.5}}>
-                    <div style={{fontSize:17,fontWeight:900,color:C.blue,marginBottom:freeClientTaskNotes.length?4:0}}>משימה חופשית</div>
-                    {freeClientTaskNotes.length>0&&<div style={{fontSize:12,fontWeight:800}}>{freeClientTaskNotes.join(" · ")}</div>}
+                    <div style={{fontSize:17,fontWeight:900,color:C.blue,marginBottom:additionalTaskNotes.length?4:0}}>{subText("משימה נוספת","Additional task")}</div>
+                    {additionalTaskNotes.length>0&&<div style={{fontSize:12,fontWeight:800}}>{additionalTaskNotes.join(" · ")}</div>}
                   </div>
                 )}
                 {(()=>{const lr=lastReadingForClient(t.client,t.clientId);if(!lr)return (
                   <div style={{marginBottom:10}}>
-                    {!isSubOperator&&<Press onClick={()=>{setInternalNoteEdit({client:t.client,note:""});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11}}>
+                    {!isSubOperator&&<Press onClick={()=>{setInternalNoteEdit({client:t.client,clientId:t.clientId||clientIdByName(t.client),note:""});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11}}>
                       ✏️ הוסף הערה פנימית
                     </Press>}
                     {isSubOperator&&(
                       <div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:800,color:C.muted}}>
-                        אין מדידה אחרונה להצגה
+                        {subText("אין מדידה אחרונה להצגה","No previous measurement available")}
                       </div>
                     )}
                   </div>
@@ -6763,43 +8501,44 @@ useEffect(() => {
                       {(()=>{ const historyKey = t.clientId || t.client; const history = clientMeasurementHistory(t.client, t.clientId, lr); const historyOpen = !!openMeasurementHistory[historyKey]; return (
                         <>
                       <Press onClick={()=>{const opening=!historyOpen;setOpenMeasurementHistory(x=>({...x,[historyKey]:opening}));if(opening)void loadClientMeasurementHistory(t.client,t.clientId,historyKey);haptic();}} style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:6,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",cursor:"pointer",width:"100%",border:historyOpen?`1px solid ${C.blue}`:"1px solid transparent"}}>
-                        <span style={{fontSize:12,fontWeight:700,color:C.blue}}>📊 מדידה אחרונה:</span>
-                        <span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>Cl: {lr.chlorine}</span>
-                        <span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph}</span>
+                        <span style={{fontSize:12,fontWeight:700,color:C.blue}}>📊 {subText("מדידה אחרונה:","Last measurement:")}</span>
+                        {hasMeasurementValue(lr.chlorine)&&<span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>Cl: {lr.chlorine}</span>}
+                        {hasMeasurementValue(lr.ph)&&<span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph}</span>}
                         {lr.chlora>0&&<span style={{fontSize:12,fontWeight:800,color:"#e65100"}}>TAB: {lr.chlora}</span>}
                         {lr.hth>0&&<span style={{fontSize:12,fontWeight:800,color:"#283593"}}>HTH: {lr.hth} cups</span>}
-                        {lr.phUp>0&&<span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH+: {lr.phUp} כוסות</span>}
-                        {lr.acidLiters>0&&<span style={{fontSize:12,fontWeight:800,color:C.red}}>חומצה: {lr.acidLiters}L</span>}
+                        {lr.phUp>0&&<span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH+: {lr.phUp} {subText("כוסות","cups")}</span>}
+                        {lr.acidLiters>0&&<span style={{fontSize:12,fontWeight:800,color:C.red}}>{subText("חומצה:","Acid:")} {lr.acidLiters}L</span>}
                         <span style={{fontSize:11,color:C.text,marginRight:"auto",fontWeight:800}}>{fmtDate(String(lr.date||"").slice(0,10))}</span>
                       </Press>
                       {historyOpen&&(
                         <div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 10px",marginBottom:6,border:`1px solid ${C.border}`,display:"grid",gap:6}}>
-                          {measurementHistoryLoading[historyKey] ? <div style={{fontSize:11,fontWeight:800,color:C.muted,textAlign:"center"}}>טוען מדידות קודמות...</div> : history.length ? history.map((r,idx)=>(
+                          {measurementHistoryLoading[historyKey] ? <div style={{fontSize:11,fontWeight:800,color:C.muted,textAlign:"center"}}>{subText("טוען מדידות קודמות...","Loading previous measurements...")}</div> : history.length ? history.map((r,idx)=>(
                             <div key={`${r.id || r.reportDate || idx}-history`} style={{display:"grid",gridTemplateColumns:"82px 1fr",gap:8,alignItems:"center",padding:"6px 0",borderBottom:idx<history.length-1?`1px solid ${C.border}`:"none"}}>
                               <span style={{fontSize:11,fontWeight:900,color:C.text}}>{fmtDate(measurementDate(r))}</span>
                               <span style={{fontSize:11,fontWeight:800,color:C.muted,display:"flex",gap:8,flexWrap:"wrap"}}>
-                                <span style={{color:"#1565c0"}}>Cl: {r.chlorine ?? "-"}</span>
-                                <span style={{color:"#6a1b9a"}}>pH: {r.ph ?? "-"}</span>
-                                <span style={{color:C.green}}>TAB: {r.chlora ?? "-"}</span>
+                                {hasMeasurementValue(r.chlorine)&&<span style={{color:"#1565c0"}}>Cl: {r.chlorine}</span>}
+                                {hasMeasurementValue(r.ph)&&<span style={{color:"#6a1b9a"}}>pH: {r.ph}</span>}
+                                {hasMeasurementValue(r.chlora)&&<span style={{color:C.green}}>TAB: {r.chlora}</span>}
+                                {hasMeasurementValue(r.hth)&&<span style={{color:"#283593"}}>HTH: {r.hth}</span>}
                               </span>
                             </div>
-                          )) : <div style={{fontSize:11,fontWeight:800,color:C.muted,textAlign:"center"}}>אין מדידות קודמות</div>}
+                          )) : <div style={{fontSize:11,fontWeight:800,color:C.muted,textAlign:"center"}}>{subText("אין מדידות קודמות","No previous measurements")}</div>}
                         </div>
                       )}
                         </>
                       ); })()}
                       {String(lr.customStatusText||"").trim()&&(
                         <div style={{background:"#f5f9ff",borderRadius:10,padding:"8px 12px",marginBottom:6,border:`1px solid ${C.border}`,fontSize:12,color:C.muted,lineHeight:1.5}}>
-                          <span style={{fontWeight:800,color:C.blue}}>📝 הערה פנימית{noteDate ? ` (${fmtDate(noteDate)})` : ""}: </span>
+                          <span style={{fontWeight:800,color:C.blue}}>📝 {subText("הערה פנימית","Internal note")}{noteDate ? ` (${fmtDate(noteDate)})` : ""}: </span>
                           {lr.customStatusText}
                         </div>
                       )}
-                      {!isSubOperator&&<Press onClick={()=>{setInternalNoteEdit({client:t.client,note:String(lr.customStatusText||"")});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11,marginBottom:6}}>
+                      {!isSubOperator&&<Press onClick={()=>{setInternalNoteEdit({client:t.client,clientId:t.clientId||clientIdByName(t.client),note:String(lr.customStatusText||"")});haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,background:"#f0f4f8",color:C.blue,fontWeight:900,fontSize:11,marginBottom:6}}>
                         ✏️ ערוך הערה פנימית
                       </Press>}
                       {lr.missedTreatment&&(
                         <div style={{background:"#fff8e1",borderRadius:10,padding:"8px 12px",marginBottom:6,border:"1px solid #ffe082",fontSize:12,color:C.orange,fontWeight:800}}>
-                          ⚠️ לא בוצע טיפול בתאריך {fmtDate(String(lr.date||"").slice(0,10))}
+                          ⚠️ {subText("לא בוצע טיפול בתאריך","No treatment was completed on")} {fmtDate(String(lr.date||"").slice(0,10))}
                         </div>
                       )}
                     </div>
@@ -6808,30 +8547,29 @@ useEffect(() => {
                 {supply&&showTaskSupply&&!isDone&&(
                   <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:10}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
-                      <div style={{fontSize:11,fontWeight:700,color:C.blue}}>📦 חומרים נדרשים:</div>
-                      {supplyApprovalStatus&&<Badge label={supplyApprovalStatus.label} col={supplyApprovalStatus.col}/>}
+                      <div style={{fontSize:11,fontWeight:700,color:C.blue}}>📦 {subText("חומרים נדרשים:","Required materials:")}</div>
                     </div>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                      {supply.acid&&<span style={{background:C.white,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,color:C.text,border:"1px solid "+C.border}}>🧪 חומצת מלח</span>}
-                      {supply.phUpSupply&&<span style={{background:C.white,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,color:C.text,border:"1px solid "+C.border}}>📈 מעלה pH</span>}
-                      {supply.saltPkg&&<span style={{background:C.white,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,color:C.text,border:"1px solid "+C.border}}>🧂 מלח ×{supply.saltBags}</span>}
+                      {supply.acid&&<span style={{background:C.white,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,color:C.text,border:"1px solid "+C.border}}>🧪 {subText("חומצת מלח","Hydrochloric acid")}</span>}
+                      {supply.phUpSupply&&<span style={{background:C.white,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,color:C.text,border:"1px solid "+C.border}}>📈 {subText("מעלה pH","pH increaser")}</span>}
+                      {supply.saltPkg&&<span style={{background:C.white,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,color:C.text,border:"1px solid "+C.border}}>🧂 {subText("מלח","Salt")} ×{supply.saltBags}</span>}
                     </div>
                   </div>
                 )}
-                {clientGateCode(t.client)&&(
-                  <Press onClick={()=>{setShowGateCode(g=>({...g,[t.client]:!g[t.client]}));haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,marginBottom:8,padding:"6px 14px",background:showGateCode[t.client]?"#fff3e0":"#f0f4f8",borderRadius:99,border:`1px solid ${showGateCode[t.client]?"#ffb74d":C.border}`}}>
+                {clientGateCode(t.client,t.clientId)&&(
+                  <Press onClick={()=>{const key=dailyTaskClientKey(t);setShowGateCode(g=>({...g,[key]:!g[key]}));haptic();}} style={{display:"inline-flex",alignItems:"center",gap:6,marginBottom:8,padding:"6px 14px",background:showGateCode[dailyTaskClientKey(t)]?"#fff3e0":"#f0f4f8",borderRadius:99,border:`1px solid ${showGateCode[dailyTaskClientKey(t)]?"#ffb74d":C.border}`}}>
                     <span style={{fontSize:12}}>🔑</span>
-                    <span style={{fontSize:12,fontWeight:800,color:showGateCode[t.client]?C.orange:C.muted}}>{showGateCode[t.client]?clientGateCode(t.client):"הצג קוד שער"}</span>
+                    <span style={{fontSize:12,fontWeight:800,color:showGateCode[dailyTaskClientKey(t)]?C.orange:C.muted}}>{showGateCode[dailyTaskClientKey(t)]?clientGateCode(t.client,t.clientId):subText("הצג קוד שער","Show gate code")}</span>
                   </Press>
                 )}
                 {!isDone&&(
                   <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    {clientAddress(t.client)&&<a href={wazeUrl(clientAddress(t.client))} target="_blank" rel="noreferrer" style={{padding:"10px 14px",borderRadius:12,background:"#e8f5e9",color:C.green,fontWeight:800,fontSize:13,textDecoration:"none",textAlign:"center",border:"2px solid #c8e6c9",display:"flex",alignItems:"center",gap:4}}>🗺️ נווט</a>}
-                    {clientPhone(t.client)&&<a href={`tel:${clientPhone(t.client)}`} style={{padding:"10px 14px",borderRadius:12,background:"#f3e5f5",color:"#6a1b9a",fontWeight:800,fontSize:13,textDecoration:"none",textAlign:"center",border:"2px solid #e1bee7",display:"flex",alignItems:"center",gap:4}}>📞</a>}
+                    {clientAddress(t.client,t.clientId)&&<a href={wazeUrl(clientAddress(t.client,t.clientId))} target="_blank" rel="noreferrer" style={{padding:"10px 14px",borderRadius:12,background:"#e8f5e9",color:C.green,fontWeight:800,fontSize:13,textDecoration:"none",textAlign:"center",border:"2px solid #c8e6c9",display:"flex",alignItems:"center",gap:4}}>🗺️ {subText("נווט","Navigate")}</a>}
+                    {clientPhone(t.client,t.clientId)&&<a href={`tel:${clientPhone(t.client,t.clientId)}`} style={{padding:"10px 14px",borderRadius:12,background:"#f3e5f5",color:"#6a1b9a",fontWeight:800,fontSize:13,textDecoration:"none",textAlign:"center",border:"2px solid #e1bee7",display:"flex",alignItems:"center",gap:4}}>📞</a>}
                   </div>
                 )}
                 {!isSubOperator&&<div style={{marginTop:isDone?0:8}}>
-                  <Press onClick={()=>{setOpIssueClient(t.client);setShowOperatorIssue(true);haptic();}} style={{padding:"8px 14px",borderRadius:12,background:"#fff8e1",color:C.orange,fontWeight:800,fontSize:12,border:"1px solid #ffe082",display:"inline-flex",alignItems:"center",gap:6}}>🔧 דווח תקלה</Press>
+                  <Press onClick={()=>{setOpIssueClient(t.client);setOpIssueClientId(t.clientId || clientIdByName(t.client));setShowOperatorIssue(true);haptic();}} style={{padding:"8px 14px",borderRadius:12,background:"#fff8e1",color:C.orange,fontWeight:800,fontSize:12,border:"1px solid #ffe082",display:"inline-flex",alignItems:"center",gap:6}}>🔧 דווח תקלה</Press>
                 </div>}
                 </>}
               </div>
@@ -6839,16 +8577,16 @@ useEffect(() => {
           })}
           {lockedDayTasks.length>0&&(
             <div style={{...card({marginBottom:12,background:"#f5f9ff",border:`1px solid ${C.border}`})}}>
-              <div style={{fontSize:12,fontWeight:900,color:C.muted,marginBottom:8}}>נעולים זמנית</div>
+              <div style={{fontSize:12,fontWeight:900,color:C.muted,marginBottom:8}}>{subText("נעולים זמנית","Temporarily locked")}</div>
               {lockedDayTasks.map(t=>(
-                <div key={`locked-${t.id || t.client}`} onPointerDown={()=>startClientLongPress(t.client, true)} onPointerUp={()=>stopClientLongPress(t.client)} onPointerLeave={()=>stopClientLongPress(t.client)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderTop:`1px solid ${C.border}`}}>
+                <div key={`locked-${t.id || dailyTaskClientKey(t)}`} onPointerDown={()=>startClientLongPress(t, true)} onPointerUp={()=>stopClientLongPress(t)} onPointerLeave={()=>stopClientLongPress(t)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderTop:`1px solid ${C.border}`}}>
                   <div style={{width:28,height:28,borderRadius:"50%",background:"#fff8e1",color:C.orange,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,flexShrink:0}}>⏸</div>
-                  <div style={{flex:1,minWidth:0,textAlign:"right"}}>
+                  <div style={{flex:1,minWidth:0,textAlign:isSubOperatorEnglish?"left":"right"}}>
                     <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start"}}>
                       <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.client.split(" - ")[0]}</div>
-                      <WhatsAppClientToggle client={t.client} compact/>
+                      <WhatsAppClientToggle client={{client:t.client,clientId:t.clientId}} compact/>
                     </div>
-                    <div style={{fontSize:10,color:C.muted}}>לחיצה ארוכה לשחרור</div>
+                    <div style={{fontSize:10,color:C.muted}}>{subText("לחיצה ארוכה לשחרור","Press and hold to unlock")}</div>
                   </div>
                 </div>
               ))}
@@ -6857,13 +8595,13 @@ useEffect(() => {
           {isDailyOrderComplete&&!clientSearch&&(
             <div style={{...card({textAlign:"center",background:"linear-gradient(135deg,#e8f5e9,#f1f8e9)"}),padding:28,border:"2px solid #c8e6c9"}}>
               <div style={{fontSize:44,marginBottom:8}}>🎉</div>
-              <div style={{fontWeight:900,fontSize:18,color:C.green,marginBottom:4}}>סיימת הכל!</div>
-              <div style={{color:C.muted,fontSize:13}}>יום עבודה מוצלח!</div>
+              <div style={{fontWeight:900,fontSize:18,color:C.green,marginBottom:4}}>{subText("סיימת הכל!","All done!")}</div>
+              <div style={{color:C.muted,fontSize:13}}>{subText("יום עבודה מוצלח!","Great work today!")}</div>
             </div>
           )}
         </div>
         <div style={{position:"fixed",right:12,left:12,bottom:"calc(12px + env(safe-area-inset-bottom, 0px))",zIndex:70,background:"rgba(255,255,255,0.70)",padding:"9px 10px calc(9px + env(safe-area-inset-bottom, 0px))",border:"1px solid rgba(148,163,184,0.24)",borderRadius:24,display:"flex",justifyContent:"space-around",gap:8,boxShadow:"0 24px 70px rgba(15,23,42,0.14), 0 1px 0 rgba(255,255,255,0.86) inset",backdropFilter:"blur(22px)",WebkitBackdropFilter:"blur(22px)"}}>
-          {[["\uD83C\uDFE0","\u05D1\u05D9\u05EA",0],["\uD83D\uDCCB","\u05DE\u05E9\u05D9\u05DE\u05D5\u05EA",1],["\uD83D\uDCCA","\u05D4\u05EA\u05E7\u05D3\u05DE\u05D5\u05EA",3],["\uD83D\uDCC5","\u05E2\u05EA\u05D9\u05D3\u05D9",2]].map(([ic,lb,idx])=>(
+          {[["\uD83C\uDFE0",subText("\u05D1\u05D9\u05EA","Home"),0],["\uD83D\uDCCB",subText("\u05DE\u05E9\u05D9\u05DE\u05D5\u05EA","Tasks"),1],["\uD83D\uDCCA",subText("\u05D4\u05EA\u05E7\u05D3\u05DE\u05D5\u05EA","Progress"),3],["\uD83D\uDCC5",subText("\u05E2\u05EA\u05D9\u05D3\u05D9","Upcoming"),2]].map(([ic,lb,idx])=>(
             <Press key={lb} onClick={()=>{ setNavTab(idx); haptic(); }} style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"7px 12px",borderRadius:18,background:navTab===idx?operatorPrimaryGradient:"rgba(241,245,249,0.50)",boxShadow:navTab===idx?"0 12px 28px rgba(79,70,229,0.22)":"none"}}>
               <IndicatorBubbles red={idx===1 ? taskChangesCount : 0} />
               <span style={{fontSize:22}}>{ic}</span>
@@ -6872,23 +8610,23 @@ useEffect(() => {
           ))}
         </div>
         {navTab===1&&(
-          <BottomSheet title="📋 משימות היום" onClose={()=>setNavTab(0)}>
+          <BottomSheet title={subText("📋 משימות היום","📋 Today's tasks")} onClose={()=>setNavTab(0)}>
             {!isSubOperator&&(
               <div style={{...card({marginBottom:12,background:"rgba(245,249,255,0.86)",border:`1px solid ${C.border}`})}}>
                 <div style={{fontSize:13,fontWeight:900,color:C.text,marginBottom:10}}>{"\u05d9\u05e6\u05d9\u05e8\u05ea \u05de\u05e9\u05d9\u05de\u05d4 \u05dc\u05d0\u05d9\u05e9\u05d5\u05e8"}</div>
                 {operatorTaskClient?(
                   <div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                    <span style={{color:C.blue,fontWeight:900}}>🏊 {operatorTaskClient.split(" - ")[0]}</span>
-                    <span onClick={()=>{setOperatorTaskClient("");setOperatorTaskClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>×</span>
+                    <span style={{color:C.blue,fontWeight:900}}>🏊 {operatorTaskClient.split(" - ")[0]}{clientAddress(operatorTaskClient,operatorTaskClientId)?` · ${clientAddress(operatorTaskClient,operatorTaskClientId)}`:""}</span>
+                    <span onClick={()=>{setOperatorTaskClient("");setOperatorTaskClientId("");setOperatorTaskClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>×</span>
                   </div>
                 ):(
                   <div style={{position:"relative",marginBottom:8}}>
                     <input value={operatorTaskClientSearch} onChange={e=>setOperatorTaskClientSearch(e.target.value)} placeholder={"\u05d1\u05d7\u05e8 \u05dc\u05e7\u05d5\u05d7 \u05dc\u05de\u05e9\u05d9\u05de\u05d4..."} style={inp} autoComplete="off"/>
                     {operatorTaskClientSearch&&<div style={{maxHeight:180,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#fff",boxShadow:"0 8px 24px rgba(0,0,0,0.12)",marginTop:4}}>
                       {filterClientOptions(clients, operatorTaskClientSearch).map(c=>(
-                        <Press key={c.name} onClick={()=>{setOperatorTaskClient(c.name);setOperatorTaskClientSearch("");haptic();}} style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`}}>
+                        <Press key={clientId(c)} onClick={()=>{setOperatorTaskClient(c.name);setOperatorTaskClientId(clientId(c));setOperatorTaskClientSearch("");haptic();}} style={{padding:"10px 14px",borderBottom:`1px solid ${C.border}`}}>
                           <div style={{fontSize:13,fontWeight:900,color:C.text}}>{c.name.split(" - ")[0]}</div>
-                          <div style={{fontSize:11,fontWeight:800,color:C.muted}}>{clientMetaLine(c) || c.address || ""}</div>
+                          <div style={{fontSize:11,fontWeight:800,color:C.muted}}>{[c.address,subClientMetaLine(c)].filter(Boolean).join(" · ")}</div>
                         </Press>
                       ))}
                       {filterClientOptions(clients, operatorTaskClientSearch).length===0&&<div style={{padding:"12px 14px",fontSize:12,color:C.muted}}>{"\u05dc\u05d0 \u05e0\u05de\u05e6\u05d0 \u05dc\u05e7\u05d5\u05d7"}</div>}
@@ -6900,79 +8638,76 @@ useEffect(() => {
               </div>
             )}            {(()=>{
               const todayTasks = myTasks(dailyDate);
-              if(todayTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות להיום</div></div>;
-              return todayTasks.map(t=>(
+              if(todayTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>{subText("אין משימות להיום","No tasks for today")}</div></div>;
+              return todayTasks.map(t=>{ const effectiveDone=isManualTaskDone(t); const effectiveTask=effectiveDone?{...t,status:"done"}:t; return (
                 <div key={t.id} style={{...card({marginBottom:10})}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
                     <div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start",textAlign:"right"}}>
                       <div style={{fontWeight:800,fontSize:15,color:C.text}}>{t.client.split(" - ")[0]}</div>
-                      <WhatsAppClientToggle client={t.client} compact/>
+                      <WhatsAppClientToggle client={{client:t.client,clientId:t.clientId}} compact/>
                     </div>
-                    <Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/>
+                    <Badge label={taskStatusLabel(effectiveTask)} col={taskStatusColor(effectiveTask)}/>
                   </div>
-                  {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
+                  {clientAddress(t.client,t.clientId)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client,t.clientId)}</div>}
                   <TaskChangeInfo log={t.changeLog?.[t.changeLog.length-1]} operators={t.operators} />
-                  {t.status!=="done"&&t.adminApproval!=="pending"&&t.adminApproval!=="rejected"&&(
+                  {!effectiveDone&&t.adminApproval!=="pending"&&t.adminApproval!=="rejected"&&(
                     <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                      {freeTaskActionId===t.id ? (
-                        <Press onClick={async()=>{await markDone(t.id);setFreeTaskActionId(null);showToast("✓ משימה סומנה כבוצעה");haptic("success");}} style={{padding:"8px 16px",borderRadius:10,background:C.green,color:"#fff",fontWeight:900,fontSize:12,display:"inline-block"}}>בוצע</Press>
+                      {additionalTaskActionId===t.id ? (
+                        <Press onClick={async()=>{await markDone(t.id);setAdditionalTaskActionId(null);showToast(subText("✓ משימה סומנה כבוצעה","✓ Task marked as done"));haptic("success");}} style={{padding:"8px 16px",borderRadius:10,background:C.green,color:"#fff",fontWeight:900,fontSize:12,display:"inline-block"}}>{subText("בוצע","Done")}</Press>
                       ) : (
-                        <Press onClick={async()=>{setFreeTaskActionId(t.id);haptic();const receiptLogIndex=(t.changeLog||[]).length-1;const receiptLog=t.changeLog?.[receiptLogIndex];try{if(receiptLogIndex>=0&&receiptLog?.needsAck&&!(receiptLog.ackedBy||[]).includes(user?.name)){await ackChange(t.id,receiptLogIndex);}else if((receiptLog?.ackedBy||[]).includes(user?.name)){showToast("האישור כבר נשלח לאדמין");}else{await sendNotificationToAdmins("✅ מפעיל אישר קבלת משימה",`${user?.name||"מפעיל"} אישר קבלת משימה: ${t.client?.split(" - ")[0]||"משימה"}`);showToast("האישור נשלח לאדמין");}}catch(e){console.warn("Task receipt admin notification failed",e);setFreeTaskActionId(null);showToast("שליחת האישור לאדמין נכשלה");}}} style={{padding:"8px 14px",borderRadius:10,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontWeight:900,fontSize:12,display:"inline-block"}}>מאשר</Press>
+                        <Press onClick={async()=>{setAdditionalTaskActionId(t.id);haptic();const receiptLogIndex=(t.changeLog||[]).length-1;const receiptLog=t.changeLog?.[receiptLogIndex];try{if(receiptLogIndex>=0&&receiptLog?.needsAck&&!(receiptLog.ackedBy||[]).includes(user?.name)){await ackChange(t.id,receiptLogIndex);}else if((receiptLog?.ackedBy||[]).includes(user?.name)){showToast(subText("האישור כבר נשלח לאדמין","Confirmation already sent to the admin"));}else{await sendNotificationToAdmins("✅ מפעיל אישר קבלת משימה",`${user?.name||"מפעיל"} אישר קבלת משימה: ${t.client?.split(" - ")[0]||"משימה"}`);showToast(subText("האישור נשלח לאדמין","Confirmation sent to the admin"));}}catch(e){console.warn("Task receipt admin notification failed",e);setAdditionalTaskActionId(null);showToast(subText("שליחת האישור לאדמין נכשלה","Failed to send confirmation to the admin"));}}} style={{padding:"8px 14px",borderRadius:10,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontWeight:900,fontSize:12,display:"inline-block"}}>{subText("מאשר","Confirm")}</Press>
                       )}
-                      {freeTaskActionId!==t.id&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,reportDate:dailyDate,clientLocked:true});setNavTab(0);setScreen("form");haptic();}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>📝 פתח דוח</Press>}
+                      {additionalTaskActionId!==t.id&&canSubOperatorReport&&<Press onClick={()=>{setEditingReport(null);setForm({...blank(),client:t.client,clientId:t.clientId||clientIdByName(t.client),reportDate:dailyDate,clientLocked:true});setNavTab(0);setScreen("form");haptic();}} style={{padding:"8px 14px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:12,display:"inline-block"}}>📝 {subText("פתח דוח","Open report")}</Press>}
                     </div>
                   )}
                 </div>
-              ));
+              );});
             })()}
           </BottomSheet>
         )}
         {navTab===3&&(
-          <BottomSheet title={"\uD83D\uDCCA \u05D4\u05EA\u05E7\u05D3\u05DE\u05D5\u05EA \u05D9\u05D5\u05DE\u05D9\u05EA"} onClose={()=>setNavTab(0)}>
+          <BottomSheet title={subText("\uD83D\uDCCA \u05D4\u05EA\u05E7\u05D3\u05DE\u05D5\u05EA \u05D9\u05D5\u05DE\u05D9\u05EA","📊 Daily progress")} onClose={()=>setNavTab(0)}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12,flexWrap:"wrap"}}>
               <input type="date" value={dailyDate} onClick={openDatePicker} onFocus={openDatePicker} onChange={e=>setDailyDate(e.target.value)} style={{...inp,maxWidth:170,color:C.blue,border:`1px solid ${C.lightBlue}`,fontWeight:900,cursor:"pointer"}}/>
-              <Press onClick={notifyOperatorDoneForDay} disabled={isActionLoading("operatorDone")} style={{padding:"9px 16px",borderRadius:99,background:actionStatus.operatorDone==="success"?C.green:actionStatus.operatorDone==="error"?C.red:"linear-gradient(135deg,#16a34a,#22c55e)",color:"#fff",fontSize:12,fontWeight:900,boxShadow:"0 10px 24px rgba(22,163,74,0.18)",opacity:isActionLoading("operatorDone")?0.72:1,whiteSpace:"nowrap"}}>
-                {actionLabel("operatorDone", {idle:"סיימתי",loading:"שולח...",success:"נשלח",error:"נסה שוב"})}
-              </Press>
               <Badge label={`${operatorProgressDone}/${operatorProgressEntries.length}`} col={operatorProgressEntries.length&&operatorProgressDone===operatorProgressEntries.length?C.green:C.blue}/>
             </div>
             {operatorProgressEntries.length>0 ? (
               <>
-                <PBar done={operatorProgressDone} total={operatorProgressEntries.length} label={"\u05D1\u05E8\u05D9\u05DB\u05D5\u05EA"}/>
+                <PBar done={operatorProgressDone} total={operatorProgressEntries.length} label={subText("\u05D1\u05E8\u05D9\u05DB\u05D5\u05EA","pools")}/>
                 <div style={{marginTop:12}}>
                   {operatorProgressEntries.map((entry,i)=>(
                     <div key={`${entry.client}-${i}`} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"10px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
                       <span style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(entry.client||"").split(" - ")[0]}</span>
-                      <Badge label={entry.reported?"\u2713 \u05D3\u05D5\u05D7 \u05E0\u05D5\u05E6\u05E8":"\u05DE\u05DE\u05EA\u05D9\u05DF \u05DC\u05D3\u05D5\u05D7"} col={entry.reported?C.green:C.orange}/>
+                      <Badge label={entry.reported?subText("\u2713 \u05D3\u05D5\u05D7 \u05E0\u05D5\u05E6\u05E8","✓ Report created"):subText("\u05DE\u05DE\u05EA\u05D9\u05DF \u05DC\u05D3\u05D5\u05D7","Waiting for report")} col={entry.reported?C.green:C.orange}/>
                     </div>
                   ))}
                 </div>
               </>
             ) : (
-              <div style={{textAlign:"center",padding:28,color:C.muted,fontWeight:800}}>{"\u05D0\u05D9\u05DF \u05D1\u05E8\u05D9\u05DB\u05D5\u05EA \u05DC\u05EA\u05D0\u05E8\u05D9\u05DA \u05D6\u05D4"}</div>
+              <div style={{textAlign:"center",padding:28,color:C.muted,fontWeight:800}}>{subText("\u05D0\u05D9\u05DF \u05D1\u05E8\u05D9\u05DB\u05D5\u05EA \u05DC\u05EA\u05D0\u05E8\u05D9\u05DA \u05D6\u05D4","No pools for this date")}</div>
             )}
           </BottomSheet>
         )}
         {navTab===2&&(
-          <BottomSheet title="📅 משימות עתידיות" onClose={()=>setNavTab(0)}>
+          <BottomSheet title={subText("📅 משימות עתידיות","📅 Upcoming tasks")} onClose={()=>setNavTab(0)}>
             {(()=>{
               const today = todayStr();
               const futureTasks = tasks.filter(t=>{ if (t.createdByAdminOrder || Number(t.orderIndex || 0) > 0 || t.adminApproval === "rejected") return false; const d = normalizeDate(t.date); const ownerName = isSubOperator ? dailyOwnerName(d) : user?.name; return d > today && (t.operators||[]).some(op=>normalizeName(op)===normalizeName(ownerName)); }).sort((a,b)=>normalizeDate(a.date).localeCompare(normalizeDate(b.date)));
-              if(futureTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>אין משימות עתידיות</div></div>;
+              if(futureTasks.length===0) return <div style={{textAlign:"center",padding:32,color:C.muted}}><div style={{fontSize:40,marginBottom:8}}>📭</div><div style={{fontWeight:700}}>{subText("אין משימות עתידיות","No upcoming tasks")}</div></div>;
               const grouped = {};
               futureTasks.forEach(t=>{ const d = normalizeDate(t.date); if(!grouped[d]) grouped[d]=[]; grouped[d].push(t); });
               return Object.entries(grouped).map(([date, dts])=>(
                 <div key={date} style={{marginBottom:20}}>
                   <div style={{fontSize:12,fontWeight:800,color:C.blue,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
                     <span>📅 {fmtDate(date)}</span>
-                    <span style={{background:"#e3f2fd",borderRadius:99,padding:"2px 10px",color:C.blue,fontSize:11}}>{dts.length} משימות</span>
+                    <span style={{background:"#e3f2fd",borderRadius:99,padding:"2px 10px",color:C.blue,fontSize:11}}>{dts.length} {subText("משימות","tasks")}</span>
                   </div>
                   {dts.map(t=>(
                     <div key={t.id} style={{...card({marginBottom:8})}}>
                       <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:4}}>{t.client.split(" - ")[0]}</div>
-                      {clientAddress(t.client)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client)}</div>}
+                      {clientAddress(t.client,t.clientId)&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>📍 {clientAddress(t.client,t.clientId)}</div>}
                       <TaskChangeInfo log={t.changeLog?.[t.changeLog.length-1]} operators={t.operators} />
-                      {clientAddress(t.client)&&<a href={wazeUrl(clientAddress(t.client))} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:8,padding:"6px 12px",background:"#e8f5e9",borderRadius:8,color:C.green,fontSize:12,fontWeight:700,textDecoration:"none"}}>🗺️ נווט</a>}
+                      {clientAddress(t.client,t.clientId)&&<a href={wazeUrl(clientAddress(t.client,t.clientId))} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:8,padding:"6px 12px",background:"#e8f5e9",borderRadius:8,color:C.green,fontSize:12,fontWeight:700,textDecoration:"none"}}>🗺️ {subText("נווט","Navigate")}</a>}
                     </div>
                   ))}
                 </div>
@@ -6983,7 +8718,7 @@ useEffect(() => {
         {showOperatorIssue&&(
           <BottomSheet title="🔧 דווח על תקלה" onClose={()=>setShowOperatorIssue(false)}>
             <div>
-              <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>לקוח</label><div style={{...inp,color:C.blue,fontWeight:700}}>{opIssueClient}</div></div>
+              <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>לקוח ובריכה</label><div style={{...inp,color:C.blue,fontWeight:700}}>{operatorIssuePoolLabel(opIssueClient, opIssueClientId)}</div></div>
               <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תיאור התקלה</label><textarea value={opIssueDesc} onChange={e=>setOpIssueDesc(e.target.value)} rows={3} placeholder="תאר את הבעיה..." style={{...inp,resize:"none"}}/></div>
               <div style={{marginBottom:16}}>
                 <label style={{fontSize:12,fontWeight:700,color:C.muted,display:"block",marginBottom:8}}>דחיפות</label>
@@ -7000,63 +8735,63 @@ useEffect(() => {
   }
 
   if(screen==="form") return (
-    <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:"calc(100px + env(safe-area-inset-bottom, 0px))"}}>
+    <div dir={isSubOperatorEnglish?"ltr":"rtl"} lang={isSubOperatorEnglish?"en":"he"} className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 42%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",paddingBottom:"calc(100px + env(safe-area-inset-bottom, 0px))"}}>
       <IPhoneComfortLayer/>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box;user-select:none;-webkit-user-select:none}input,textarea,select{user-select:text;-webkit-user-select:text}input[type=range]{-webkit-appearance:none;height:8px;border-radius:99px;background:transparent}input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:${C.blue};box-shadow:0 2px 8px rgba(21,101,192,0.4)}select option{background:#fff}`}</style>
       <div style={{margin:"12px 14px 0",background:"linear-gradient(135deg,rgba(244,249,255,0.90),rgba(196,219,244,0.82) 48%,rgba(216,225,242,0.88))",border:"1px solid rgba(148,163,184,0.22)",borderRadius:28,padding:"22px 18px",position:"relative",overflow:"hidden",boxShadow:"0 26px 70px rgba(37,99,235,0.12), 0 1px 0 rgba(255,255,255,0.82) inset",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
-          <div><p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:"בחר לקוח"}</p><h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>📝 דוח טיפול</h1></div>
+          <div><p style={{color:C.muted,fontSize:12,fontWeight:800,margin:"0 0 4px"}}>{form.clientLocked?form.client.split(" - ")[0]:subText("בחר לקוח","Select client")}</p><h1 style={{color:C.text,fontSize:28,fontWeight:900,margin:0,lineHeight:1.08}}>📝 {waterCheckReportMode?subText("דוח בדיקת מים","Water test report"):subText("דוח טיפול","Treatment report")}</h1></div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <RefreshTopButton compact/>
-            <Press onClick={()=>setScreen("daily")} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 14px",color:C.muted,fontSize:13,fontWeight:900}}>← חזרה</Press>
+            <Press onClick={leaveReportForm} style={{background:"rgba(226,237,250,0.72)",backdropFilter:"blur(14px)",border:"1px solid rgba(148,163,184,0.22)",borderRadius:16,padding:"9px 14px",color:C.muted,fontSize:13,fontWeight:900}}>{subText("← חזרה","Back →")}</Press>
           </div>
         </div>
       </div>
       <div style={{padding:"18px 16px 0"}}>
-        <Sec icon="📋" title="פרטים" action={client ? <WhatsAppClientToggle client={client} compact/> : null}>
+        <Sec icon="📋" title={subText("פרטים","Details")} action={!waterCheckReportMode&&client ? <WhatsAppClientToggle client={{client,clientId:form.clientId}} compact/> : null}>
           <div style={{...card(),marginBottom:12}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-              <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תאריך</label><input type="date" value={reportDate} onChange={e=>sf("reportDate",e.target.value)} style={inp}/></div>
-              <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>מפעיל</label><div style={{...inp,color:C.blue,fontWeight:700,display:"flex",alignItems:"center",gap:6,cursor:"default"}}><span>{user?.icon}</span>{user?.name}</div></div>
+              <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>{subText("תאריך","Date")}</label><input type="date" value={reportDate} onChange={e=>sf("reportDate",e.target.value)} style={inp}/></div>
+              <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>{subText("מפעיל","Operator")}</label><div style={{...inp,color:C.blue,fontWeight:700,display:"flex",alignItems:"center",gap:6,cursor:"default"}}><span>{user?.icon}</span>{user?.name}</div></div>
             </div>
             <div>
-              <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>לקוח</label>
+              <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>{subText("לקוח","Client")}</label>
               {form.clientLocked?(
                 <div style={{...inp,color:C.blue,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"default"}}><span>🏊 {client}</span><span style={{fontSize:12,color:C.muted}}>🔒</span></div>
               ):(
                 <div style={{position:"relative"}}>
-                  <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="🔍 חפש לקוח לפי שם, כתובת, טלפון או מפעיל..." style={{...inp,marginBottom:clientSearch?4:0}} autoComplete="off"/>
-                  {clientSearch&&(
-                    <div style={{maxHeight:220,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#fff",boxShadow:"0 8px 24px rgba(0,0,0,0.12)",marginBottom:8}}>
-                      {filterClientOptions([...clients,...freeClients.filter(fc=>!clients.find(c=>c.name===fc.name))], clientSearch).map(c=>(
-                        <Press key={c.name} onClick={()=>{sf("client",c.name);setClientSearch("");haptic();}} style={{padding:"11px 14px",borderBottom:`1px solid ${C.border}`}}>
-                          <div style={{fontSize:14,fontWeight:900,color:C.text}}>{c.name.split(" - ")[0]}</div>
-                          <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:2}}>{clientMetaLine(c)||c.address||"ללא שיוך מפעיל"}</div>
-                        </Press>
-                      ))}
-                      {filterClientOptions([...clients,...freeClients], clientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות לחיפוש</div>}
-                    </div>
-                  )}
-                  <select value={client} onChange={e=>sf("client",e.target.value)} style={sel}>
-                    <option value="">בחר לקוח...</option>
-                    {clients.length>0&&<optgroup label="לקוחות קבועים">{clients.map(c=><option key={c.name} value={c.name}>{c.name}{c.regularOperator?` · ${c.regularOperator}`:""}</option>)}</optgroup>}
-                    {freeClients.length>0&&<optgroup label="לקוחות נוספים">{freeClients.map(c=><option key={c.name} value={c.name}>{c.name}{c.regularOperator?` · ${c.regularOperator}`:""}</option>)}</optgroup>}
-                  </select>
-                </div>
-              )}
-              {client&&(()=>{ const c=[...clients,...freeClients].find(x=>x.name===client); const meta=clientMetaLine(c); return meta?<div style={{marginTop:8,fontSize:12,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:10,padding:"8px 12px"}}>{meta}</div>:null; })()}
-              {client&&clientPhone(client)&&<a href={`tel:${clientPhone(client)}`} style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"10px 14px",background:"#e8f5e9",border:`1px solid #c8e6c9`,borderRadius:12,textDecoration:"none",color:C.green,fontSize:13,fontWeight:700}}><span>📞</span><span>{client.split(" - ")[0]}</span><span style={{color:C.muted,fontSize:12,marginRight:"auto"}}>לחץ לחיוג</span></a>}
-              {client&&lastReadingForClient(client)&&(()=>{ const lr=lastReadingForClient(client); const note=String(lr.customStatusText||"").trim(); const noteDate=normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date); return (
-                <div style={{marginTop:8,display:"grid",gap:6}}>
-                  <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                    <span style={{fontSize:12,fontWeight:900,color:C.blue}}>מדידה אחרונה:</span>
-                    <span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>כלור: {lr.chlorine ?? "-"}</span>
-                    <span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph ?? "-"}</span>
-                    <span style={{fontSize:12,fontWeight:800,color:C.green}}>TAB: {lr.chlora ?? "-"}</span>
-                    {lr.date&&<span style={{fontSize:11,fontWeight:800,color:C.muted,marginRight:"auto"}}>{fmtDate(String(lr.date).slice(0,10))}</span>}
-                  </div>
+                   <input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder={subText("🔍 חפש לקוח לפי שם, כתובת, טלפון או מפעיל...","🔍 Search by name, address, phone or operator...")} style={{...inp,marginBottom:clientSearch?4:0}} autoComplete="off"/>
+                   {clientSearch&&(
+                     <div style={{maxHeight:220,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#fff",boxShadow:"0 8px 24px rgba(0,0,0,0.12)",marginBottom:8}}>
+                       {filterClientOptions(reportClientOptions().all, clientSearch).map(c=>(
+                         <Press key={clientId(c)} onClick={()=>{setForm(f=>({...f,client:c.name,clientId:clientId(c)}));setClientSearch("");haptic();}} style={{padding:"11px 14px",borderBottom:`1px solid ${C.border}`}}>
+                           <div style={{fontSize:14,fontWeight:900,color:C.text}}>{c.name.split(" - ")[0]}</div>
+                           <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:2}}>{[c.address,subClientMetaLine(c)].filter(Boolean).join(" · ")||subText("ללא פרטי זיהוי נוספים","No additional identifying details")}</div>
+                         </Press>
+                       ))}
+                       {filterClientOptions(reportClientOptions().all, clientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>{subText("הקלד לפחות 2 אותיות לחיפוש","Type at least 2 letters to search")}</div>}
+                     </div>
+                   )}
+                   <select value={form.clientId || (client ? clientIdByName(client) : "")} onChange={e=>{const selected=findClientByName("",e.target.value);setForm(f=>({...f,client:selected?.name||"",clientId:selected?clientId(selected):""}));}} style={sel}>
+                     <option value="">{subText("בחר לקוח...","Select client...")}</option>
+                     {reportClientOptions().regular.length>0&&<optgroup label={subText("לקוחות קבועים","Regular clients")}>{reportClientOptions().regular.map(c=><option key={clientId(c)} value={clientId(c)}>{clientOptionLabel(c)}</option>)}</optgroup>}
+                   </select>
+                 </div>
+               )}
+               {client&&(()=>{ const c=findClientByName(client,form.clientId); const meta=[c?.address,subClientMetaLine(c)].filter(Boolean).join(" · "); return meta?<div style={{marginTop:8,fontSize:12,fontWeight:800,color:C.blue,background:"#e3f2fd",borderRadius:10,padding:"8px 12px"}}>{meta}</div>:null; })()}
+               {client&&clientPhone(client,form.clientId)&&<a href={`tel:${clientPhone(client,form.clientId)}`} style={{display:"flex",alignItems:"center",gap:8,marginTop:8,padding:"10px 14px",background:"#e8f5e9",border:`1px solid #c8e6c9`,borderRadius:12,textDecoration:"none",color:C.green,fontSize:13,fontWeight:700}}><span>📞</span><span>{client.split(" - ")[0]}</span><span style={{color:C.muted,fontSize:12,marginRight:"auto"}}>{subText("לחץ לחיוג","Tap to call")}</span></a>}
+               {client&&lastReadingForClient(client,form.clientId)&&(()=>{ const lr=lastReadingForClient(client,form.clientId); const note=String(lr.customStatusText||"").trim(); const noteDate=normalizeDate(lr.internalNoteDate || lr.customStatusDate || lr.date); return (
+                 <div style={{marginTop:8,display:"grid",gap:6}}>
+                   <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                     <span style={{fontSize:12,fontWeight:900,color:C.blue}}>{subText("מדידה אחרונה:","Last measurement:")}</span>
+                     {hasMeasurementValue(lr.chlorine)&&<span style={{fontSize:12,fontWeight:800,color:"#1565c0"}}>{subText("כלור:","Chlorine:")} {lr.chlorine}</span>}
+                     {hasMeasurementValue(lr.ph)&&<span style={{fontSize:12,fontWeight:800,color:"#6a1b9a"}}>pH: {lr.ph}</span>}
+                     {hasMeasurementValue(lr.chlora)&&<span style={{fontSize:12,fontWeight:800,color:C.green}}>TAB: {lr.chlora}</span>}
+                     {hasMeasurementValue(lr.hth)&&<span style={{fontSize:12,fontWeight:800,color:"#283593"}}>HTH: {lr.hth}</span>}
+                     {lr.date&&<span style={{fontSize:11,fontWeight:800,color:C.muted,marginRight:"auto"}}>{fmtDate(String(lr.date).slice(0,10))}</span>}
+                   </div>
                   {note&&<div style={{background:"#f5f9ff",border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:800,color:C.muted,lineHeight:1.5}}>
-                    <span style={{color:C.blue}}>הערה פנימית{noteDate ? ` (${fmtDate(noteDate)})` : ""}: </span>{note}
+                    <span style={{color:C.blue}}>{subText("הערה פנימית","Internal note")}{noteDate ? ` (${fmtDate(noteDate)})` : ""}: </span>{note}
                   </div>}
                 </div>
               ); })()}
@@ -7064,19 +8799,19 @@ useEffect(() => {
           </div>
         </Sec>
 
-        <Sec icon="📊" title="מדידות">
-          <label style={{display:"flex",alignItems:"center",gap:12,margin:"0 0 12px",padding:"12px 14px",borderRadius:14,background:sendReminder?"#e8f5e9":C.white,border:`2px solid ${sendReminder?"#c8e6c9":C.border}`,boxShadow:"0 2px 8px rgba(0,0,0,0.04)",cursor:"pointer",userSelect:"none"}}>
+        <Sec icon="📊" title={waterCheckReportMode?subText("בדיקת מים","Water test"):subText("מדידות","Measurements")}>
+          {!waterCheckReportMode&&<label style={{display:"flex",alignItems:"center",gap:12,margin:"0 0 12px",padding:"12px 14px",borderRadius:14,background:sendReminder?"#e8f5e9":C.white,border:`2px solid ${sendReminder?"#c8e6c9":C.border}`,boxShadow:"0 2px 8px rgba(0,0,0,0.04)",cursor:"pointer",userSelect:"none"}}>
             <input type="checkbox" checked={!!sendReminder} onChange={e=>setChlorineReminderEnabled(e.target.checked)} style={{width:22,height:22,accentColor:C.green,flexShrink:0}}/>
-            <span style={{fontSize:14,fontWeight:900,color:C.text,flex:1}}>שלח תזכורת</span>
-            {sendReminder&&<span style={{fontSize:12,fontWeight:900,color:C.green,background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:99,padding:"4px 10px",whiteSpace:"nowrap"}}>{reminderCounterText(chlorineReminderDaysLeft)}</span>}
-          </label>
-          {REPORT_SLIDER_CONFIGS.map(s=>(
+            <span style={{fontSize:14,fontWeight:900,color:C.text,flex:1}}>{subText("שלח תזכורת","Send reminder")}</span>
+            {sendReminder&&<span style={{fontSize:12,fontWeight:900,color:C.green,background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:99,padding:"4px 10px",whiteSpace:"nowrap"}}>{isSubOperatorEnglish?(chlorineReminderDaysLeft<=0?"Sent today":chlorineReminderDaysLeft===1?"Sends in 1 day":`Sends in ${chlorineReminderDaysLeft} days`):reminderCounterText(chlorineReminderDaysLeft)}</span>}
+          </label>}
+          {REPORT_SLIDER_CONFIGS.filter(s=>!waterCheckReportMode || ["chlorine","chlora","hth"].includes(s.key)).map(s=>(
             <Fragment key={s.key}>
-            <CollapsibleSlider label={s.label} min={s.min} max={s.max} step={s.step} unit={s.unit} warnAbove={s.warnAbove} warnBelow={s.warnBelow} optimal={s.optimal} val={s.val} fn={s.fn} large={largeSlider} expandKey={`_exp_${s.key}`} form={form} sf={sf} disabled={s.disabled} disabledReason={s.disabledReason} zeroButtonLabel={s.zeroButtonLabel} phLowButton={s.phLowButton} saltLowLightButton={s.saltLowLightButton} required={s.required}/>
+            <CollapsibleSlider fieldKey={s.key} label={subSliderLabel(s)} min={s.min} max={s.max} step={s.step} unit={subSliderUnit(s)} warnAbove={s.warnAbove} warnBelow={s.warnBelow} optimal={s.optimal} val={s.val} fn={s.fn} large={largeSlider} expandKey={`_exp_${s.key}`} form={form} sf={sf} disabled={s.disabled} disabledReason={subSliderDisabledReason(s)} zeroButtonLabel={isSubOperatorEnglish&&s.zeroButtonLabel?"No need to add":s.zeroButtonLabel} phLowButton={s.phLowButton} saltLowLightButton={s.saltLowLightButton} required={waterCheckReportMode?s.key==="chlorine":s.required} english={isSubOperatorEnglish}/>
               {s.key==="salt"&&(
                 <div style={{display:"flex",alignItems:"center",gap:10,margin:"6px 0 12px"}}>
                   <div style={{height:1,flex:1,background:"linear-gradient(90deg,rgba(21,101,192,0.05),rgba(21,101,192,0.32))"}}/>
-                  <div style={{padding:"4px 14px",borderRadius:99,background:"rgba(21,101,192,0.10)",border:"1px solid rgba(21,101,192,0.22)",color:C.blue,fontSize:12,fontWeight:900}}>איזון</div>
+                  <div style={{padding:"4px 14px",borderRadius:99,background:"rgba(21,101,192,0.10)",border:"1px solid rgba(21,101,192,0.22)",color:C.blue,fontSize:12,fontWeight:900}}>{subText("איזון","Balance")}</div>
                   <div style={{height:1,flex:1,background:"linear-gradient(90deg,rgba(21,101,192,0.32),rgba(21,101,192,0.05))"}}/>
                 </div>
               )}
@@ -7084,22 +8819,24 @@ useEffect(() => {
           ))}
         </Sec>
 
-        {form.adminReport&&(()=>{
-          const poolType = (clients.find(c=>c.name===client)||{}).poolType||"";
+        {!waterCheckReportMode&&form.adminReport&&(()=>{
+          const poolType = (findClientByName(client,form.clientId)||{}).poolType||"";
           const isSalt = !poolType || primaryPoolType(poolType)==="מלח";
           if(!isSalt) return null;
           return (
-            <Sec icon="⚡" title="אלקטרודה">
+            <Sec icon="⚡" title={subText("אלקטרודה","Electrode")}>
               <div style={{...card()}}>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>דגם</label><input value={elModel} onChange={e=>sf("elModel",e.target.value)} style={inp} placeholder="דגם המכשיר"/></div>
-                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>סריאלי</label><input value={elSerial} onChange={e=>sf("elSerial",e.target.value)} style={inp} placeholder="מספר סריאלי"/></div>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>{subText("דגם","Model")}</label><input value={elModel} onChange={e=>sf("elModel",e.target.value)} style={inp} placeholder={subText("דגם המכשיר","Device model")}/></div>
+                  <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>{subText("סריאלי","Serial")}</label><input value={elSerial} onChange={e=>sf("elSerial",e.target.value)} style={inp} placeholder={subText("מספר סריאלי","Serial number")}/></div>
                 </div>
-                <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>תאריך ניקיון אחרון</label><input type="date" value={elDate} onChange={e=>sf("elDate",e.target.value)} style={inp}/></div>
+                <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>{subText("תאריך ניקיון אחרון","Last cleaning date")}</label><input type="date" value={elDate} onChange={e=>sf("elDate",e.target.value)} style={inp}/></div>
                 {calcNext(elDate,30)&&(()=>{
                   const d=Math.ceil((new Date(calcNext(elDate,30))-new Date())/864e5);
                   const bg=d<0?"#ffebee":d<7?"#fff8e1":"#e8f5e9"; const col=d<0?C.red:d<7?C.orange:C.green;
-                  const txt=d<0?`⚠️ בדיקה באיחור של ${Math.abs(d)} ימים`:d<7?`⏰ בדיקה בעוד ${d} ימים (${fmtDate(calcNext(elDate,30))})`:`✅ בדיקה הבאה: ${fmtDate(calcNext(elDate,30))} (${d} ימים)`;
+                  const txt=isSubOperatorEnglish
+                    ? d<0?`⚠️ Inspection overdue by ${Math.abs(d)} days`:d<7?`⏰ Inspection in ${d} days (${fmtDate(calcNext(elDate,30))})`:`✅ Next inspection: ${fmtDate(calcNext(elDate,30))} (${d} days)`
+                    : d<0?`⚠️ בדיקה באיחור של ${Math.abs(d)} ימים`:d<7?`⏰ בדיקה בעוד ${d} ימים (${fmtDate(calcNext(elDate,30))})`:`✅ בדיקה הבאה: ${fmtDate(calcNext(elDate,30))} (${d} ימים)`;
                   return <div style={{marginTop:10,background:bg,borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:700,color:col}}>{txt}</div>;
                 })()}
               </div>
@@ -7107,37 +8844,37 @@ useEffect(() => {
           );
         })()}
 
-        <Sec icon="🔍" title="בדיקות מצב">
-          <ToggleField label="💧 גובה מים" value={waterLevel} onChange={v=>sf("waterLevel",v)}/>
-          <ToggleField label="🔵 צלילות" value={clarity} onChange={v=>sf("clarity",v)}/>
-          <ToggleField label="🧴 פס שומן" value={fat} onChange={v=>sf("fat",v)}/>
-          <ToggleField label="🌀 זרימה" value={flow} onChange={v=>sf("flow",v)}/>
+        <Sec icon="🔍" title={waterCheckReportMode?subText("זרימת מים","Water flow"):subText("בדיקות מצב","Condition checks")}>
+          {!waterCheckReportMode&&<ToggleField label={subText("💧 גובה מים","💧 Water level")} value={waterLevel} onChange={v=>sf("waterLevel",v)} english={isSubOperatorEnglish}/>}
+          {!waterCheckReportMode&&<ToggleField label={subText("🔵 צלילות","🔵 Clarity")} value={clarity} onChange={v=>sf("clarity",v)} english={isSubOperatorEnglish}/>}
+          {!waterCheckReportMode&&<ToggleField label={subText("🧴 פס שומן","🧴 Oil line")} value={fat} onChange={v=>sf("fat",v)} english={isSubOperatorEnglish}/>}
+          <ToggleField label={waterCheckReportMode?subText("🌀 זרימת מים *","🌀 Water flow *"):subText("🌀 זרימה","🌀 Flow")} value={flow} onChange={v=>sf("flow",v)} english={isSubOperatorEnglish}/>
         </Sec>
 
-        <Sec icon="🏊" title="מצב בריכה">
+        {!waterCheckReportMode&&<Sec icon="🏊" title={subText("מצב בריכה","Pool condition")}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:poolStatus==="אחר"?12:0}}>
             {["מאוזנת","אחר"].map(opt=>(
               <Press key={opt} onClick={()=>{sf("poolStatus",opt);haptic();}} style={{padding:14,borderRadius:14,textAlign:"center",fontWeight:800,fontSize:14,background:poolStatus===opt?(opt==="מאוזנת"?"#e8f5e9":"#ffebee"):C.white,color:poolStatus===opt?(opt==="מאוזנת"?C.green:C.red):C.muted,border:`2px solid ${poolStatus===opt?(opt==="מאוזנת"?"#c8e6c9":"#ffcdd2"):C.border}`,boxShadow:"0 2px 8px rgba(0,0,0,0.04)",transition:"all 0.2s"}}>
-                {opt==="מאוזנת"?"✅ מאוזנת":"⚠️ אחר"}
+                {opt==="מאוזנת"?subText("✅ מאוזנת","✅ Balanced"):subText("⚠️ אחר","⚠️ Other")}
               </Press>
             ))}
           </div>
           <div style={{...card()}}>
-            <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder={poolStatus==="אחר"?"תאר את הבעיה...":"הערה פנימית..."} style={{...inp,resize:"none",marginBottom:poolStatus==="אחר"?10:0}}/>
-            {poolStatus==="מאוזנת"&&<div style={{fontSize:11,fontWeight:800,color:C.blue,marginTop:6}}>הערה זו נשמרת כהערה פנימית ואינה נשלחת ללקוח.</div>}
+            <textarea value={customStatusText} onChange={e=>sf("customStatusText",e.target.value)} rows={2} placeholder={poolStatus==="אחר"?subText("תאר את הבעיה...","Describe the issue..."):subText("הערה פנימית...","Internal note...")} style={{...inp,resize:"none",marginBottom:poolStatus==="אחר"?10:0}}/>
+            {poolStatus==="מאוזנת"&&<div style={{fontSize:11,fontWeight:800,color:C.blue,marginTop:6}}>{subText("הערה זו נשמרת כהערה פנימית ואינה נשלחת ללקוח.","This is saved as an internal note and is not sent to the client.")}</div>}
             {poolStatus==="אחר"&&(
               <>
-                <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>הגבלת שימוש עד</label>
+                <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>{subText("הגבלת שימוש עד","Restrict use until")}</label>
                 <input type="date" value={restrictedUntil} onChange={e=>sf("restrictedUntil",e.target.value)} style={inp}/>
               </>
             )}
           </div>
-        </Sec>
+        </Sec>}
 
-        <Sec icon="📦" title="חומרים לטיפול הבא">
+        {!waterCheckReportMode&&<Sec icon="📦" title={subText("חומרים לטיפול הבא","Materials for the next treatment")}>
           <div style={{...card()}}>
-            <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span>🔒</span><span style={{fontSize:11,fontWeight:700,color:C.blue}}>נשלח ללקוח לאישור</span>{(()=>{ const approvalStatus = materialApprovalStatusForSupply(client, {acid,phUpSupply,saltPkg,saltBags}, form.id || editingReport?.localId); return approvalStatus ? <Badge label={approvalStatus.label} col={approvalStatus.col}/> : null; })()}</div>
-            {[["acid",acid,"🧪 חומצת מלח"],["phUpSupply",phUpSupply,"📈 מעלה pH"],["saltPkg",saltPkg,"🧂 שקי מלח"]].map(([k,v,lbl])=>(
+            <div style={{background:"#e3f2fd",borderRadius:10,padding:"8px 12px",marginBottom:12,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span>💬</span><span style={{fontSize:11,fontWeight:700,color:C.blue}}>{subText("הלקוח יקבל הודעה שהחומרים יסופקו בטיפול הבא","The client will be notified that these materials will be supplied at the next treatment")}</span></div>
+            {[["acid",acid,subText("🧪 חומצת מלח","🧪 Hydrochloric acid")],["phUpSupply",phUpSupply,subText("📈 מעלה pH","📈 pH increaser")],["saltPkg",saltPkg,subText("🧂 שקי מלח","🧂 Salt bags")]].map(([k,v,lbl])=>(
               <Press key={k} onClick={()=>{sf(k,!v);haptic();}} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:`1px solid ${C.border}`}}>
                 <div style={{width:26,height:26,borderRadius:8,border:`2px solid ${v?C.blue:C.border}`,background:v?C.blue:C.white,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s",flexShrink:0}}>{v&&<span style={{color:"#fff",fontSize:14}}>✓</span>}</div>
                 <span style={{fontSize:14,fontWeight:700,color:C.text}}>{lbl}</span>
@@ -7145,14 +8882,14 @@ useEffect(() => {
             ))}
             {saltPkg&&(
               <div style={{paddingTop:10}}>
-                <label style={{fontSize:13,fontWeight:700,color:C.text,display:"block",marginBottom:8}}>כמות שקים:</label>
+                <label style={{fontSize:13,fontWeight:700,color:C.text,display:"block",marginBottom:8}}>{subText("כמות שקים:","Number of bags:")}</label>
                 <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4}}>
                   {[0,1,2,3,4,5,6,7,8,9,10].map(n=>(<Press key={n} onClick={()=>sf("saltBags",n)} style={{width:40,height:40,borderRadius:99,background:saltBags===n?C.blue:C.border,color:saltBags===n?"#fff":C.muted,fontWeight:800,fontSize:14,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{n}</Press>))}
                 </div>
               </div>
             )}
             <div style={{paddingTop:12}}>
-              <label style={{fontSize:13,fontWeight:700,color:C.text,display:"block",marginBottom:8}}>חומרים שסופקו היום</label>
+              <label style={{fontSize:13,fontWeight:700,color:C.text,display:"block",marginBottom:8}}>{subText("חומרים שסופקו היום","Materials supplied today")}</label>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
                 {["סודה אש","חומצת מלח","שקי מלח"].map(item=>{
                   const selected = suppliedEquipment.includes(item);
@@ -7162,14 +8899,14 @@ useEffect(() => {
                         background:selected?"#e8f5e9":"#f0f4f8",
                         color:selected?C.green:C.muted,
                         border:`2px solid ${selected?"#c8e6c9":"transparent"}`}}>
-                      {selected?"✓ ":""}{item}
+                      {selected?"✓ ":""}{isSubOperatorEnglish?({"סודה אש":"Soda ash","חומצת מלח":"Hydrochloric acid","שקי מלח":"Salt bags"}[item]||item):item}
                     </Press>
                   );
                 })}
               </div>
             </div>
           </div>
-        </Sec>
+        </Sec>}
 
         {false&&<Sec icon="📷" title="תמונות">
           <div style={{...card()}}>
@@ -7179,38 +8916,38 @@ useEffect(() => {
           </div>
         </Sec>}
 
-        <Sec icon="📝" title="הערות ללקוח">
-          <textarea value={notes} onChange={e=>sf("notes",e.target.value)} rows={3} placeholder="הערה קצרה שתישלח בוואטסאפ..." style={{...inp,resize:"none",minHeight:80}}/>
-        </Sec>
+        {!waterCheckReportMode&&<Sec icon="📝" title={subText("הערות ללקוח","Client notes")}>
+          <textarea value={notes} onChange={e=>sf("notes",e.target.value)} rows={3} placeholder={subText("הערה קצרה שתישלח בוואטסאפ...","A short note to be sent by WhatsApp...")} style={{...inp,resize:"none",minHeight:80}}/>
+        </Sec>}
 
         {pending.length>0&&(
           <div onClick={()=>setShowPendingReportNames(v=>!v)} style={{...card({background:"#fff8e1",border:`1px solid #ffe082`}),marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",cursor:"pointer"}}>
-            <span style={{fontSize:13,fontWeight:700,color:C.orange}}>⚠️ {pending.length} דוחות בתור · {pendingReportSummaryText()}</span>
-            <Press onClick={togglePendingBackgroundSync} style={{background:pendingBackgroundSync?C.green:"#fff7ed",border:`1px solid ${pendingBackgroundSync?"#86efac":"#fed7aa"}`,borderRadius:99,padding:"6px 12px",color:pendingBackgroundSync?"#fff":C.orange,fontWeight:900,fontSize:12}}>{pendingBackgroundSync?"עצור רקע":"הפעל רקע"}</Press>
-            <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:"שלח הכל",loading:"⏳ שולח...",success:"✅ נשלח",error:"⚠️ נסה שוב"})}</Press>
+            <span style={{fontSize:13,fontWeight:700,color:C.orange}}>⚠️ {pending.length} {subText("דוחות בתור","queued reports")} · {pendingReportSummaryText()}</span>
+            <Press onClick={togglePendingBackgroundSync} style={{background:pendingBackgroundSync?C.green:"#fff7ed",border:`1px solid ${pendingBackgroundSync?"#86efac":"#fed7aa"}`,borderRadius:99,padding:"6px 12px",color:pendingBackgroundSync?"#fff":C.orange,fontWeight:900,fontSize:12}}>{pendingBackgroundSync?subText("עצור רקע","Stop sync"):subText("הפעל רקע","Start sync")}</Press>
+            <Press onClick={(e)=>{e.stopPropagation();syncPendingReports();}} style={{background:C.orange,borderRadius:99,padding:"6px 14px",color:"#fff",fontWeight:800,fontSize:12}}>{actionLabel("syncPending",{idle:subText("שלח הכל","Send all"),loading:subText("⏳ שולח...","⏳ Sending..."),success:subText("✅ נשלח","✅ Sent"),error:subText("⚠️ נסה שוב","⚠️ Retry")})}</Press>
             {showPendingReportNames&&<div style={{flexBasis:"100%",background:"rgba(255,255,255,0.72)",borderRadius:12,padding:"8px 10px",border:"1px solid rgba(245,158,11,0.22)"}}>
               {renderPendingReportRows()}
             </div>}
           </div>
         )}
-        <Press onClick={handleSubmitPress} disabled={!client||syncing||isActionLoading("submitReport")} style={{padding:"18px",borderRadius:18,background:actionStatus.submitReport==="success"?C.green:actionStatus.submitReport==="local"?C.orange:syncing||!client?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 16px 36px rgba(79,70,229,0.24)",marginBottom:8}}>{actionLabel("submitReport",{idle:"שלח דוח ⚡",loading:"⏳ שולח דוח...",success:"✅ נשלח",local:"⚠️ נשמר מקומית",error:"⚠️ שגיאה"})}</Press>
-        <Press onClick={()=>setScreen("daily")} style={{padding:"14px",borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.muted,fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>← ביטול</Press>
+        <Press onClick={handleSubmitPress} disabled={!client||syncing||isActionLoading("submitReport")} style={{padding:"18px",borderRadius:18,background:actionStatus.submitReport==="success"?C.green:actionStatus.submitReport==="local"?C.orange:syncing||!client?"#90caf9":"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:17,textAlign:"center",boxShadow:syncing||!client?"none":"0 16px 36px rgba(79,70,229,0.24)",marginBottom:8}}>{actionLabel("submitReport",{idle:subText("שלח דוח ⚡","Submit report ⚡"),loading:subText("⏳ שולח דוח...","⏳ Submitting report..."),success:subText("✅ נשלח","✅ Sent"),local:subText("⚠️ נשמר מקומית","⚠️ Saved locally"),error:subText("⚠️ שגיאה","⚠️ Error")})}</Press>
+        <Press onClick={leaveReportForm} style={{padding:"14px",borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.muted,fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>{subText("← ביטול","Cancel")}</Press>
       </div>
       {confirmReportWhatsApp&&(
-        <BottomSheet title={"\u05e9\u05dc\u05d9\u05d7\u05ea \u05d5\u05d5\u05e6\u05d0\u05e4"} onClose={()=>setConfirmReportWhatsApp(null)}>
-          <div style={{fontSize:16,fontWeight:900,color:C.text,marginBottom:14,textAlign:"center",lineHeight:1.5}}>{"\u05d4\u05d0\u05dd \u05dc\u05e9\u05dc\u05d5\u05d7 \u05dc\u05dc\u05e7\u05d5\u05d7 \u05d4\u05d5\u05d3\u05e2\u05ea \u05d5\u05d5\u05e6\u05d0\u05e4?"}</div>
+        <BottomSheet title={subText("\u05e9\u05dc\u05d9\u05d7\u05ea \u05d5\u05d5\u05e6\u05d0\u05e4","Send WhatsApp")} onClose={()=>setConfirmReportWhatsApp(null)}>
+          <div style={{fontSize:16,fontWeight:900,color:C.text,marginBottom:14,textAlign:"center",lineHeight:1.5}}>{subText("\u05d4\u05d0\u05dd \u05dc\u05e9\u05dc\u05d5\u05d7 \u05dc\u05dc\u05e7\u05d5\u05d7 \u05d4\u05d5\u05d3\u05e2\u05ea \u05d5\u05d5\u05e6\u05d0\u05e4?","Send the client a WhatsApp message?")}</div>
           <label style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,padding:"13px 14px",borderRadius:14,background:confirmReportWhatsApp.send?"#e8f5e9":"#ffebee",border:`2px solid ${confirmReportWhatsApp.send?"#c8e6c9":"#ffcdd2"}`,cursor:"pointer"}}>
             <input type="checkbox" checked={!!confirmReportWhatsApp.send} onChange={e=>setConfirmReportWhatsApp(x=>({...x,send:e.target.checked}))} style={{width:22,height:22,accentColor:C.green,flexShrink:0}}/>
-            <span style={{fontSize:14,fontWeight:900,color:confirmReportWhatsApp.send?C.green:C.red,flex:1}}>{confirmReportWhatsApp.send?"\u05dc\u05e9\u05dc\u05d5\u05d7 \u05d5\u05d5\u05e6\u05d0\u05e4 \u05dc\u05dc\u05e7\u05d5\u05d7":"\u05dc\u05d0 \u05dc\u05e9\u05dc\u05d5\u05d7 \u05d5\u05d5\u05e6\u05d0\u05e4"}</span>
+            <span style={{fontSize:14,fontWeight:900,color:confirmReportWhatsApp.send?C.green:C.red,flex:1}}>{confirmReportWhatsApp.send?subText("\u05dc\u05e9\u05dc\u05d5\u05d7 \u05d5\u05d5\u05e6\u05d0\u05e4 \u05dc\u05dc\u05e7\u05d5\u05d7","Send WhatsApp to the client"):subText("\u05dc\u05d0 \u05dc\u05e9\u05dc\u05d5\u05d7 \u05d5\u05d5\u05e6\u05d0\u05e4","Do not send WhatsApp")}</span>
           </label>
-          <Press onClick={()=>{ const sendCustomerWhatsApp = !!confirmReportWhatsApp.send; setConfirmReportWhatsApp(null); void handleSubmit({sendCustomerWhatsApp}); }} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontSize:15,fontWeight:900,textAlign:"center",boxShadow:"0 12px 28px rgba(37,99,235,0.22)"}}>{"\u05d0\u05d9\u05e9\u05d5\u05e8"}</Press>
+          <Press onClick={()=>{ const sendCustomerWhatsApp = !!confirmReportWhatsApp.send; setConfirmReportWhatsApp(null); void handleSubmit({sendCustomerWhatsApp}); }} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontSize:15,fontWeight:900,textAlign:"center",boxShadow:"0 12px 28px rgba(37,99,235,0.22)"}}>{subText("\u05d0\u05d9\u05e9\u05d5\u05e8","Confirm")}</Press>
         </BottomSheet>
       )}
       {chemicalRestrictionPrompt&&(
-        <BottomSheet title={"\u05d4\u05d2\u05d1\u05dc\u05ea \u05e9\u05d9\u05de\u05d5\u05e9"} onClose={()=>setChemicalRestrictionPrompt(null)}>
+        <BottomSheet title={subText("\u05d4\u05d2\u05d1\u05dc\u05ea \u05e9\u05d9\u05de\u05d5\u05e9","Use restriction")} onClose={()=>setChemicalRestrictionPrompt(null)}>
           <Press onClick={()=>applyChemicalRestriction(360)}
             style={{padding:"16px",borderRadius:14,background:"#fff8e1",border:"1px solid #ffe082",color:C.orange,fontSize:15,fontWeight:900,textAlign:"center"}}>
-            הגבל שימוש ל-6 שעות
+            {subText("הגבל שימוש ל-6 שעות","Restrict use for 6 hours")}
           </Press>
         </BottomSheet>
       )}
@@ -7219,30 +8956,51 @@ useEffect(() => {
   );
 
   if(screen==="done") {
-    const last = reports[reports.length-1];
-    const lastWaDisabled = last ? isWhatsAppDisabledForClient(last) : false;
+    const last = submittedReport || reports[reports.length-1];
+    const lastWaDisabled = last?._deliveryDecision?.skipReason === "disabled" ||
+      (!last?._deliveryDecision?.version && last ? isWhatsAppDisabledForClient(last) : false);
+    const lastWaterCheck = !!last?.waterCheckOnly;
+    const lastClientRecord = last ? findClientByName(last.client,last.clientId) : null;
+    const lastPrimaryPool = primaryPoolType(lastClientRecord?.poolType);
+    const lastMessageSkipped = last?._deliveryDecision?.version && last._deliveryDecision.shouldSend === false;
+    const summaryRows = last ? [
+      [subText("לקוח","Client"),last.client.split(" - ")[0]],
+      hasMeasurementValue(last.chlorine) && [subText("כלור","Chlorine"),`${last.chlorine} ppm`],
+      hasMeasurementValue(last.ph) && ["pH",last.ph],
+      lastPrimaryPool!=="כלור" && hasMeasurementValue(last.salt) && [subText("רמת מלח","Salt level"),`${last.salt} PPM`],
+      Number(last.chlora)>0 && ["TAB",last.chlora],
+      Number(last.hth)>0 && ["HTH",last.hth],
+      last.flow && [subText("זרימה","Flow"),last.flow],
+      !lastWaterCheck && last.poolStatus && [subText("מצב","Condition"),last.poolStatus==="מאוזנת"?subText("✅ מאוזנת","✅ Balanced"):"⚠️ "+last.customStatusText]
+    ].filter(Boolean) : [];
     return (
-      <div dir="rtl" className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px))",textAlign:"center",color:C.text}}>
+      <div dir={isSubOperatorEnglish?"ltr":"rtl"} lang={isSubOperatorEnglish?"en":"he"} className={isIOS ? "galileo-ios-vh" : undefined} style={{minHeight:"100vh",background:"linear-gradient(180deg,#e7f0fb 0%,#d7e6f7 45%,#e8eef8 100%)",fontFamily:"'Plus Jakarta Sans',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px))",textAlign:"center",color:C.text}}>
         <IPhoneComfortLayer/>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');*{-webkit-tap-highlight-color:transparent;box-sizing:border-box}@keyframes pop{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}`}</style>
         <div style={{position:"absolute",top:14,left:14}}><RefreshTopButton compact/></div>
         <div style={{width:104,height:104,borderRadius:32,background:"rgba(232,241,253,0.82)",border:"1px solid rgba(148,163,184,0.22)",boxShadow:"0 22px 55px rgba(37,99,235,0.12), 0 1px 0 rgba(232,241,253,0.82) inset",display:"flex",alignItems:"center",justifyContent:"center",fontSize:58,marginBottom:18,animation:"pop 0.5s cubic-bezier(0.34,1.56,0.64,1)"}}>✅</div>
-        <h1 style={{fontSize:26,fontWeight:900,color:C.text,margin:"0 0 8px"}}>הדוח נשלח!</h1>
-        <p style={{color:C.muted,fontSize:15,margin:"0 0 28px",fontWeight:700}}>{lastWaDisabled ? "שליחת ווצאפ כבויה ללקוח זה - הדוח נשמר ללא הודעה" : "הלקוח יקבל הודעת ווצאפ עכשיו"}</p>
+        <h1 style={{fontSize:26,fontWeight:900,color:C.text,margin:"0 0 8px"}}>{subText("הדוח נשלח!","Report submitted!")}</h1>
+        <p style={{color:C.muted,fontSize:15,margin:"0 0 28px",fontWeight:700}}>{lastWaterCheck
+          ? subText("בדיקת המים נשמרה ללא הודעת סיום טיפול","The water test was saved without a treatment completion message")
+          : lastWaDisabled
+            ? subText("שליחת ווצאפ כבויה ללקוח זה - הדוח נשמר ללא הודעה","WhatsApp is off for this client — the report was saved without a message")
+            : lastMessageSkipped
+              ? subText("הדוח נשמר ללא הודעת ווצאפ","The report was saved without a WhatsApp message")
+              : subText("הלקוח יקבל הודעת ווצאפ עכשיו","The client will receive a WhatsApp message now")}</p>
         {last&&(
           <div style={{...card({width:"100%",maxWidth:340,marginBottom:20,textAlign:"right"})}}>
-            <div style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>סיכום הדוח</div>
-            {[["לקוח",last.client.split(" - ")[0]],["כלור",`${last.chlorine} ppm`],["pH",last.ph],["רמת מלח",`${last.salt} PPM`],["מצב",last.poolStatus==="מאוזנת"?"✅ מאוזנת":"⚠️ "+last.customStatusText]].map(([k,v])=>(
+            <div style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:12}}>{subText("סיכום הדוח","Report summary")}</div>
+            {summaryRows.map(([k,v])=>(
               <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}><span style={{color:C.muted,fontSize:13,fontWeight:600}}>{k}</span><span style={{color:C.text,fontSize:13,fontWeight:800}}>{v}</span></div>
             ))}
           </div>
         )}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,width:"100%",maxWidth:340,marginBottom:10}}>
-          <Press onClick={()=>{setEditingReport(null);setForm(blank());setScreen("form");haptic();}} style={{padding:14,borderRadius:18,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>+ דוח חדש</Press>
-          <Press onClick={()=>setScreen("daily")} style={{padding:14,borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>🏠 לוח יומי</Press>
+          <Press onClick={()=>{setEditingReport(null);setSubmittedReport(null);setForm(blank());setScreen("form");haptic();}} style={{padding:14,borderRadius:18,background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"#fff",fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>+ {subText("דוח חדש","New report")}</Press>
+          <Press onClick={()=>setScreen("daily")} style={{padding:14,borderRadius:18,border:`1px solid ${C.border}`,background:"rgba(226,237,250,0.78)",color:C.blue,fontWeight:900,fontSize:14,textAlign:"center",boxShadow:"0 10px 26px rgba(37,99,235,0.06)"}}>🏠 {subText("לוח יומי","Daily board")}</Press>
         </div>
-        {reports.length>0&&(
-          <Press onClick={()=>{ const last=reports[reports.length-1]; setForm({...blank(),...last,...reportSupplyFlags(last),ph:isLowPhValue(last.ph)?0:last.ph,salt:isLowSaltFlagValue(last.salt)?0:last.salt,clientLocked:true,reportDate:last.reportDate,client:last.client,chlorineZeroConfirmed:Number(last.chlorine||0)===0,phLowConfirmed:isLowPhValue(last.ph),lowSaltLight:isLowSaltReportValue(last.salt)}); setEditingReport({date:last.reportDate,client:last.client,operator:last.operator||user?.name,localId:last.id}); setScreen("form"); haptic("medium"); showToast("✏️ עריכה ללא WhatsApp"); }} style={{padding:12,borderRadius:18,border:`1px solid rgba(194,65,12,0.24)`,background:"rgba(255,247,237,0.82)",color:C.orange,fontWeight:900,fontSize:13,textAlign:"center",width:"100%",maxWidth:340,boxShadow:"0 10px 24px rgba(194,65,12,0.08)"}}>✏️ ערוך דוח אחרון</Press>
+        {last&&(
+          <Press onClick={()=>{ setForm({...blank(),...last,...reportSupplyFlags(last),ph:isLowPhValue(last.ph)?0:last.ph,salt:isLowSaltFlagValue(last.salt)?0:last.salt,clientLocked:true,reportDate:last.reportDate,client:last.client,clientId:last.clientId||"",chlorineZeroConfirmed:Number(last.chlorine||0)===0,phLowConfirmed:isLowPhValue(last.ph),lowSaltLight:isLowSaltReportValue(last.salt)}); setEditingReport({date:last.reportDate,client:last.client,clientId:last.clientId||"",operator:last.operator||user?.name,localId:last.id,waterCheckOnly:!!last.waterCheckOnly}); setScreen("form"); haptic("medium"); showToast(subText("✏️ עריכה ללא WhatsApp","✏️ Editing without WhatsApp")); }} style={{padding:12,borderRadius:18,border:`1px solid rgba(194,65,12,0.24)`,background:"rgba(255,247,237,0.82)",color:C.orange,fontWeight:900,fontSize:13,textAlign:"center",width:"100%",maxWidth:340,boxShadow:"0 10px 24px rgba(194,65,12,0.08)"}}>✏️ {subText("ערוך דוח אחרון","Edit last report")}</Press>
         )}
       </div>
     );
@@ -7259,15 +9017,21 @@ useEffect(() => {
     const activeAdminOperator = selectedAdminOperator || operatorUsers[0]?.name || "";
     const adminOrderHasDraftContext = adminOrderDraft.length > 0 || !!selectedAdminOperator || adminOrderRemovedClients.length > 0;
     const adminOrderList = adminOrderHasDraftContext ? adminOrderDraft : (activeAdminOperator ? getAdminOrderEntries(taskDate, activeAdminOperator) : []);
-    const adminOrderClientKey = (value = {}) => String(value?.clientId || value?.id || clientIdByName(value?.client || value?.name || value) || value?.client || value?.name || value || "").trim();
-    const adminOrderNames = new Set(adminOrderList.map(x=>x.client));
+    const adminOrderClientKey = (value = {}) => {
+      const source = value && typeof value === "object" ? value : {name:value};
+      return poolIdentityKey({
+        client:source.client || source.name || value,
+        clientId:source.clientId || ""
+      });
+    };
     const adminOrderKeys = new Set(adminOrderList.map(adminOrderClientKey));
-    const allOrderClients = [...clients, ...unassignedClients.filter(uc=>!clients.find(c=>c.name===uc.name))];
-    const adminOrderClientMap = new Map(allOrderClients.map(c=>[c.name,c]));
+    const allOrderClients = clients;
     const adminOrderClientByKey = new Map(allOrderClients.map(c=>[adminOrderClientKey(c),c]));
+    const adminOrderClientRecord = value => adminOrderClientByKey.get(adminOrderClientKey(value)) ||
+      findClientByName(value?.client || value?.name || value, value?.clientId);
     const adminOrderEligibleMap = new Map();
     allOrderClients.forEach(c => {
-      if (activeAdminOperator && clientAssignedToOperatorDate(c, taskDate, activeAdminOperator)) adminOrderEligibleMap.set(c.name, c);
+      if (activeAdminOperator && clientAssignedToOperatorDate(c, taskDate, activeAdminOperator)) adminOrderEligibleMap.set(adminOrderClientKey(c), c);
     });
     const adminOrderAssignedTodayCount = activeAdminOperator
       ? new Set(allOrderClients
@@ -7276,52 +9040,53 @@ useEffect(() => {
         ).size
       : 0;
     adminOrderList.forEach(entry => {
-      const base = adminOrderClientMap.get(entry.client) || {name:entry.client};
-      adminOrderEligibleMap.set(entry.client, base);
+      const base = adminOrderClientRecord(entry) || {name:entry.client,clientId:entry.clientId};
+      adminOrderEligibleMap.set(adminOrderClientKey(entry), base);
     });
     const adminOrderSearchActive = adminOrderClientSearch.trim().length > 0;
     const adminOrderSearchPool = adminOrderSearchActive ? allOrderClients : [...adminOrderEligibleMap.values()];
     const adminOrderEligibleClients = filterClientOptions(sortByClientName(adminOrderSearchPool), adminOrderClientSearch);
-    const hasLowSaltLight = (clientName) => {
-      const lr = lastReadingForClient(clientName);
+    const hasLowSaltLight = (clientName, clientIdValue = "") => {
+      const lr = lastReadingForClient(clientName, clientIdValue);
       if (isLowSaltReportValue(lr?.salt)) return true;
       const latest = [...sheetReports, ...reports]
-        .filter(r => normalizeName(r.client) === normalizeName(clientName))
+        .filter(r => samePoolIdentity(r, {client:clientName,clientId:clientIdValue}))
         .sort((a,b)=>normalizeDate(b.reportDate).localeCompare(normalizeDate(a.reportDate)))[0];
       return isLowSaltReportValue(latest?.salt);
     };
     const selectedAdminOrderEntries = adminOrderList
-      .filter(entry => !adminOrderClientSearch || filterClientOptions([{name:entry.client, ...(adminOrderClientMap.get(entry.client)||{})}], adminOrderClientSearch).length)
+      .filter(entry => !adminOrderClientSearch || filterClientOptions([{name:entry.client, ...(adminOrderClientRecord(entry)||{})}], adminOrderClientSearch).length)
       .sort((a,b)=>Number(a.orderIndex || 9999)-Number(b.orderIndex || 9999));
     const adminOrderWaterCheckClients = sortByClientName(allOrderClients)
       .filter(c => activeAdminOperator && clientWaterCheckAssigned(c, taskDate, activeAdminOperator));
-    const unselectedAdminOrderClientsBase = adminOrderEligibleClients.filter(c=>!adminOrderKeys.has(adminOrderClientKey(c)) && !adminOrderNames.has(c.name));
+    const unselectedAdminOrderClientsBase = adminOrderEligibleClients.filter(c=>!adminOrderKeys.has(adminOrderClientKey(c)));
     const removedVisibleClients = adminOrderRemovedClients
       .map(item => {
         const removed = typeof item === "object" && item !== null ? item : {name:item};
         const key = adminOrderClientKey(removed);
-        const mapped = adminOrderClientByKey.get(key) || adminOrderClientMap.get(removed.name || removed.client) || {};
+        const mapped = adminOrderClientByKey.get(key) || {};
         return {...mapped, ...removed, name:removed.name || removed.client || mapped.name || ""};
       })
-      .filter(c => c?.name && !adminOrderKeys.has(adminOrderClientKey(c)) && !adminOrderNames.has(c.name));
+      .filter(c => c?.name && !adminOrderKeys.has(adminOrderClientKey(c)));
     const unselectedAdminOrderClients = sortByClientName([
       ...unselectedAdminOrderClientsBase,
-      ...removedVisibleClients.filter(c=>!unselectedAdminOrderClientsBase.some(x=>adminOrderClientKey(x)===adminOrderClientKey(c) || x.name===c.name))
+      ...removedVisibleClients.filter(c=>!unselectedAdminOrderClientsBase.some(x=>adminOrderClientKey(x)===adminOrderClientKey(c)))
     ]);
-    const addClientToAdminOrder = (clientName) => {
-      const source = adminOrderClientMap.get(clientName) || {name:clientName};
+    const addClientToAdminOrder = (clientValue) => {
+      const source = typeof clientValue === "object" ? clientValue : (adminOrderClientRecord(clientValue) || {name:clientValue});
+      const clientName = source.name || source.client || "";
       const key = adminOrderClientKey(source);
-      setAdminOrderDraft(prev=>[...adminOrderList,{client:clientName,clientId:source.clientId || source.id || clientIdByName(clientName),note:"",orderIndex:adminOrderList.length+1}]);
-      setAdminOrderRemovedClients(prev=>prev.filter(item=>adminOrderClientKey(item)!==key && item!==clientName));
+      setAdminOrderDraft(prev=>[...adminOrderList,{client:clientName,clientId:source.clientId || clientIdByName(clientName),note:"",orderIndex:adminOrderList.length+1}]);
+      setAdminOrderRemovedClients(prev=>prev.filter(item=>adminOrderClientKey(item)!==key));
       setAdminOrderClientSearch("");
       haptic();
     };
     const removeClientFromAdminOrder = (entry) => {
-      const source = adminOrderClientMap.get(entry.client) || {name:entry.client};
-      const removedClient = {...source, name:entry.client, clientId:entry.clientId || source.clientId || source.id || clientIdByName(entry.client)};
+      const source = adminOrderClientRecord(entry) || {name:entry.client,clientId:entry.clientId};
+      const removedClient = {...source, name:entry.client, clientId:entry.clientId || source.clientId || clientIdByName(entry.client)};
       const key = adminOrderClientKey(removedClient);
-      setAdminOrderRemovedClients(prev=>prev.some(item=>adminOrderClientKey(item)===key || item===entry.client) ? prev : [...prev, removedClient]);
-      setAdminOrderDraft(adminOrderList.filter(x=>adminOrderClientKey(x)!==key && x.client!==entry.client).map((x,idx)=>({...x,orderIndex:idx+1})));
+      setAdminOrderRemovedClients(prev=>prev.some(item=>adminOrderClientKey(item)===key) ? prev : [...prev, removedClient]);
+      setAdminOrderDraft(adminOrderList.filter(x=>adminOrderClientKey(x)!==key).map((x,idx)=>({...x,orderIndex:idx+1})));
     };
     const updateAdminOrderIndex = (index, value) => {
       setAdminOrderDraft(adminOrderList.map((x, idx)=>idx===index?{...x,orderIndex:value === "" ? "" : Math.max(1, Number(value) || 1)}:x));
@@ -7333,68 +9098,18 @@ useEffect(() => {
         haptic("medium");
         return;
       }
-      const existingByClient = new Map(adminOrderList.map(entry=>[entry.client, entry]));
+      const existingByClient = new Map(adminOrderList.map(entry=>[adminOrderClientKey(entry), entry]));
       const loaded = defaults.map((entry, i) => {
-        const existing = existingByClient.get(entry.client);
+        const existing = existingByClient.get(adminOrderClientKey(entry));
         return {...entry, note:existing?.note || entry.note || "", orderIndex:i + 1};
       });
       adminOrderList.forEach(entry => {
-        if (!loaded.some(x=>x.client===entry.client)) loaded.push({...entry, orderIndex:loaded.length + 1});
+        if (!loaded.some(x=>adminOrderClientKey(x)===adminOrderClientKey(entry))) loaded.push({...entry, orderIndex:loaded.length + 1});
       });
       setAdminOrderDraft(loaded);
       setAdminOrderRemovedClients([]);
       setAdminOrderClientSearch("");
       showToast(`נטענו ${defaults.length} בריכות ברירת מחדל`);
-      haptic("success");
-    };
-    const pendingMaterialApprovalForOrder = adminTab === "daily" && activeAdminOperator ? materialApprovals.find(approval => {
-      if (!isMaterialApprovalAwaitingAdmin(approval)) return false;
-      const inThisOrder = adminOrderList.some(entry => normalizeName(entry.client) === normalizeName(approval.client));
-      if (!inThisOrder) return false;
-      return materialNamesFromSupply(materialApprovalSupply(approval)).length > 0;
-    }) : null;
-    const confirmMaterialApprovalForOrder = async (approval) => {
-      if (!approval) return;
-      const supply = materialApprovalSupply(approval);
-      const materials = materialNamesFromSupply(supply);
-      if (!materials.length) {
-        showToast("לא נמצאו חומרים לשיוך");
-        haptic("medium");
-        return;
-      }
-      const clientName = approval.client;
-      const prev = supplyDB[clientName] || {};
-      const newDB = {
-        ...supplyDB,
-        [clientName]: {
-          ...prev,
-          acid: !!(prev.acid || supply.acid),
-          phUpSupply: !!(prev.phUpSupply || supply.phUpSupply),
-          saltPkg: !!(prev.saltPkg || supply.saltPkg),
-          saltBags: supply.saltPkg ? Number(supply.saltBags || prev.saltBags || 0) : Number(prev.saltBags || 0),
-          supplyNote: prev.supplyNote || "",
-          updatedAt: todayStr(),
-          nextSupplyDate: taskDate,
-          assignedOperator: activeAdminOperator
-        }
-      };
-      setSupplyDB(newDB);
-      persistSupplyDB(newDB);
-      setMaterialApprovals(prevApprovals => prevApprovals.map(item =>
-        Number(item.rowIndex) === Number(approval.rowIndex) || String(item.pollMessageId || "") === String(approval.pollMessageId || "")
-          ? {...item, status:"admin_added", meta:{...(item.meta||{}), admin:{operator:activeAdminOperator, supplyDate:taskDate}}}
-          : item
-      ));
-      if (sheetId) {
-        void sheetCall("updateMaterialApproval", {
-          rowIndex: approval.rowIndex,
-          pollMessageId: approval.pollMessageId,
-          status: "admin_added",
-          operator: activeAdminOperator,
-          supplyDate: taskDate
-        }).catch(e=>console.warn("Material approval update failed", e));
-      }
-      showToast(`החומרים נוספו ל-${activeAdminOperator}`);
       haptic("success");
     };
     const taskClientOptions = sortByClientName(clients);
@@ -7414,8 +9129,12 @@ useEffect(() => {
     const dashboardDoneToday = dashboardTasksToday.filter(t=>t.status==="done").length;
     const dashboardReportCount = [...sheetReports, ...reports].length;
     const dashboardCriticalIssues = operatorIssues.filter(iss=>isCriticalIssue(iss[4]) && !isIssueDone(iss[5])).length;
-    const dashboardSupplyToday = Object.entries(supplyDB || {}).reduce((acc, [clientName, supply]) => {
-      if (!isSupplyDueForDate(clientName, dailyDate, supply)) return acc;
+    const dashboardSupplyToday = Object.entries(supplyDB || {}).reduce((acc, [storageKey, supply]) => {
+      const clientName = supply?.client || findClientByName("", supply?.clientId)?.name || storageKey;
+      const clientObj = findClientByName(clientName, supply?.clientId);
+      if (!supply?.clientId && !clientObj) return acc;
+      const resolvedClientId = supply?.clientId || clientId(clientObj);
+      if (!isSupplyDueForDate(clientName, dailyDate, supply, resolvedClientId)) return acc;
       if (supply?.phUpSupply) acc.phUpSupply += 1;
       if (supply?.acid) acc.acid += 1;
       return acc;
@@ -7434,20 +9153,23 @@ useEffect(() => {
     const dailySupplyOperatorByClient = new Map();
     operatorUsers.forEach(op => {
       getAdminOrderEntries(dailyDate, op.name).forEach(entry => {
-        if (entry?.client) dailySupplyOperatorByClient.set(normalizeName(entry.client), op.name);
+        if (entry?.client) dailySupplyOperatorByClient.set(poolIdentityKey(entry), op.name);
       });
     });
-    const dailySupplyRows = Object.entries(supplyDB || {}).reduce((rows, [clientName, supply]) => {
-      if (!isSupplyDueForDate(clientName, dailyDate, supply)) return rows;
+    const dailySupplyRows = Object.entries(supplyDB || {}).reduce((rows, [storageKey, supply]) => {
+      const clientName = supply?.client || findClientByName("", supply?.clientId)?.name || storageKey;
+      const clientObj = findClientByName(clientName, supply?.clientId);
+      if (!supply?.clientId && !clientObj) return rows;
+      const resolvedClientId = supply?.clientId || clientId(clientObj);
+      if (!isSupplyDueForDate(clientName, dailyDate, supply, resolvedClientId)) return rows;
       const materials = [
         supply?.phUpSupply && "סודה אש",
         supply?.acid && "חומצת מלח",
         supply?.saltPkg && Number(supply?.saltBags || 0) > 0 && `מלח ×${Number(supply?.saltBags || 0)}`
       ].filter(Boolean);
       if (!materials.length) return rows;
-      const clientObj = clients.find(c=>normalizeName(c.name)===normalizeName(clientName));
-      const operator = supply?.assignedOperator || dailySupplyOperatorByClient.get(normalizeName(clientName)) || clientObj?.regularOperator || "ללא שיוך";
-      rows.push({operator, client:clientName, materials});
+      const operator = supply?.assignedOperator || dailySupplyOperatorByClient.get(poolIdentityKey({client:clientName,clientId:resolvedClientId})) || clientObj?.regularOperator || "ללא שיוך";
+      rows.push({operator, client:clientName, clientId:resolvedClientId, materials});
       return rows;
     }, []).sort((a,b)=>normalizeName(a.operator).localeCompare(normalizeName(b.operator)) || normalizeName(a.client).localeCompare(normalizeName(b.client)));
     const dailySupplyGroups = dailySupplyRows.reduce((groups, row) => {
@@ -7521,29 +9243,6 @@ useEffect(() => {
                 </div>
                 <div style={{background:"#ffebee",borderRadius:12,padding:"10px 12px",fontSize:13,color:C.red,fontWeight:800,lineHeight:1.5,marginBottom:12}}>{desc}</div>
                 <Press onClick={()=>acknowledgeCriticalIssue(criticalAdminIssue, criticalAdminIssueIndex)} style={{padding:"14px",borderRadius:14,background:C.red,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 18px rgba(198,40,40,0.32)"}}>אשר טיפול מיידי</Press>
-              </div>
-            </div>
-          );
-        })()}
-        {pendingMaterialApprovalForOrder&&(()=>{
-          const supply = materialApprovalSupply(pendingMaterialApprovalForOrder);
-          const materials = materialNamesFromSupply(supply);
-          return (
-            <div style={{position:"fixed",inset:0,zIndex:1550,background:"rgba(15,23,42,0.72)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-              <div style={{width:"100%",maxWidth:420,background:"#fff",borderRadius:22,padding:18,boxShadow:"0 28px 90px rgba(0,0,0,0.42)",border:"3px solid #f59e0b"}}>
-                <div style={{fontSize:22,fontWeight:900,color:"#b45309",marginBottom:6}}>אישור חומרים מהלקוח</div>
-                <div style={{fontSize:13,fontWeight:900,color:C.text,marginBottom:12}}>יש לאשר לפני המשך יצירת סדר היום למפעיל זה</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                  <div style={{background:"#f8fafc",borderRadius:12,padding:10}}><div style={{fontSize:10,fontWeight:800,color:C.muted}}>לקוח</div><div style={{fontSize:13,fontWeight:900,color:C.text}}>{pendingMaterialApprovalForOrder.client?.split(" - ")[0]}</div></div>
-                  <div style={{background:"#f8fafc",borderRadius:12,padding:10}}><div style={{fontSize:10,fontWeight:800,color:C.muted}}>מפעיל יעד</div><div style={{fontSize:13,fontWeight:900,color:C.blue}}>{activeAdminOperator}</div></div>
-                </div>
-                <div style={{background:"#fff7ed",borderRadius:12,padding:"10px 12px",fontSize:13,color:"#9a3412",fontWeight:800,lineHeight:1.5,marginBottom:12}}>
-                  הלקוח אישר אספקה. החומרים יתווספו לרשימת האספקה של {fmtDate(taskDate)} רק למפעיל שמוצג כאן.
-                </div>
-                <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14}}>
-                  {materials.map(m=><span key={m} style={{background:"#fef3c7",color:"#92400e",borderRadius:99,padding:"5px 11px",fontSize:12,fontWeight:900}}>{m}</span>)}
-                </div>
-                <Press onClick={()=>confirmMaterialApprovalForOrder(pendingMaterialApprovalForOrder)} style={{padding:"14px",borderRadius:14,background:"linear-gradient(135deg,#f59e0b,#22c55e)",color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 18px rgba(245,158,11,0.28)"}}>אשר והוסף לחומרים להיום</Press>
               </div>
             </div>
           );
@@ -7648,28 +9347,29 @@ useEffect(() => {
                   rows={3}
                   style={{...inp,resize:"vertical",minHeight:78,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:12}}
                 />
-                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>מלל סקר אישור חומרים</div>
+                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>הודעת אספקת חומצת מלח</div>
                 <textarea
-                  value={waPollMessageDraft}
-                  onChange={e=>setWaPollMessageDraft(e.target.value)}
+                  value={acidSupplyMessageDraft}
+                  onChange={e=>setAcidSupplyMessageDraft(e.target.value)}
                   rows={3}
                   style={{...inp,resize:"vertical",minHeight:78,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:12}}
                 />
-                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>תשובות סקר</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-                  {waPollOptionsDraft.map((option, idx)=>(
-                    <input
-                      key={idx}
-                      value={option}
-                      onChange={e=>setWaPollOptionsDraft(prev=>{
-                        const next = normalizeWaPollOptions(prev);
-                        next[idx] = e.target.value;
-                        return next;
-                      })}
-                      placeholder={idx===0 ? "תשובה מאשרת" : "תשובה דוחה"}
-                      style={{...inp,minHeight:46}}
-                    />
-                  ))}
+                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>הודעת אספקת מעלה pH</div>
+                <textarea
+                  value={phUpSupplyMessageDraft}
+                  onChange={e=>setPhUpSupplyMessageDraft(e.target.value)}
+                  rows={3}
+                  style={{...inp,resize:"vertical",minHeight:78,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:12}}
+                />
+                <div style={{fontSize:14,fontWeight:900,color:C.text,margin:"2px 0 6px"}}>הודעת אספקת שקי מלח</div>
+                <textarea
+                  value={saltSupplyMessageDraft}
+                  onChange={e=>setSaltSupplyMessageDraft(e.target.value)}
+                  rows={3}
+                  style={{...inp,resize:"vertical",minHeight:78,whiteSpace:"pre-wrap",lineHeight:1.55,marginBottom:8}}
+                />
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+                  <button type="button" onClick={()=>setSaltSupplyMessageDraft(v=>`${v}${v.endsWith("\n")||!v?"":" "}{כמות}`)} style={{border:"1px solid rgba(37,99,235,0.20)",background:"rgba(219,234,254,0.86)",color:C.blue,borderRadius:99,padding:"6px 10px",fontSize:11,fontWeight:900}}>כמות שקים ({"{כמות}"})</button>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                   <Press onClick={saveWaMessageTemplate} style={{padding:"13px",borderRadius:14,background:actionStatus.saveWaTemplate==="success"?C.green:adminPrimaryGradient,color:"#fff",fontSize:13,fontWeight:900,textAlign:"center",boxShadow:"0 12px 28px rgba(79,70,229,0.22)"}}>
@@ -7678,7 +9378,7 @@ useEffect(() => {
                   <Press onClick={resetWaMessageTemplate} style={{padding:"13px",borderRadius:14,background:"rgba(241,245,249,0.86)",color:C.muted,fontSize:13,fontWeight:900,textAlign:"center",border:`1px solid ${C.border}`}}>שחזר ברירת מחדל</Press>
                 </div>
               </div>
-              {(()=>{ const disabledClients = disabledWhatsAppClients(); const recipients = manualWaRecipients(); const baseClients = manualWaBaseClients(); const blockedSelected = baseClients.filter(c=>isWhatsAppDisabledForClient(c.name)); const missingPhoneSelected = baseClients.filter(c=>!isWhatsAppDisabledForClient(c.name) && !normalizeWhatsAppPhone(c.phone || clientPhone(c.name))); const canSendManual = String(manualWaMessage||"").trim() && recipients.length && !isActionLoading("sendManualWa"); return (
+              {(()=>{ const disabledClients = disabledWhatsAppClients(); const recipients = manualWaRecipients(); const baseClients = manualWaBaseClients(); const blockedSelected = baseClients.filter(c=>isWhatsAppDisabledForClient(c)); const missingPhoneSelected = baseClients.filter(c=>!isWhatsAppDisabledForClient(c) && !normalizeWhatsAppPhone(c.phone || clientPhone(c.name,clientId(c)))); const canSendManual = String(manualWaMessage||"").trim() && recipients.length && !isActionLoading("sendManualWa"); return (
               <div style={{...adminGlass({marginBottom:14})}}>
                 <div style={{fontSize:18,fontWeight:900,color:C.text,marginBottom:6}}>הודעת WhatsApp יזומה</div>
                 <div style={{fontSize:12,fontWeight:800,color:C.muted,marginBottom:10}}>שליחה חופשית בלבד, ללא דוח, סקר או תזכורת.</div>
@@ -7691,14 +9391,14 @@ useEffect(() => {
                 />
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
                   <Press onClick={()=>{setManualWaSendAll(false);haptic();}} style={{padding:"11px",borderRadius:14,textAlign:"center",fontSize:13,fontWeight:900,border:`2px solid ${!manualWaSendAll?C.blue:C.border}`,background:!manualWaSendAll?"#e3f2fd":"#fff",color:!manualWaSendAll?C.blue:C.muted}}>לקוח אחד</Press>
-                  <Press onClick={()=>{setManualWaSendAll(true);setManualWaClient("");setManualWaClientSearch("");haptic();}} style={{padding:"11px",borderRadius:14,textAlign:"center",fontSize:13,fontWeight:900,border:`2px solid ${manualWaSendAll?C.blue:C.border}`,background:manualWaSendAll?"#e3f2fd":"#fff",color:manualWaSendAll?C.blue:C.muted}}>שליחה לכולם</Press>
+                  <Press onClick={()=>{setManualWaSendAll(true);setManualWaClient("");setManualWaClientId("");setManualWaClientSearch("");haptic();}} style={{padding:"11px",borderRadius:14,textAlign:"center",fontSize:13,fontWeight:900,border:`2px solid ${manualWaSendAll?C.blue:C.border}`,background:manualWaSendAll?"#e3f2fd":"#fff",color:manualWaSendAll?C.blue:C.muted}}>שליחה לכולם</Press>
                 </div>
                 {!manualWaSendAll&&(
                   <div style={{position:"relative",marginBottom:12}}>
                     {manualWaClient?(
                       <div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}>
-                        <span style={{color:C.blue,fontWeight:800}}>🏊 {manualWaClient.split(" - ")[0]}</span>
-                        <span onClick={()=>{setManualWaClient("");setManualWaClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span>
+                        <span style={{color:C.blue,fontWeight:800}}>🏊 {manualWaClient.split(" - ")[0]}{clientAddress(manualWaClient,manualWaClientId)?` · ${clientAddress(manualWaClient,manualWaClientId)}`:""}</span>
+                        <span onClick={()=>{setManualWaClient("");setManualWaClientId("");setManualWaClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span>
                       </div>
                     ):(
                       <>
@@ -7706,8 +9406,8 @@ useEffect(() => {
                         {manualWaClientSearch&&(
                           <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:120,maxHeight:240,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
                             {filterClientOptions(clients, manualWaClientSearch).map(c=>(
-                              <Press key={c.name} onClick={()=>{setManualWaClient(c.name);setManualWaClientSearch("");setManualWaSendAll(false);haptic();}} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
-                                <div style={{flex:1,minWidth:0}}><div style={{fontWeight:800,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div><div style={{fontSize:11,color:isWhatsAppDisabledForClient(c.name)?C.red:C.muted}}>{isWhatsAppDisabledForClient(c.name)?"WhatsApp כבוי":(c.phone || "ללא טלפון")}</div></div>
+                              <Press key={clientId(c)} onClick={()=>{setManualWaClient(c.name);setManualWaClientId(clientId(c));setManualWaClientSearch("");setManualWaSendAll(false);haptic();}} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
+                                <div style={{flex:1,minWidth:0}}><div style={{fontWeight:800,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div>{c.address&&<div style={{fontSize:11,color:C.muted}}>{c.address}</div>}<div style={{fontSize:11,color:isWhatsAppDisabledForClient(c)?C.red:C.muted}}>{isWhatsAppDisabledForClient(c)?"WhatsApp כבוי":(c.phone || "ללא טלפון")}</div></div>
                               </Press>
                             ))}
                             {filterClientOptions(clients, manualWaClientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות מתחילת שם הלקוח</div>}
@@ -7733,7 +9433,7 @@ useEffect(() => {
                   </div>
                   {disabledClients.length>0?(
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",maxHeight:128,overflowY:"auto"}}>
-                      {disabledClients.map(c=><span key={c.name} style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"5px 10px",fontSize:11,fontWeight:800}}>{c.name.split(" - ")[0]}</span>)}
+                      {disabledClients.map(c=><span key={clientId(c)} title={c.address||""} style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"5px 10px",fontSize:11,fontWeight:800}}>{c.name.split(" - ")[0]}{c.address?` · ${c.address}`:""}</span>)}
                     </div>
                   ):<div style={{fontSize:12,fontWeight:800,color:C.muted}}>אין לקוחות כבויים.</div>}
                 </div>
@@ -7746,7 +9446,11 @@ useEffect(() => {
                     clientName:"לקוח לדוגמה",
                     operatorName:user?.name || "מפעיל",
                     company:getCompany().name || "POOLMANG",
-                    reportDetails:"✅ הבריכה מאוזנת ומוכנה לשימוש מלא\n\n📝 הערת דוגמה"
+                    reportDetails:`✅ הבריכה מאוזנת ומוכנה לשימוש מלא\n\n📦 *חומרים לטיפול הבא:*\n${supplyDeliveryMessage("חומצת מלח, מעלה pH, מלח ×2", {
+                      acid:acidSupplyMessageDraft,
+                      phUp:phUpSupplyMessageDraft,
+                      salt:saltSupplyMessageDraft
+                    })}\n\n📝 הערת דוגמה`
                   })}
                 </div>
               </div>
@@ -7757,15 +9461,15 @@ useEffect(() => {
               <div style={{...card({marginBottom:16,background:"#e3f2fd",border:`1px solid #90caf9`}),padding:"12px 16px",display:"flex",gap:10}}><span style={{fontSize:18}}>ℹ️</span><span style={{fontSize:12,color:C.blue,fontWeight:600}}>מלא דוח טיפול ידני — לכל לקוח</span></div>
               <div style={{marginBottom:14}}>
                 <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>בחר לקוח</label>
-                {form.client?(<div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}><span style={{color:C.blue,fontWeight:700}}>🏊 {form.client.split(" - ")[0]}</span><span onClick={()=>{sf("client","");setAdminClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span></div>):(
+                {form.client?(<div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}><span style={{color:C.blue,fontWeight:700}}>🏊 {form.client.split(" - ")[0]}</span><span onClick={()=>{setForm(f=>({...f,client:"",clientId:""}));setAdminClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span></div>):(
                   <div style={{position:"relative"}}>
                     <input value={adminClientSearch} onChange={e=>setAdminClientSearch(e.target.value)} placeholder="🔍 חפש לקוח לפי שם, כתובת או מפעיל..." style={inp} autoComplete="off"/>
                     {adminClientSearch&&(
                       <div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:260,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>
                         {filterClientOptions(clients, adminClientSearch).map(c=>(
-                          <Press key={c.name} onClick={()=>{sf("client",c.name);setAdminClientSearch("");haptic();}} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
+                          <Press key={clientId(c)} onClick={()=>{setForm(f=>({...f,client:c.name,clientId:clientId(c)}));setAdminClientSearch("");haptic();}} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",borderBottom:`1px solid ${C.border}`,background:"#fff"}}>
                             <div style={{width:32,height:32,borderRadius:"50%",background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",flexShrink:0}}>🏊</div>
-                            <div><div style={{fontWeight:700,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div><div style={{fontSize:11,color:C.muted}}>{clientMetaLine(c)||c.address||"ללא שיוך מפעיל"}</div></div>
+                            <div><div style={{fontWeight:700,fontSize:13,color:C.text}}>{c.name.split(" - ")[0]}</div><div style={{fontSize:11,color:C.muted}}>{[c.address,clientMetaLine(c)].filter(Boolean).join(" · ")||"ללא פרטי זיהוי נוספים"}</div></div>
                           </Press>
                         ))}
                         {filterClientOptions(clients, adminClientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות מתחילת שם הלקוח</div>}
@@ -7808,7 +9512,33 @@ useEffect(() => {
                       <div style={{fontSize:13,fontWeight:900,color:C.blue}}>סדר עבודה: {activeAdminOperator}</div>
                       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                         <Press onClick={loadDefaultAdminOrder} style={{padding:"7px 12px",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:12,fontWeight:900,border:`1px solid ${C.lightBlue}`}}>טען</Press>
-                        <Press onClick={async()=>{const sync=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);if(!sync.success){showToast("השמירה לגיליון נכשלה");haptic("medium");return;}const clean=sync.clean;setAdminOrderDraft(clean);setAdminOrderSavedPulse(true);setTimeout(()=>setAdminOrderSavedPulse(false),900);showToast("סדר נשמר, שולח התראה...");haptic("success");void (async()=>{const opSent=await sendNotificationToOperators([activeAdminOperator], "סדר היום עודכן", `${clean.length} בריכות לתאריך ${fmtDate(taskDate)}`);const assignedSub=subOperatorUsers.find(su=>isSameSubOperator(getAssignedSubOperator(taskDate, activeAdminOperator), su));let subSent=0;if(assignedSub?.username) subSent=await sendNotificationToSubOperators([assignedSub], "סדר היום עודכן", `סדר היום של ${activeAdminOperator} עודכן לתאריך ${fmtDate(taskDate)}`);showToast(opSent>0||subSent>0?"התראה נשלחה":"התראה לא נשלחה");})().catch(e=>{console.warn("Admin order notification failed", e);showToast("התראה לא נשלחה");});}} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease"}}>{adminOrderSavedPulse?"נשמר ✓":"שמור סדר ושלח למפעיל"}</Press>
+                        <Press disabled={isActionLoading("saveAdminOrder")} onClick={async()=>{
+                          if(isActionLoading("saveAdminOrder")) return;
+                          setAction("saveAdminOrder", "loading");
+                          const sync=await syncAdminOrderTasks(taskDate, activeAdminOperator, adminOrderList);
+                          if(!sync.success){
+                            setAction("saveAdminOrder", "error", 2200);
+                            showToast("לא ניתן לאמת את רשימת הסדרים - לא נשמר דבר");
+                            haptic("medium");
+                            return;
+                          }
+                          const clean=sync.clean;
+                          setAdminOrderDraft(clean);
+                          setAdminOrderSavedPulse(true);
+                          setTimeout(()=>setAdminOrderSavedPulse(false),900);
+                          setAction("saveAdminOrder", "success", 1500);
+                          showToast("סדר נשמר, שולח התראה...");
+                          haptic("success");
+                          void (async()=>{
+                            const opSent=await sendNotificationToOperators([activeAdminOperator], "סדר היום עודכן", `${clean.length} בריכות לתאריך ${fmtDate(taskDate)}`);
+                            const assignedSub=subOperatorUsers.find(su=>isSameSubOperator(getAssignedSubOperator(taskDate, activeAdminOperator), su));
+                            let subSent=0;
+                            if(assignedSub?.username) subSent=await sendNotificationToSubOperators([assignedSub], "סדר היום עודכן", `סדר היום של ${activeAdminOperator} עודכן לתאריך ${fmtDate(taskDate)}`);
+                            showToast(opSent>0||subSent>0?"התראה נשלחה":"התראה לא נשלחה");
+                          })().catch(e=>{console.warn("Admin order notification failed", e);showToast("התראה לא נשלחה");});
+                        }} style={{padding:"7px 12px",borderRadius:10,background:adminOrderSavedPulse?"linear-gradient(135deg,#16a34a,#22c55e)":C.green,color:"#fff",fontSize:12,fontWeight:900,transform:adminOrderSavedPulse?"scale(1.06)":"scale(1)",boxShadow:adminOrderSavedPulse?"0 0 0 4px rgba(34,197,94,.16),0 10px 24px rgba(22,163,74,.28)":"none",transition:"transform .18s ease, box-shadow .18s ease, background .18s ease",opacity:isActionLoading("saveAdminOrder")?0.72:1}}>
+                          {actionLabel("saveAdminOrder",{idle:"שמור סדר ושלח למפעיל",loading:"מאמת ושומר...",success:"נשמר ✓",error:"נסה שוב"})}
+                        </Press>
                       </div>
                     </div>
                     {subOperatorUsers.length>0&&<div style={{background:"rgba(241,247,255,0.72)",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
@@ -7829,7 +9559,7 @@ useEffect(() => {
                         <div style={{fontSize:11,fontWeight:900,color:C.green,marginBottom:6}}>בדיקות מים</div>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                           {adminOrderWaterCheckClients.map(c=>(
-                            <span key={`water-check-admin-${c.name}`} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minHeight:24,padding:"0 10px",borderRadius:99,background:"#e8f5e9",border:"1px solid #c8e6c9",color:C.green,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>
+                            <span key={`water-check-admin-${clientId(c)}`} style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minHeight:24,padding:"0 10px",borderRadius:99,background:"#e8f5e9",border:"1px solid #c8e6c9",color:C.green,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>
                               {String(c.name || "").split(" - ")[0]}
                             </span>
                           ))}
@@ -7838,11 +9568,13 @@ useEffect(() => {
                     )}
                     {selectedAdminOrderEntries.length===0&&<div style={{padding:18,borderRadius:12,background:"#f5f9ff",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700,marginBottom:10}}>אין בריכות שנבחרו לסדר היום</div>}
                     {selectedAdminOrderEntries.map((entry)=>{
-                      const i = adminOrderList.findIndex(x=>adminOrderClientKey(x)===adminOrderClientKey(entry) || x.client===entry.client);
-                      const lowSaltWarning = hasLowSaltLight(entry.client);
-                      const waterCheckDaysText = formatWaterCheckDays((adminOrderClientMap.get(entry.client) || {}).waterCheckDays);
+                      const i = adminOrderList.findIndex(x=>adminOrderClientKey(x)===adminOrderClientKey(entry));
+                      const poolRecord = adminOrderClientRecord(entry);
+                      const poolMeta = [poolRecord?.address,poolRecord?.poolType&&formatPoolType(poolRecord.poolType)].filter(Boolean).join(" · ");
+                      const lowSaltWarning = hasLowSaltLight(entry.client, entry.clientId);
+                      const waterCheckDaysText = formatWaterCheckDays((poolRecord || {}).waterCheckDays);
                       return (
-                      <div key={`${entry.client}-${i}`} draggable onDragStart={e=>e.dataTransfer.setData("text/plain", String(i))} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();moveAdminOrderItem(Number(e.dataTransfer.getData("text/plain")), i);}} style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:8}}>
+                      <div key={`${entry.clientId || entry.client}-${i}`} draggable onDragStart={e=>e.dataTransfer.setData("text/plain", String(i))} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();moveAdminOrderItem(Number(e.dataTransfer.getData("text/plain")), i);}} style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",marginBottom:8}}>
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
                           <input type="number" inputMode="numeric" min="1" value={entry.orderIndex || ""} onChange={e=>updateAdminOrderIndex(i, e.target.value)} onClick={e=>e.stopPropagation()} style={{width:42,height:32,borderRadius:999,background:"#e3f2fd",color:C.blue,border:`1px solid ${C.border}`,textAlign:"center",fontWeight:900,fontSize:14,flexShrink:0,outline:"none"}}/>
                           <div style={{flex:1,minWidth:0,fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{entry.client.split(" - ")[0]}</div>
@@ -7850,6 +9582,7 @@ useEffect(() => {
                           {lowSaltWarning&&<span style={{padding:"5px 10px",borderRadius:999,background:"#fff7ed",border:"1px solid #fdba74",color:C.orange,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>מלח נמוך</span>}
                           <Press onClick={(e)=>{e.stopPropagation();removeClientFromAdminOrder(entry);}} style={{padding:"5px 9px",borderRadius:8,background:"#ffebee",color:C.red,fontSize:12,fontWeight:900}}>הסר</Press>
                         </div>
+                        {poolMeta&&<div style={{fontSize:10,color:C.muted,fontWeight:800,marginBottom:7,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{poolMeta}</div>}
                         <input value={entry.note || ""} onChange={e=>setAdminOrderDraft(adminOrderList.map((x,idx)=>idx===i?{...x,note:e.target.value}:x))} placeholder="הערה למפעיל לבריכה זו..." style={{...inp,fontSize:12,padding:"8px 10px",margin:0}}/>
                       </div>
                     )})}
@@ -7858,10 +9591,10 @@ useEffect(() => {
                     </div>
                     {unselectedAdminOrderClients.length===0&&<div style={{padding:16,borderRadius:12,background:"#f8fafc",color:C.muted,fontSize:13,textAlign:"center",fontWeight:700}}>אין בריכות נוספות ליום הזה</div>}
                     {unselectedAdminOrderClients.map(c=>{
-                      const removed = adminOrderRemovedClients.some(item=>adminOrderClientKey(item)===adminOrderClientKey(c) || item===c.name);
+                      const removed = adminOrderRemovedClients.some(item=>adminOrderClientKey(item)===adminOrderClientKey(c));
                       const waterCheckDaysText = formatWaterCheckDays(c.waterCheckDays);
                       return (
-                      <Press key={c.name} onClick={()=>addClientToAdminOrder(c.name)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",border:`1px solid ${removed?"#fbbf24":C.border}`,borderRadius:12,background:removed?"#fffbeb":"#fff",marginBottom:8}}>
+                      <Press key={clientId(c)} onClick={()=>addClientToAdminOrder(c)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",border:`1px solid ${removed?"#fbbf24":C.border}`,borderRadius:12,background:removed?"#fffbeb":"#fff",marginBottom:8}}>
                         <div style={{minWidth:0}}>
                           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                             <span style={{fontSize:13,fontWeight:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</span>
@@ -7892,9 +9625,9 @@ useEffect(() => {
                     <div style={{position:"relative",marginBottom:8}}><input value={taskClientSearch} onChange={e=>setTaskClientSearch(e.target.value)} placeholder="🔍 חפש מכל הלקוחות..." style={inp} autoComplete="off"/></div>
                     <div style={{maxHeight:200,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:12,background:"#f5f9ff"}}>
                       {filterClientOptions(taskClientOptions, taskClientSearch).map(c=>{
-                        const selected = taskClients.find(x=>x.name===c.name);
+                        const selected = taskClients.find(x=>samePoolIdentity({client:x.name,clientId:x.clientId},{client:c.name,clientId:clientId(c)}));
                         return (
-                          <Press key={c.name} onClick={()=>{ haptic(); setTaskClients(prev=>selected?prev.filter(x=>x.name!==c.name):[...prev,{name:c.name,note:""}]); }} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:`1px solid ${C.border}`,background:selected?"#e3f2fd":"transparent"}}>
+                          <Press key={clientId(c)} onClick={()=>{ haptic(); setTaskClients(prev=>selected?prev.filter(x=>!samePoolIdentity({client:x.name,clientId:x.clientId},{client:c.name,clientId:clientId(c)})):[...prev,{name:c.name,clientId:clientId(c),address:c.address||"",note:""}]); }} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:`1px solid ${C.border}`,background:selected?"#e3f2fd":"transparent"}}>
                             <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${selected?C.blue:C.border}`,background:selected?C.blue:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{selected&&<span style={{color:"#fff",fontSize:13,fontWeight:900}}>✓</span>}</div>
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{fontWeight:700,fontSize:13,color:selected?C.blue:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" - ")[0]}</div>
@@ -7909,11 +9642,13 @@ useEffect(() => {
                       <div style={{marginTop:10}}>
                         <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:8}}>לקוחות נבחרים — הוסף הערה לכל אחד:</div>
                         {taskClients.map((tc,i)=>(
-                          <div key={tc.name} style={{background:C.white,borderRadius:12,padding:"10px 12px",marginBottom:8,border:`1px solid ${C.border}`}}>
+                          <div key={tc.clientId || tc.name} style={{background:C.white,borderRadius:12,padding:"10px 12px",marginBottom:8,border:`1px solid ${C.border}`}}>
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                               <span style={{fontWeight:800,fontSize:13,color:C.blue}}>🏊 {tc.name.split(" - ")[0]}</span>
-                              <Press onClick={()=>setTaskClients(prev=>prev.filter(x=>x.name!==tc.name))} style={{color:C.muted,fontSize:16,padding:"0 4px"}}>✕</Press>
+                              <Press onClick={()=>setTaskClients(prev=>prev.filter(x=>!samePoolIdentity({client:x.name,clientId:x.clientId},{client:tc.name,clientId:tc.clientId})))} style={{color:C.muted,fontSize:16,padding:"0 4px"}}>✕</Press>
                             </div>
+                            {tc.address&&<div style={{fontSize:10,color:C.muted,marginBottom:6}}>{tc.address}</div>}
+                            {clientPoolTypeLabel(tc.name,tc.clientId)&&<div style={{fontSize:10,color:C.muted,marginBottom:6,fontWeight:800}}>{clientPoolTypeLabel(tc.name,tc.clientId)}</div>}
                             <input value={tc.note} onChange={e=>{ const updated=[...taskClients]; updated[i]={...tc,note:e.target.value}; setTaskClients(updated); }} placeholder="הערה ספציפית ללקוח זה (אופציונלי)..." style={{...inp,fontSize:12,padding:"8px 12px"}}/>
                           </div>
                         ))}
@@ -7925,10 +9660,10 @@ useEffect(() => {
                 {editTaskId&&(
                   <div style={{marginBottom:10}}>
                     <label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>לקוח</label>
-                    {taskClient?(<div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}><span style={{color:C.blue,fontWeight:700}}>🏊 {taskClient.split(" - ")[0]}</span><span onClick={()=>{setTaskClient("");setTaskClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span></div>):(
+                    {taskClient?(<div style={{...inp,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"default"}}><span style={{color:C.blue,fontWeight:700}}>🏊 {[taskClient.split(" - ")[0],clientAddress(taskClient,taskClientId),clientPoolTypeLabel(taskClient,taskClientId)].filter(Boolean).join(" · ")}</span><span onClick={()=>{setTaskClient("");setTaskClientId("");setTaskClientSearch("");}} style={{color:C.muted,cursor:"pointer",fontSize:16}}>✕</span></div>):(
                       <div style={{position:"relative"}}>
                         <input value={taskClientSearch} onChange={e=>setTaskClientSearch(e.target.value)} placeholder="🔍 חפש לקוח..." style={inp} autoComplete="off"/>
-                        {taskClientSearch&&<div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:220,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>{filterClientOptions(taskClientOptions, taskClientSearch).map(c=>(<div key={c.name} onClick={()=>{setTaskClient(c.name);setTaskClientSearch("");haptic();}} style={{padding:"12px 16px",fontSize:14,fontWeight:600,color:C.text,cursor:"pointer",borderBottom:`1px solid ${C.border}`}}>{c.name.split(" - ")[0]}</div>))}{filterClientOptions(taskClientOptions, taskClientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות מתחילת שם הלקוח</div>}</div>}
+                        {taskClientSearch&&<div style={{position:"absolute",top:"100%",right:0,left:0,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,0.15)",zIndex:100,maxHeight:220,overflowY:"auto",border:`1px solid ${C.border}`,marginTop:4}}>{filterClientOptions(taskClientOptions, taskClientSearch).map(c=>(<div key={clientId(c)} onClick={()=>{setTaskClient(c.name);setTaskClientId(clientId(c));setTaskClientSearch("");haptic();}} style={{padding:"12px 16px",fontSize:14,fontWeight:600,color:C.text,cursor:"pointer",borderBottom:`1px solid ${C.border}`}}><div>{c.name.split(" - ")[0]}</div><div style={{fontSize:11,color:C.muted}}>{[c.address,clientMetaLine(c)].filter(Boolean).join(" · ")}</div></div>))}{filterClientOptions(taskClientOptions, taskClientSearch).length===0&&<div style={{padding:"14px 16px",color:C.muted,fontSize:13}}>הקלד לפחות 2 אותיות מתחילת שם הלקוח</div>}</div>}
                       </div>
                     )}
                   </div>
@@ -7943,14 +9678,25 @@ useEffect(() => {
                   if(isActionLoading("saveTasks")) return;
                   setAction("saveTasks", "loading");
                   if(editTaskId){
-                    await saveTask({date:taskDate,client:taskClient,operators:taskOps});
-                    setAction("saveTasks", "success", 1500);
+                    const saved = await saveTask({date:taskDate,client:taskClient,clientId:taskClientId,operators:taskOps});
+                    setAction("saveTasks", saved ? "success" : "error", saved ? 1500 : 2200);
                   } else {
                     if(!taskClients.length||!taskOps.length) { setAction("saveTasks", "idle"); return; }
                     const newTasksBatch = taskClients.map(tc=>({id:Date.now()+Math.floor(Math.random()*100000),date:taskDate.slice(0,10),client:tc.name,clientId:tc.clientId||clientIdByName(tc.name),operators:[...taskOps],status:"pending",adminApproval:"pending",requestedBy:user?.name||"",changeLog:[{at:nowStr(),note:tc.note||taskNote||"משימה ממתינה לאישור ושליחה",by:user?.name,needsAck:false,ackedBy:[]}]}));
                     const newTasks = [...tasks, ...newTasksBatch];
-                    setTasks(newTasks); setTaskClients([]); setTaskClientSearch(""); setTaskOps([]); setTaskNote("");
-                    if(sheetId) await sheetCall("saveTasks",{tasks:newTasks});
+                    if(sheetId) {
+                      const result = await sheetCall("mutateTasks",{upserts:newTasksBatch}).catch(()=>null);
+                      if (!result?.success || !Array.isArray(result?.tasks)) {
+                        setAction("saveTasks", "error", 2200);
+                        showToast("המשימות לא נשמרו - נסה שוב");
+                        haptic("medium");
+                        return;
+                      }
+                      setTasks(result.tasks);
+                    } else {
+                      setTasks(newTasks);
+                    }
+                    setTaskClients([]); setTaskClientSearch(""); setTaskOps([]); setTaskNote("");
                     setAction("saveTasks", "success", 1500);
                     showToast(`✅ ${newTasksBatch.length} משימות נוצרו וממתינות לאישור`);
                     haptic("success");
@@ -7978,7 +9724,7 @@ useEffect(() => {
                       </div>
                       <div style={{display:"grid",gridTemplateColumns:"minmax(54px,auto) 42px 92px",gap:6,alignItems:"start",justifyItems:"stretch"}}>
                         <div style={{minWidth:54,display:"flex",justifyContent:"center",paddingTop:4}}><Badge label={taskStatusLabel(t)} col={taskStatusColor(t)}/></div>
-                        <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}} style={{width:42,height:32,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:17,fontWeight:900,border:`1px solid ${C.border}`}}>✏️</Press>
+                        <Press onClick={()=>{setEditTaskId(t.id);setTaskClient(t.client);setTaskClientId(t.clientId||clientIdByName(t.client));setTaskOps(t.operators);setTaskDate(t.date);window.scrollTo(0,0);}} style={{width:42,height:32,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:10,background:"#e3f2fd",color:C.blue,fontSize:17,fontWeight:900,border:`1px solid ${C.border}`}}>✏️</Press>
                         <div style={{width:92,minHeight:58,display:"flex",flexDirection:"column",gap:4}}>
                             <Press onClick={()=>approveOperatorTaskRequest(t.id,true)} style={{width:"100%",height:32,padding:"0 8px",borderRadius:9,background:actionStatus[`approveTask:${t.id}`]==="success"?C.green:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontSize:11,fontWeight:900,whiteSpace:"nowrap",display:"flex",alignItems:"center",justifyContent:"center"}}>
                               {actionLabel(`approveTask:${t.id}`,{idle:"אשר ושלח",loading:"שולח...",success:"נשלח",error:"נסה שוב"})}
@@ -7989,7 +9735,7 @@ useEffect(() => {
                     </div>
                     <div style={{display:"flex",gap:8}}>
                       <select defaultValue="" onChange={e=>{if(e.target.value){addOp(t.id,e.target.value);e.target.value="";}}} style={{...sel,flex:1,fontSize:12,padding:"7px 10px"}}><option value="">+ הוסף מפעיל</option>{opNames.filter(n=>!t.operators.includes(n)).map(n=><option key={n}>{n}</option>)}</select>
-                      <Press onClick={()=>{ if(!window.confirm("למחוק?"))return; const deletedTask=t; const n=tasks.filter(x=>x.id!==t.id); setTasks(n); showToast("🗑️ משימה נמחקה"); void (async()=>{ try { if(sheetId) await sheetCall("saveTasks",{tasks:n}); await sendNotificationToOperators(deletedTask.operators||[], "🗑️ משימה נמחקה", `${deletedTask.client?.split(" - ")[0] || ""} — ${fmtDate(deletedTask.date)}`); } catch(e) { console.warn("Delete task background sync failed", e); } })(); }} style={{padding:"7px 14px",borderRadius:10,background:"#ffebee",color:C.red,fontSize:12,fontWeight:700}}>🗑️</Press>
+                      <Press onClick={async()=>{ if(!window.confirm("למחוק?"))return; const deletedTask=t; const n=tasks.filter(x=>x.id!==t.id); if(sheetId){const result=await sheetCall("mutateTasks",{deleteIds:[t.id]}).catch(()=>null);if(!result?.success||!Array.isArray(result?.tasks)){showToast("מחיקת המשימה נכשלה - נסה שוב");haptic("medium");return;}setTasks(result.tasks);}else{setTasks(n);}showToast("🗑️ משימה נמחקה");void sendNotificationToOperators(deletedTask.operators||[], "🗑️ משימה נמחקה", `${deletedTask.client?.split(" - ")[0] || ""} — ${fmtDate(deletedTask.date)}`).catch(e=>console.warn("Delete task notification failed",e));}} style={{padding:"7px 14px",borderRadius:10,background:"#ffebee",color:C.red,fontSize:12,fontWeight:700}}>🗑️</Press>
                     </div>
                     {operatorNote&&<OperatorNoteBox note={operatorNote} />}
                     {lastLog&&<div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`}}><TaskChangeInfo log={lastLog} operators={t.operators} /></div>}
@@ -8010,7 +9756,7 @@ useEffect(() => {
                     <Badge label={`${done}/${total}`} col={done===total&&total>0?C.green:C.blue}/>
                   </div>
                   {total>0&&<PBar done={done} total={total} label="בריכות"/>}
-                  {entries.map((entry,i)=>(<div key={`${op.name}-${entry.client}-${i}`} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderTop:`1px solid ${C.border}`,marginTop:8}}><span style={{color:C.muted,fontSize:13}}>{entry.client.split(" - ")[0]}</span><Badge label={entry.reported?"✓ דוח נוצר":"ממתין לדוח"} col={entry.reported?C.green:C.orange}/></div>))}
+                  {entries.map((entry,i)=>(<div key={`${op.name}-${entry.clientId || entry.client}-${i}`} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderTop:`1px solid ${C.border}`,marginTop:8}}><span style={{color:C.muted,fontSize:13}}>{[entry.client.split(" - ")[0],clientAddress(entry.client,entry.clientId),clientPoolTypeLabel(entry.client,entry.clientId)].filter(Boolean).join(" · ")}</span><Badge label={entry.reported?"✓ דוח נוצר":"ממתין לדוח"} col={entry.reported?C.green:C.orange}/></div>))}
                 </div>
               ))}
             </div>
@@ -8018,8 +9764,8 @@ useEffect(() => {
           {adminTab==="qr"&&(
             <div>
               <div style={{...card({marginBottom:16,background:"#e3f2fd",border:`1px solid #90caf9`}),padding:"12px 16px",display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:20}}>ℹ️</span><div style={{fontSize:12,color:C.blue,fontWeight:600,lineHeight:1.6}}>לכל לקוח יש QR ייחודי. המפעיל סורק אותו → הדוח נפתח אוטומטית. הדפס את ה-QR ושים אצל הלקוח.</div></div>
-              {clients.map(c=>(<div key={c.name} style={{...card({marginBottom:10}),display:"flex",alignItems:"center",gap:14,textAlign:"right"}}><div style={{flex:1,minWidth:0}}><div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start",marginBottom:2}}><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.name.split(" - ")[0]}</div><WhatsAppClientToggle client={c} compact/></div><div style={{fontSize:12,color:C.muted}}>📍 {c.address||c.name.split(" - ")[1]||""}</div></div><Press onClick={()=>setShowQRCode(showQRCode===c.name?null:c.name)} style={{height:32,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 14px",borderRadius:10,background:showQRCode===c.name?"#e3f2fd":C.border,color:showQRCode===c.name?C.blue:C.muted,fontWeight:700,fontSize:12}}>{showQRCode===c.name?"סגור":"📷 QR"}</Press></div>))}
-              {showQRCode&&(()=>{ const encoded = encodeURIComponent(showQRCode.split(" - ")[0]); const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encoded}&bgcolor=ffffff&color=1565c0&margin=10`; return (<div style={{...card({border:`2px solid ${C.lightBlue}`,textAlign:"center"}),padding:20,marginBottom:16}}><div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:12}}>{showQRCode.split(" - ")[0]}</div><img src={qrUrl} alt="QR" style={{width:180,height:180,borderRadius:12,marginBottom:12}}/><div style={{fontSize:11,color:C.muted,marginBottom:12}}>סרוק עם האפליקציה לפתיחת דוח</div><a href={qrUrl} download={`qr-${showQRCode.split(" - ")[0]}.png`} target="_blank" rel="noreferrer"><Press style={{padding:"10px 20px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:700,fontSize:13,display:"inline-block"}}>⬇️ הורד QR</Press></a></div>); })()}
+              {clients.map(c=>{ const poolId=clientId(c); return (<div key={poolId} style={{...card({marginBottom:10}),display:"flex",alignItems:"center",gap:14,textAlign:"right"}}><div style={{flex:1,minWidth:0}}><div style={{minHeight:24,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-start",marginBottom:2}}><div style={{fontWeight:800,fontSize:15,color:C.text}}>{c.name.split(" - ")[0]}</div><WhatsAppClientToggle client={c} compact/></div><div style={{fontSize:12,color:C.muted}}>📍 {c.address||c.name.split(" - ")[1]||""}</div></div><Press onClick={()=>setShowQRCode(showQRCode===poolId?null:poolId)} style={{height:32,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 14px",borderRadius:10,background:showQRCode===poolId?"#e3f2fd":C.border,color:showQRCode===poolId?C.blue:C.muted,fontWeight:700,fontSize:12}}>{showQRCode===poolId?"סגור":"📷 QR"}</Press></div>);})}
+              {showQRCode&&(()=>{ const qrClient=findClientByName("",showQRCode); if(!qrClient)return null; const qrName=String(qrClient.name||"").split(" - ")[0]; const encoded = encodeURIComponent(qrName); const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encoded}&bgcolor=ffffff&color=1565c0&margin=10`; return (<div style={{...card({border:`2px solid ${C.lightBlue}`,textAlign:"center"}),padding:20,marginBottom:16}}><div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:4}}>{qrName}</div>{qrClient.address&&<div style={{fontSize:11,color:C.muted,marginBottom:8}}>{qrClient.address}</div>}<img src={qrUrl} alt="QR" style={{width:180,height:180,borderRadius:12,marginBottom:12}}/><div style={{fontSize:11,color:C.muted,marginBottom:12}}>סרוק עם האפליקציה לפתיחת דוח</div><a href={qrUrl} download={`qr-${qrName}.png`} target="_blank" rel="noreferrer"><Press style={{padding:"10px 20px",borderRadius:10,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:700,fontSize:13,display:"inline-block"}}>⬇️ הורד QR</Press></a></div>); })()}
             </div>
           )}
           {adminTab==="hours"&&(
@@ -8049,7 +9795,7 @@ useEffect(() => {
                   {["סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={()=>setNewClient(c=>({...c,poolType:setPoolTypePart(c.poolType,pt)}))} style={{padding:"6px 12px",borderRadius:99,fontSize:12,fontWeight:800,background:secondaryPoolType(newClient.poolType)===pt?C.blue:"#f0f4f8",color:secondaryPoolType(newClient.poolType)===pt?"#fff":C.muted}}>{pt}</Press>))}
                 </div>
                 <WaterCheckDaysEditor value={newClient.waterCheckDays} onChange={value=>setNewClient(c=>({...c,waterCheckDays:value}))}/>
-                <Press onClick={async()=>{ if(!newClient.name.trim()){showToast("⚠️ נא להזין שם לקוח");return;} const clientToAdd={clientId:makeClientId(),name:newClient.name.trim(),phone:newClient.phone.trim(),address:newClient.address.trim(),gateCode:newClient.gateCode.trim(),qrUrl:"",poolType:newClient.poolType||"מלח",regularDays:newClient.regularDays.trim(),regularOperator:newClient.regularOperator||"",waterCheckDays:normalizeWaterCheckDays(newClient.waterCheckDays)}; const updated=ensureClientIds([...clients,clientToAdd]); setClients(updated); setNewClient({...emptyAdminClient}); if(sheetId) await sheetCall("saveClients",{clients:updated}); showToast("✅ לקוח נוסף"); haptic("success"); }} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>➕ הוסף לקוח</Press>
+                <Press onClick={async()=>{ if(!newClient.name.trim()){showToast("⚠️ נא להזין שם לקוח");return;} const clientToAdd={clientId:makeClientId(),name:newClient.name.trim(),phone:newClient.phone.trim(),address:newClient.address.trim(),gateCode:newClient.gateCode.trim(),qrUrl:"",poolType:newClient.poolType||"מלח",regularDays:newClient.regularDays.trim(),regularOperator:newClient.regularOperator||"",waterCheckDays:normalizeWaterCheckDays(newClient.waterCheckDays)}; if(sheetId){const res=await sheetCall("saveClients",{clients:[clientToAdd]});if(!res?.success){showToast("⚠️ הוספת הבריכה נכשלה");haptic("medium");return;}} setClients(prev=>ensureClientIds([...prev,clientToAdd])); setNewClient({...emptyAdminClient}); showToast("✅ לקוח נוסף"); haptic("success"); }} style={{padding:"13px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontWeight:800,fontSize:14,textAlign:"center",boxShadow:"0 16px 36px rgba(79,70,229,0.24)"}}>➕ הוסף לקוח</Press>
               </div>
               <h3 style={{fontSize:12,fontWeight:800,color:C.muted,letterSpacing:"0.1em",textTransform:"uppercase",margin:"0 0 12px"}}>לקוחות קיימים — {clients.length}</h3>
               <div style={{position:"relative",marginBottom:12}}>
@@ -8065,8 +9811,8 @@ useEffect(() => {
                   </Press>
                 );
               })()}
-              {(clientListSearch.trim().length>=2?filterClientOptions(clients, clientListSearch):sortByClientName(clients)).map((c,i)=>{ const missing=adminClientMissingFields(c); const isEditing=editingAdminClient?.originalName===c.name; const draft=isEditing?editingAdminClient.draft:null; return (
-                <div key={c.name+"-"+i} style={{...card({marginBottom:10,border:missing.length?"1px solid rgba(194,65,12,0.28)":"1px solid "+C.border})}}>
+              {(clientListSearch.trim().length>=2?filterClientOptions(clients, clientListSearch):sortByClientName(clients)).map((c)=>{ const missing=adminClientMissingFields(c); const poolId=clientId(c); const isEditing=editingAdminClient?.originalClientId===poolId; const draft=isEditing?editingAdminClient.draft:null; return (
+                <div key={poolId} style={{...card({marginBottom:10,border:missing.length?"1px solid rgba(194,65,12,0.28)":"1px solid "+C.border})}}>
                   {!isEditing&&<>
                     <div style={{display:"flex",alignItems:"flex-start",gap:12,textAlign:"right"}}>
                       <div style={{width:42,height:42,borderRadius:14,background:"rgba(219,234,254,0.86)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{poolIconForType(c.poolType)}</div>
@@ -8089,9 +9835,9 @@ useEffect(() => {
                       {c.phone&&<a href={"tel:"+c.phone} style={{color:C.blue,fontSize:18,textDecoration:"none",paddingTop:4}}>📞</a>}
                     </div>
                     <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap",alignItems:"center"}}>
-                      {["מלח","כלור","סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={async()=>{ const nextType=setPoolTypePart(c.poolType,pt); const updated=clients.map(x=>x.name===c.name?{...x,poolType:nextType}:x); setClients(updated); await sheetCall("saveClientPoolType",{clientName:c.name,poolType:nextType}); showToast("✅ "+clientDisplayName(c)+" — "+formatPoolType(nextType)); haptic(); }} style={{padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:800,background:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?C.blue:"#f0f4f8",color:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?"#fff":C.muted}}>{pt}</Press>))}
+                      {["מלח","כלור","סקימר","גלישה"].map(pt=>(<Press key={pt} onClick={async()=>{ const nextType=setPoolTypePart(c.poolType,pt); if(sheetId){const res=await sheetCall("saveClientPoolType",{clientName:c.name,clientId:poolId,poolType:nextType});if(!res?.success){showToast("⚠️ עדכון סוג הבריכה נכשל");haptic("medium");return;}} setClients(prev=>prev.map(x=>clientId(x)===poolId?{...x,poolType:nextType}:x)); showToast("✅ "+clientDisplayName(c)+" — "+formatPoolType(nextType)); haptic(); }} style={{padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:800,background:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?C.blue:"#f0f4f8",color:(pt==="מלח"||pt==="כלור"?primaryPoolType(c.poolType)===pt:secondaryPoolType(c.poolType)===pt)?"#fff":C.muted}}>{pt}</Press>))}
                       <Press onClick={()=>deleteAdminClient(c)} style={{marginInlineStart:"auto",padding:"6px 12px",borderRadius:12,background:"#ffebee",border:"1px solid rgba(185,28,28,0.18)",color:C.red,fontSize:12,fontWeight:900}}>🗑️ מחיקה</Press>
-                      <Press onClick={()=>{setEditingAdminClient({originalName:c.name,draft:adminClientDraft(c)});haptic();}} style={{padding:"6px 12px",borderRadius:12,background:"rgba(219,234,254,0.86)",border:"1px solid "+C.border,color:C.blue,fontSize:12,fontWeight:900}}>✏️ עריכה</Press>
+                      <Press onClick={()=>{setEditingAdminClient({originalClientId:poolId,originalName:c.name,draft:adminClientDraft(c)});haptic();}} style={{padding:"6px 12px",borderRadius:12,background:"rgba(219,234,254,0.86)",border:"1px solid "+C.border,color:C.blue,fontSize:12,fontWeight:900}}>✏️ עריכה</Press>
                     </div>
                   </>}
                   {isEditing&&<>
@@ -8110,7 +9856,7 @@ useEffect(() => {
                     </div>
                     <WaterCheckDaysEditor value={draft.waterCheckDays} onChange={value=>setEditingAdminClient(x=>({...x,draft:{...x.draft,waterCheckDays:value}}))}/>
                     <div style={{display:"flex",gap:8}}>
-                      <Press onClick={()=>saveAdminClientDetails(editingAdminClient.originalName,draft)} style={{flex:1,padding:"11px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontSize:13,fontWeight:900,textAlign:"center"}}>שמור</Press>
+                      <Press onClick={()=>saveAdminClientDetails(editingAdminClient.originalClientId,editingAdminClient.originalName,draft)} style={{flex:1,padding:"11px",borderRadius:14,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",fontSize:13,fontWeight:900,textAlign:"center"}}>שמור</Press>
                       <Press onClick={()=>{setEditingAdminClient(null);haptic();}} style={{padding:"11px 14px",borderRadius:14,background:"rgba(241,247,255,0.72)",border:"1px solid "+C.border,color:C.muted,fontSize:13,fontWeight:900}}>ביטול</Press>
                     </div>
                   </>}
@@ -8131,10 +9877,11 @@ useEffect(() => {
                 const quota = Number(row.monthlyTreatmentQuota || (doneCount + Number(row.monthlyTreatmentBalance || 0)) || 4);
                 const balance = Number(row.monthlyTreatmentBalance ?? Math.max(0,quota-doneCount));
                 return (
-                  <div key={`${row.client}-${i}`} style={{...card({marginBottom:10})}}>
+                  <div key={`${row.clientId || row.client}-${i}`} style={{...card({marginBottom:10})}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:10}}>
                       <div style={{flex:1}}>
                         <div style={{fontWeight:900,fontSize:15,color:C.text}}>{String(row.client||"").split(" - ")[0]}</div>
+                        {clientAddress(row.client,row.clientId)&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{clientAddress(row.client,row.clientId)}</div>}
                         <div style={{fontSize:12,color:C.muted,marginTop:3}}>{doneCount} טיפולים בפועל מתוך {quota} החודש</div>
                       </div>
                       <Badge label={`נותרו ${balance}`} col={balance===0?C.green:C.blue}/>
@@ -8161,11 +9908,11 @@ useEffect(() => {
                       {(()=>{
                         const q = saltSearch.trim().toLowerCase();
                         const rows = [...sheetReports, ...reports.filter(r=>!r._fromSheet)]
-                          .filter(r => String(r.salt ?? "").trim() !== "" && (String(r.client||"").toLowerCase().includes(q) || String(r.operator||"").toLowerCase().includes(q)))
+                          .filter(r => primaryPoolType(findClientByName(r.client,r.clientId)?.poolType)!=="כלור" && Number.isFinite(measuredSaltPpm(r.salt)) && (String(r.client||"").toLowerCase().includes(q) || String(r.operator||"").toLowerCase().includes(q)))
                           .slice(0, 12);
                         if(!rows.length) return <div style={{padding:"12px 14px",fontSize:12,fontWeight:800,color:C.muted,textAlign:"center"}}>לא נמצאו מדידות מלח</div>;
                         return rows.map((r,i)=>(
-                          <Press key={`${r.id || r.client}-${i}`} onClick={()=>setSelectedSaltReport(r)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 12px",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                          <Press tag="button" key={`${r.id || r.client}-${i}`} onClick={()=>setSelectedSaltReport(r)} style={{display:"flex",width:"100%",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 12px",border:`0`,borderTop:i?`1px solid ${C.border}`:"none",background:"#fff",fontFamily:"inherit",textAlign:"right"}}>
                             <div style={{minWidth:0}}>
                               <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(r.client||"").split(" - ")[0]}</div>
                               <div style={{fontSize:11,fontWeight:700,color:C.muted}}>{r.operator} · {fmtDate(r.reportDate)}</div>
@@ -8178,36 +9925,70 @@ useEffect(() => {
                   )}
                 </div>
                 <div style={{height:1,background:C.border,margin:"12px 0"}}/>
-                <div style={{marginBottom:10,border:`1px solid rgba(198,40,40,0.22)`,borderRadius:14,background:"#fff5f5",padding:10}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}>
-                    <div style={{fontSize:13,fontWeight:900,color:C.red}}>מלח נמוך</div>
-                    <Badge label="עמודת מלח" col={C.red}/>
+                <div style={{marginBottom:10,border:`1px solid ${C.border}`,borderRadius:14,background:"rgba(245,249,255,0.78)",padding:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:9}}>
+                    <div style={{fontSize:13,fontWeight:900,color:C.blue}}>רמת מלח לקוחות</div>
+                    <Badge label={`מינימום ${Number(saltMinimum).toLocaleString("he-IL")} PPM`} col={C.blue}/>
                   </div>
-                  <input value={lowSaltSearch} onChange={e=>setLowSaltSearch(e.target.value)} placeholder="חיפוש חופשי לפי לקוח, מפעיל או יום..." style={{...inp,marginBottom:8,border:"1px solid rgba(198,40,40,0.18)",background:"#fff"}}/>
+                  <div style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 11px",marginBottom:9}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:7}}>
+                      <label style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:11,fontWeight:900,color:applySaltMinimumToReports?C.blue:C.muted,cursor:"pointer"}}>
+                        <input type="checkbox" checked={applySaltMinimumToReports} onChange={e=>setApplySaltMinimumToReports(e.target.checked)} style={{width:18,height:18,margin:0,accentColor:C.blue}}/>
+                        החל גם על הדוחות
+                      </label>
+                      <div style={{fontSize:11,fontWeight:900,color:C.text}}>סינון מדד מינימום</div>
+                    </div>
+                    <div dir="ltr" style={{display:"grid",gridTemplateColumns:"44px minmax(0,1fr) 44px",alignItems:"center",gap:8}}>
+                      <button type="button" aria-label="הפחת מאה" title="הפחת 100" disabled={saltMinimum<=0} onClick={()=>{setSaltMinimum(value=>Math.max(0,value-100));haptic();}} style={{width:44,height:44,borderRadius:10,border:`1px solid ${C.border}`,background:"#f0f4f8",color:C.blue,fontSize:22,fontWeight:900,lineHeight:1,cursor:saltMinimum<=0?"not-allowed":"pointer",opacity:saltMinimum<=0?0.45:1}}>−</button>
+                      <input
+                        type="range"
+                        min="0"
+                        max="6000"
+                        step="100"
+                        value={saltMinimum}
+                        onChange={e=>setSaltMinimum(Number(e.target.value))}
+                        aria-label="סינון מדד מינימום למלח"
+                        style={{width:"100%",margin:0,accentColor:C.blue}}
+                      />
+                      <button type="button" aria-label="הוסף מאה" title="הוסף 100" disabled={saltMinimum>=6000} onClick={()=>{setSaltMinimum(value=>Math.min(6000,value+100));haptic();}} style={{width:44,height:44,borderRadius:10,border:`1px solid ${C.border}`,background:"#e3f2fd",color:C.blue,fontSize:22,fontWeight:900,lineHeight:1,cursor:saltMinimum>=6000?"not-allowed":"pointer",opacity:saltMinimum>=6000?0.45:1}}>+</button>
+                    </div>
+                    <div style={{margin:"0 52px"}}>
+                      <div dir="ltr" aria-hidden="true" style={{position:"relative",height:9,margin:"0 7px"}}>
+                        {Array.from({length:13},(_,i)=>i*500).map(value=><span key={value} style={{position:"absolute",left:`${value/60}%`,top:1,width:1,height:value%1000===0?7:5,background:value%1000===0?"#94a3b8":"#cbd5e1",transform:"translateX(-0.5px)"}}/>)}
+                      </div>
+                      <div dir="ltr" aria-hidden="true" style={{display:"flex",justifyContent:"space-between",fontSize:9,fontWeight:800,color:C.muted}}>
+                        {[0,2000,4000,6000].map(value=><span key={value}>{value.toLocaleString("he-IL")}</span>)}
+                      </div>
+                    </div>
+                  </div>
+                  <input value={lowSaltSearch} onChange={e=>setLowSaltSearch(e.target.value)} placeholder="חיפוש חופשי לפי לקוח, מפעיל או יום..." style={{...inp,marginBottom:8,background:"#fff"}}/>
                   {(()=>{
                     const q = lowSaltSearch.trim().toLowerCase();
-                    const rows = [...sheetReports, ...reports.filter(r=>!r._fromSheet)]
-                      .filter(r=>{
-                        return isLowSaltReportValue(r.salt);
-                      })
+                    const rows = latestMeasuredSaltReports()
+                      .filter(r=>measuredSaltPpm(r.salt)<=saltMinimum)
                       .filter(r=>{
                         if(!q) return true;
+                        const pool = findClientByName(r.client,r.clientId);
                         const dayText = fmtDate(r.reportDate);
-                        return String(r.client||"").toLowerCase().includes(q) || String(r.operator||"").toLowerCase().includes(q) || String(dayText||"").toLowerCase().includes(q) || String(r.reportDate||"").toLowerCase().includes(q);
+                        return [r.client,r.operator,dayText,r.reportDate,pool?.address,pool?.poolType].some(value=>String(value||"").toLowerCase().includes(q));
                       })
-                      .sort((a,b)=>String(a.client||"").localeCompare(String(b.client||""), "he") || normalizeDate(b.reportDate).localeCompare(normalizeDate(a.reportDate)))
-                      .slice(0, 20);
-                    if(!rows.length) return <div style={{padding:"10px 12px",borderRadius:10,background:"#fff",fontSize:12,fontWeight:800,color:C.muted,textAlign:"center"}}>לא נמצאו לקוחות עם מלח נמוך</div>;
-                    return <div style={{maxHeight:220,overflowY:"auto",borderRadius:10,background:"#fff",border:`1px solid ${C.border}`}}>
-                      {rows.map((r,i)=>(
-                        <Press key={`${r.id || r.client}-${r.reportDate}-${i}`} onClick={()=>setSelectedSaltReport(r)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 12px",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                      .sort((a,b)=>measuredSaltPpm(a.salt)-measuredSaltPpm(b.salt) || String(a.client||"").localeCompare(String(b.client||""), "he"));
+                    if(!rows.length) return <div style={{padding:"10px 12px",borderRadius:10,background:"#fff",fontSize:12,fontWeight:800,color:C.muted,textAlign:"center"}}>לא נמצאו בריכות מתחת למדד המינימום {Number(saltMinimum).toLocaleString("he-IL")} PPM</div>;
+                    return <div style={{maxHeight:260,overflowY:"auto",borderRadius:10,background:"#fff",border:`1px solid ${C.border}`}}>
+                      <div style={{padding:"7px 12px",fontSize:10,fontWeight:900,color:C.muted,background:"#f8fafc",borderBottom:`1px solid ${C.border}`}}>{rows.length} בריכות · המדידה האחרונה שנמדדה</div>
+                      {rows.map((r,i)=>{
+                        const pool = findClientByName(r.client,r.clientId);
+                        const poolMeta = [pool?.address,pool?.poolType&&formatPoolType(pool.poolType)].filter(Boolean).join(" · ");
+                        const ppm = measuredSaltPpm(r.salt);
+                        return <Press tag="button" key={`${r.clientId || r.id || r.client}-${r.reportDate}-${i}`} onClick={()=>setSelectedSaltReport(r)} style={{display:"flex",width:"100%",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 12px",border:0,borderTop:i?`1px solid ${C.border}`:"none",background:"#fff",fontFamily:"inherit",textAlign:"right"}}>
                           <div style={{minWidth:0}}>
                             <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{String(r.client||"").split(" - ")[0]}</div>
-                            <div style={{fontSize:11,fontWeight:800,color:C.muted}}>👤 {r.operator || "-"} · 📅 {fmtDate(r.reportDate)}</div>
+                            {poolMeta&&<div style={{fontSize:10,fontWeight:800,color:C.blue,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>{poolMeta}</div>}
+                            <div style={{fontSize:11,fontWeight:800,color:C.muted,marginTop:2}}>👤 {r.operator || "-"} · 📅 {fmtDate(r.reportDate)}</div>
                           </div>
-                          <span style={{padding:"5px 10px",borderRadius:999,background:"#ffebee",border:"1px solid #ffcdd2",color:C.red,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>{Number.isFinite(numericSaltPpm(r.salt)) ? `מלח נמוך · ${numericSaltPpm(r.salt)} PPM` : "מלח נמוך"}</span>
-                        </Press>
-                      ))}
+                          <span style={{padding:"5px 10px",borderRadius:999,background:ppm<=2500?"#ffebee":"#e3f2fd",border:`1px solid ${ppm<=2500?"#ffcdd2":"#bbdefb"}`,color:ppm<=2500?C.red:C.blue,fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>{ppm.toLocaleString("he-IL")} PPM</span>
+                        </Press>;
+                      })}
                     </div>;
                   })()}
                 </div>
@@ -8215,25 +9996,65 @@ useEffect(() => {
                 <div style={{border:`1px solid ${C.border}`,borderRadius:14,background:"rgba(245,249,255,0.78)",padding:10}}>
                   <div style={{fontSize:12,fontWeight:900,color:C.blue,marginBottom:8}}>סינון לפי תאריכים</div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-                    <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>מתאריך</label><input type="date" value={reportDateFilter} onChange={e=>setReportDateFilter(e.target.value)} style={inp}/></div>
-                    <div><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>עד תאריך</label><input type="date" value={reportDateToFilter} onChange={e=>setReportDateToFilter(e.target.value)} style={inp}/></div>
-                    <div style={{display:"flex",alignItems:"flex-end"}}><Press onClick={async()=>{ showToast("⏳ טוען דוחות..."); const res = await sheetCall("getReports",{fromDate:reportDateFilter || "",toDate:reportDateToFilter || (reportDateFilter ? reportDateFilter : ""),query:reportFilter || "",limit:reportDateFilter || reportDateToFilter || reportFilter ? 500 : 250}); if(res?.reports?.length){setSheetReports(res.reports);showToast(`✅ ${res.reports.length} דוחות נטענו`);}else{showToast("⚠️ לא נמצאו דוחות");} }} style={{width:"100%",padding:"12px",borderRadius:14,background:`linear-gradient(135deg,${C.blue},${C.lightBlue})`,color:"#fff",fontWeight:800,fontSize:13,textAlign:"center"}}>🔄 טען מגיליון</Press></div>
+                    <div style={{minWidth:0}}><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>מתאריך</label><input type="date" value={reportDateFilter} onChange={e=>setReportDateFilter(e.target.value)} style={{...inp,minWidth:0}}/></div>
+                    <div style={{minWidth:0}}><label style={{fontSize:11,fontWeight:700,color:C.muted,display:"block",marginBottom:6}}>עד תאריך</label><input type="date" value={reportDateToFilter} onChange={e=>setReportDateToFilter(e.target.value)} style={{...inp,minWidth:0}}/></div>
+                    <div style={{display:"flex",alignItems:"flex-end",minWidth:0}}>
+                      <Press disabled={isActionLoading("loadReports")} onClick={async()=>{
+                        if(isActionLoading("loadReports")) return;
+                        setAction("loadReports", "loading");
+                        showToast("⏳ טוען דוחות...");
+                        const res = await sheetCall("getReports",{
+                          fromDate:reportDateFilter || "",
+                          toDate:reportDateToFilter || (reportDateFilter ? reportDateFilter : ""),
+                          query:reportFilter || "",
+                          limit:reportDateFilter || reportDateToFilter || reportFilter ? 500 : 250
+                        });
+                        if(Array.isArray(res?.reports)){
+                          setSheetReports(res.reports);
+                          setDataConnectionStatus("connected");
+                          setAction("loadReports", "success", 1400);
+                          showToast(res.reports.length ? `✅ ${res.reports.length} דוחות נטענו` : "לא נמצאו דוחות בטווח שנבחר");
+                        }else{
+                          setDataConnectionStatus("offline");
+                          setAction("loadReports", "error", 2200);
+                          showToast("טעינת הדוחות נכשלה · המידע השמור נשאר זמין");
+                        }
+                      }} style={{width:"100%",minWidth:0,padding:"12px 6px",borderRadius:14,background:actionStatus.loadReports==="error"?"#fff8e1":`linear-gradient(135deg,${C.blue},${C.lightBlue})`,border:actionStatus.loadReports==="error"?"1px solid #ffe082":"none",color:actionStatus.loadReports==="error"?C.orange:"#fff",fontWeight:800,fontSize:13,textAlign:"center",opacity:isActionLoading("loadReports")?0.72:1}}>
+                        {actionLabel("loadReports",{idle:"🔄 טען מגיליון",loading:"טוען...",success:"נטען ✓",error:"נסה שוב"})}
+                      </Press>
+                    </div>
                   </div>
                 </div>
               </div>
               {(()=>{
                 const allReports = [...sheetReports, ...reports.filter(r=>!r._fromSheet)];
                 const unique = allReports.filter((r, idx, arr)=>arr.findIndex(x=>sameReportIdentity(x, r))===idx);
-                const filtered = unique.reverse().filter(r=>{ const d=toISODate(r.reportDate) || normalizeDate(r.reportDate); const q=reportFilter.trim().toLowerCase(); const matchText = !q || String(r.client||"").toLowerCase().includes(q) || String(r.operator||"").toLowerCase().includes(q); const matchFrom = !reportDateFilter || d>=reportDateFilter; const matchTo = !reportDateToFilter || d<=reportDateToFilter; return matchText && matchFrom && matchTo; });
-                if(filtered.length===0) return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted,fontSize:14}}>אין דוחות — לחץ "טען מגיליון"</div>;
-                return filtered.map((r,i)=>(
-                  <div key={i} style={{...card({marginBottom:12})}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div><Badge label={r.poolStatus==="מאוזנת"?"✅ מאוזנת":"⚠️ אחר"} col={r.poolStatus==="מאוזנת"?C.green:C.orange}/></div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:6}}>{[["כלור",`${r.chlorine} ppm`,"#e3f2fd","#1565c0"],["pH",r.ph,"#f3e5f5","#6a1b9a"],["רמת מלח",`${r.salt} PPM`,"#e8f5e9","#1b5e20"]].map(([k,v,bg,col])=>(<div key={k} style={{background:bg,borderRadius:10,padding:"8px",textAlign:"center"}}><div style={{fontSize:10,fontWeight:700,color:"#90a4ae",marginBottom:2}}>{k}</div><div style={{fontSize:14,fontWeight:900,color:col}}>{v}</div></div>))}</div>
+                const filtered = unique.reverse().filter(r=>{
+                  const d=toISODate(r.reportDate) || normalizeDate(r.reportDate);
+                  const q=reportFilter.trim().toLowerCase();
+                  const matchText = !q || String(r.client||"").toLowerCase().includes(q) || String(r.operator||"").toLowerCase().includes(q);
+                  const matchFrom = !reportDateFilter || d>=reportDateFilter;
+                  const matchTo = !reportDateToFilter || d<=reportDateToFilter;
+                  const saltPpm = measuredSaltPpm(r.salt);
+                  const matchSalt = !applySaltMinimumToReports || (Number.isFinite(saltPpm) && saltPpm<=saltMinimum);
+                  return matchText && matchFrom && matchTo && matchSalt;
+                });
+                if(filtered.length===0) return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted,fontSize:14}}>{applySaltMinimumToReports?`אין דוחות מתחת למדד המינימום ${Number(saltMinimum).toLocaleString("he-IL")} PPM`:'אין דוחות — לחץ "טען מגיליון"'}</div>;
+                return filtered.map((r,i)=>{ const reportClient=findClientByName(r.client,r.clientId); const measurements=[
+                  hasMeasurementValue(r.chlorine)&&["כלור",`${r.chlorine} ppm`,"#e3f2fd","#1565c0"],
+                  !r.waterCheckOnly&&hasMeasurementValue(r.ph)&&["pH",r.ph,"#f3e5f5","#6a1b9a"],
+                  !r.waterCheckOnly&&primaryPoolType(reportClient?.poolType)!=="כלור"&&hasMeasurementValue(r.salt)&&["רמת מלח",`${r.salt} PPM`,"#e8f5e9","#1b5e20"],
+                  r.waterCheckOnly&&Number(r.chlora)>0&&["טבליות כלור",r.chlora,"#fff3e0","#e65100"],
+                  r.waterCheckOnly&&Number(r.hth)>0&&["HTH",r.hth,"#e8eaf6","#283593"],
+                  r.waterCheckOnly&&r.flow&&["זרימה",r.flow,"#e0f7fa",r.flow==="לא תקין"?C.red:"#006064"]
+                ].filter(Boolean); return (
+                  <div key={r.id || `${r.clientId || r.client}-${r.reportDate}-${i}`} style={{...card({marginBottom:12})}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{[reportClient?.address,formatPoolType(reportClient?.poolType)].filter(Boolean).join(" · ")}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div><Badge label={r.waterCheckOnly?"💧 בדיקת מים":r.poolStatus==="מאוזנת"?"✅ מאוזנת":"⚠️ אחר"} col={r.waterCheckOnly?C.blue:r.poolStatus==="מאוזנת"?C.green:C.orange}/></div>
+                    {measurements.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(88px,1fr))",gap:8,marginBottom:6}}>{measurements.map(([k,v,bg,col])=>(<div key={k} style={{background:bg,borderRadius:10,padding:"8px",textAlign:"center"}}><div style={{fontSize:10,fontWeight:700,color:"#90a4ae",marginBottom:2}}>{k}</div><div style={{fontSize:14,fontWeight:900,color:col}}>{v}</div></div>))}</div>}
                     {r.notes&&(()=>{ const noTreatmentNote = String(r.notes || "").includes("לא בוצע טיפול"); return <div style={{background:noTreatmentNote?"#ffebee":"#f5f9ff",border:noTreatmentNote?"1px solid #ffcdd2":"none",borderRadius:10,padding:"8px 12px",fontSize:12,color:noTreatmentNote?C.red:C.muted,fontWeight:noTreatmentNote?900:undefined}}>📝 {r.notes}</div>; })()}
                     {r.supplyLabel&&<div style={{marginTop:8,fontSize:11,color:C.blue,fontWeight:700}}>📦 {r.supplyLabel}</div>}
                   </div>
-                ));
+                );});
               })()}
             </div>
           )}
@@ -8290,10 +10111,11 @@ useEffect(() => {
                       <Badge label={`${rows.length}`} col={C.blue}/>
                     </div>
                     {rows.map((row,i)=>(
-                      <div key={`${operator}-${row.client}-${i}`} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:10,alignItems:"center",padding:"10px 12px",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                      <div key={`${operator}-${row.clientId || row.client}-${i}`} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:10,alignItems:"center",padding:"10px 12px",borderTop:i?`1px solid ${C.border}`:"none"}}>
                         <div style={{minWidth:0}}>
                           <div style={{fontSize:13,fontWeight:900,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.client.split(" - ")[0]}</div>
-                          {clientAddress(row.client)&&<div style={{fontSize:11,fontWeight:700,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>📍 {clientAddress(row.client)}</div>}
+                          {clientAddress(row.client,row.clientId)&&<div style={{fontSize:11,fontWeight:700,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>📍 {clientAddress(row.client,row.clientId)}</div>}
+                          {clientPoolTypeLabel(row.client,row.clientId)&&<div style={{fontSize:10,fontWeight:800,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:2}}>{clientPoolTypeLabel(row.client,row.clientId)}</div>}
                         </div>
                         <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
                           {row.materials.map(material=><span key={material} style={{background:material.includes("חומצת")?"#ffebee":material.includes("סודה")?"#f3e5f5":"#e8f5e9",color:material.includes("חומצת")?C.red:material.includes("סודה")?"#6a1b9a":C.green,borderRadius:99,padding:"4px 10px",fontSize:11,fontWeight:900,whiteSpace:"nowrap"}}>{material}</span>)}
@@ -8303,7 +10125,7 @@ useEffect(() => {
                   </div>
                 ))}
               </div>
-              {(()=>{ const allRep=[...sheetReports,...reports]; const unique=allRep.filter((r, idx, arr)=>arr.findIndex(x=>sameReportIdentity(x, r))===idx); const filtered=unique.filter(r=>{ const d=toISODate(r.reportDate) || normalizeDate(r.reportDate); if(supplySearch.date&&d<supplySearch.date)return false; if(supplySearch.dateTo&&d>supplySearch.dateTo)return false; return reportHasAllowedSupply(r) && reportMatchesSupplyType(r, supplySearch.type); }).sort((a,b)=>(toISODate(b.reportDate) || normalizeDate(b.reportDate)).localeCompare(toISODate(a.reportDate) || normalizeDate(a.reportDate))); if(filtered.length===0)return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תוצאות — לחץ "טען מגיליון" בטאב דוחות</div>; return filtered.map((r,i)=>{ const labelText=allowedSupplyLabelParts(r.supplyLabel).join(", "); return (<div key={i} style={{...card({marginBottom:10})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{r.client?.split(" - ")[0]}</div><div style={{fontSize:12,color:C.muted}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{r.phUp>0&&<span style={{background:"#f3e5f5",color:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>מעלה pH כוסות: {r.phUp}</span>}{r.acidLiters>0&&<span style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>חומצת מלח L: {r.acidLiters}</span>}{labelText&&<span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>{labelText}</span>}</div></div>); }); })()}
+              {(()=>{ const allRep=[...sheetReports,...reports]; const unique=allRep.filter((r, idx, arr)=>arr.findIndex(x=>sameReportIdentity(x, r))===idx); const filtered=unique.filter(r=>{ const d=toISODate(r.reportDate) || normalizeDate(r.reportDate); if(supplySearch.date&&d<supplySearch.date)return false; if(supplySearch.dateTo&&d>supplySearch.dateTo)return false; return reportHasAllowedSupply(r) && reportMatchesSupplyType(r, supplySearch.type); }).sort((a,b)=>(toISODate(b.reportDate) || normalizeDate(b.reportDate)).localeCompare(toISODate(a.reportDate) || normalizeDate(a.reportDate))); if(filtered.length===0)return <div style={{...card({textAlign:"center"}),padding:32,color:C.muted}}>אין תוצאות — לחץ "טען מגיליון" בטאב דוחות</div>; return filtered.map((r,i)=>{ const labelText=allowedSupplyLabelParts(r.supplyLabel).join(", "); const poolMeta=[clientAddress(r.client,r.clientId),clientPoolTypeLabel(r.client,r.clientId)].filter(Boolean).join(" · "); return (<div key={i} style={{...card({marginBottom:10})}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><div><div style={{fontWeight:800,fontSize:14,color:C.text}}>{r.client?.split(" - ")[0]}</div>{poolMeta&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{poolMeta}</div>}<div style={{fontSize:12,color:C.muted}}>👤 {r.operator} · 📅 {fmtDate(r.reportDate)}</div></div></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{r.phUp>0&&<span style={{background:"#f3e5f5",color:"#6a1b9a",borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>מעלה pH כוסות: {r.phUp}</span>}{r.acidLiters>0&&<span style={{background:"#ffebee",color:C.red,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>חומצת מלח L: {r.acidLiters}</span>}{labelText&&<span style={{background:"#e8f5e9",color:C.green,borderRadius:99,padding:"4px 12px",fontSize:12,fontWeight:700}}>{labelText}</span>}</div></div>); }); })()}
             </div>
           )}
           {adminTab==="users"&&(

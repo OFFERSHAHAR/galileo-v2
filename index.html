@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#1565c0" />
+    <!-- ponytail: the first thing the app does after paint is POST to Apps Script.
+         Paying DNS+TLS during boot instead of during that POST is free latency. -->
+    <link rel="preconnect" href="https://script.google.com" crossorigin />
+    <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin />
+    <link rel="dns-prefetch" href="https://cdn.onesignal.com" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -21,10 +26,30 @@
     <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)" href="/icons/ios-splash-1179x2556.png?v=20260607" />
     <link rel="apple-touch-startup-image" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3)" href="/icons/ios-splash-1284x2778.png?v=20260607" />
     <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)" href="/icons/ios-splash-1290x2796.png?v=20260607" />
-    <style>* { margin: 0; padding: 0; box-sizing: border-box; } body { background: #1565c0; }</style>
-    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      /* touch-action: manipulation removes the ~300ms double-tap-zoom delay
+         the browser otherwise waits out before firing a tap. */
+      body { background: #1565c0; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+      #boot { position: fixed; inset: 0; display: grid; place-items: center; gap: 18px;
+              grid-auto-flow: row; background: #1565c0; color: #fff; font-family: system-ui, sans-serif; }
+      #boot img { width: 84px; height: 84px; }
+      #boot div { width: 34px; height: 34px; border: 3px solid rgba(255,255,255,.28);
+                  border-top-color: #fff; border-radius: 50%; animation: s .8s linear infinite; }
+      @keyframes s { to { transform: rotate(360deg) } }
+    </style>
     <script>
       window.OneSignalDeferred = window.OneSignalDeferred || [];
+      // ponytail: OneSignalDeferred already queues calls for a not-yet-loaded SDK,
+      // so we can just load it late. Push notifications do not need to race first paint.
+      addEventListener("load", function () {
+        setTimeout(function () {
+          var s = document.createElement("script");
+          s.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
+          s.async = true;
+          document.head.appendChild(s);
+        }, 1200);
+      });
       if (["localhost", "127.0.0.1", "::1"].includes(window.location.hostname)) {
         window.galileoOneSignalDisabled = true;
       } else {
@@ -50,7 +75,7 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div id="boot"><img src="/icons/galileo-icon-192.png" alt="" /><div></div></div></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

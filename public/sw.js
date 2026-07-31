@@ -1,4 +1,5 @@
-const CACHE = "galileo-v2-cache-v14";
+const CACHE_PREFIX = "galileo-v2-cache-";
+const CACHE = `${CACHE_PREFIX}v15`;
 const STATIC = ["/", "/index.html", "/manifest.json"];
 const DB_NAME = "galileo-sync-db";
 const DB_VERSION = 1;
@@ -44,24 +45,70 @@ async function readPendingRecords() {
   }
 }
 
+async function pendingRecordIsCurrent(record) {
+  const db = await openDB();
+  try {
+    const transaction = db.transaction(REPORT_STORE, "readonly");
+    const current = await requestResult(transaction.objectStore(REPORT_STORE).get(record.id));
+    const recordRevision = String(record?.item?.queueRevision || "");
+    const currentRevision = String(current?.item?.queueRevision || "");
+    if (recordRevision || currentRevision) {
+      return !!recordRevision && recordRevision === currentRevision;
+    }
+    return !!current && Number(current.updatedAt || 0) === Number(record.updatedAt || 0);
+  } finally {
+    db.close();
+  }
+}
+
 async function updatePendingRecordIfPresent(record) {
   const db = await openDB();
   try {
     const transaction = db.transaction(REPORT_STORE, "readwrite");
     const store = transaction.objectStore(REPORT_STORE);
-    let updated = false;
+    let result = { updated:false, superseded:false, item:null };
     const request = store.get(record.id);
     request.onsuccess = () => {
-      if (!request.result) return;
-      updated = true;
-      store.put(record);
+      const existingRecord = request.result;
+      if (!existingRecord) return;
+      const existingItem = existingRecord.item?.report
+        ? existingRecord.item
+        : { report:existingRecord.item };
+      const incomingItem = record.item?.report
+        ? record.item
+        : { report:record.item };
+      const sourceUpdatedAt = Number(record.sourceUpdatedAt ?? record.updatedAt ?? 0);
+      const sourceRevision = String(record?.item?.queueRevision || "");
+      const existingRevision = String(existingItem?.queueRevision || "");
+      const superseded = (
+        (sourceRevision || existingRevision) &&
+        (!sourceRevision || sourceRevision !== existingRevision)
+      ) || Number(existingRecord.updatedAt || 0) > sourceUpdatedAt;
+      if (superseded) {
+        result = { updated:true, superseded:true, item:existingItem };
+        return;
+      }
+      const mergedItem = {
+        ...existingItem,
+        ...incomingItem,
+        report:incomingItem.report || existingItem.report,
+        savedToSheet:!!(existingItem.savedToSheet || incomingItem.savedToSheet),
+        whatsappSent:!!(existingItem.whatsappSent || incomingItem.whatsappSent),
+        deliveryDecision:existingItem.deliveryDecision || incomingItem.deliveryDecision
+      };
+      result = { updated:true, superseded:false, item:mergedItem };
+      store.put({
+        ...existingRecord,
+        ...record,
+        item:mergedItem
+      });
     };
     await new Promise((resolve, reject) => {
       transaction.oncomplete = resolve;
       transaction.onerror = () => reject(transaction.error || new Error("indexeddb_write_failed"));
       transaction.onabort = () => reject(transaction.error || new Error("indexeddb_write_aborted"));
     });
-    return updated;
+    return result;
   } finally {
     db.close();
   }
@@ -85,6 +132,12 @@ async function postSheet(scriptUrl, sheetId, action, payload = {}) {
 
 const normalize = value => String(value ?? "").trim().toLowerCase();
 const normalizeDate = value => String(value || "").trim().slice(0, 10);
+const samePool = (left = {}, right = {}) => {
+  const leftId = normalize(left.clientId);
+  const rightId = normalize(right.clientId);
+  if (leftId || rightId) return !!leftId && !!rightId && leftId === rightId;
+  return normalize(left.client) === normalize(right.client);
+};
 
 function reportFoundInSheet(sheetReport = {}, report = {}) {
   const wantedId = normalize(report.id);
@@ -93,9 +146,9 @@ function reportFoundInSheet(sheetReport = {}, report = {}) {
     ? wantedId === foundId
     : normalizeDate(sheetReport.reportDate) === normalizeDate(report.reportDate) &&
       normalize(sheetReport.operator) === normalize(report.operator) &&
-      normalize(sheetReport.client) === normalize(report.client);
+      samePool(sheetReport, report);
   if (!identityMatches) return false;
-  const fields = ["chlorine","ph","salt","waterLevel","clarity","fat","flow","elModel","elSerial","elDate","elNext","supplyLabel","poolStatus","customStatusText","restrictedUntil","notes","chlora","hth","phUp","acidLiters","suppliedEquipment","clientId"];
+  const fields = ["chlorine","ph","salt","waterLevel","clarity","fat","flow","elModel","elSerial","elDate","elNext","supplyLabel","poolStatus","customStatusText","restrictedUntil","notes","chlora","hth","phUp","acidLiters","suppliedEquipment","clientId","waterCheckOnly"];
   return fields.every(field => normalize(sheetReport[field]) === normalize(report[field]));
 }
 
@@ -114,7 +167,9 @@ async function savePendingRecord(record) {
   const item = record.item || {};
   const report = item.report || item;
   if (!record.scriptUrl || !record.sheetId || !report?.client || !report?.reportDate) return false;
+  if (item?.editingPaused) return true;
   if (item?.report && item.savedToSheet) return true;
+  if (!await pendingRecordIsCurrent(record)) return false;
 
   const original = item?.report ? item.updateOriginal : undefined;
   const supplyUpdate = item?.report ? item.supplyUpdate : undefined;
@@ -122,7 +177,20 @@ async function savePendingRecord(record) {
     record.scriptUrl,
     record.sheetId,
     original ? "updateReport" : "saveReport",
-    original ? { report, original, supplyUpdate } : { report, supplyUpdate }
+    original
+      ? {
+          report,
+          original,
+          supplyUpdate,
+          queueRevision:item.queueRevision,
+          queueUpdatedAt:item.queueUpdatedAt
+        }
+      : {
+          report,
+          supplyUpdate,
+          queueRevision:item.queueRevision,
+          queueUpdatedAt:item.queueUpdatedAt
+        }
   );
   if (response?.success !== true) return false;
 
@@ -131,14 +199,20 @@ async function savePendingRecord(record) {
   if (!await confirmSaved(record, savedReport)) return false;
 
   const savedItem = item?.report
-    ? { ...item, report:savedReport, savedToSheet:true }
-    : { report:savedReport, savedToSheet:true };
-  const updatedRecord = { ...record, item:savedItem, sheetSavedAt:Date.now(), updatedAt:Date.now() };
-  const updated = await updatePendingRecordIfPresent(updatedRecord);
-  if (updated) {
-    await notifyClients({ type:"GALILEO_REPORT_SAVED_TO_SHEET", id:record.id, item:savedItem });
+    ? { ...item, report:savedReport, savedToSheet:true, pendingStorageId:item.pendingStorageId || record.id }
+    : { report:savedReport, savedToSheet:true, pendingStorageId:record.id };
+  const updatedRecord = {
+    ...record,
+    item:savedItem,
+    sourceUpdatedAt:Number(record.updatedAt || 0),
+    sheetSavedAt:Date.now(),
+    updatedAt:Date.now()
+  };
+  const updateResult = await updatePendingRecordIfPresent(updatedRecord);
+  if (updateResult.updated && !updateResult.superseded) {
+    await notifyClients({ type:"GALILEO_REPORT_SAVED_TO_SHEET", id:record.id, item:updateResult.item || savedItem });
   }
-  return true;
+  return !updateResult.superseded;
 }
 
 async function flushPendingReports() {
@@ -161,17 +235,20 @@ async function flushPendingReports() {
 
 self.addEventListener("install", event => {
   event.waitUntil(
-    caches.open(CACHE).then(cache =>
-      Promise.allSettled(STATIC.map(url => cache.add(url)))
-    )
+    caches.open(CACHE)
+      .then(cache => cache.addAll(STATIC))
+      .then(() => self.skipWaiting())
   );
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", event => {
   event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
+      .then(keys => Promise.all(
+        keys
+          .filter(key => key.startsWith(CACHE_PREFIX) && key !== CACHE)
+          .map(key => caches.delete(key))
+      ))
       .then(() => self.clients.claim())
   );
 });
@@ -185,8 +262,47 @@ self.addEventListener("periodicsync", event => {
 });
 
 self.addEventListener("message", event => {
-  if (event.data?.type === "PROCESS_PENDING_REPORTS") event.waitUntil(flushPendingReports());
+  if (
+    event.data?.type === "PROCESS_PENDING_REPORTS" &&
+    self.registration.sync?.register
+  ) {
+    event.waitUntil(flushPendingReports());
+  }
 });
+
+// Bundled assets have content hashes and can stay cache-first.
+const IMMUTABLE = /^\/assets\//;
+
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (response.ok) {
+    const cache = await caches.open(CACHE);
+    cache.put(request, response.clone());
+  }
+  return response;
+}
+
+function staleWhileRevalidate(request, event) {
+  const cachePromise = caches.open(CACHE);
+  const network = cachePromise.then(cache =>
+    fetch(request)
+      .then(async response => {
+        if (response.ok) await cache.put(request, response.clone());
+        return response;
+      })
+      .catch(() => null)
+  );
+
+  event.waitUntil(network.then(() => undefined).catch(() => undefined));
+
+  return cachePromise.then(async cache => {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    return (await network) || (request.mode === "navigate" ? cache.match("/index.html") : undefined);
+  });
+}
 
 self.addEventListener("fetch", event => {
   const request = event.request;
@@ -194,14 +310,7 @@ self.addEventListener("fetch", event => {
   if (request.method !== "GET" || url.origin !== self.location.origin || url.pathname === "/version.json") return;
 
   event.respondWith(
-    fetch(request)
-      .then(response => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE).then(cache => cache.put(request, clone));
-        }
-        return response;
-      })
+    (IMMUTABLE.test(url.pathname) ? cacheFirst(request) : staleWhileRevalidate(request, event))
       .catch(() => caches.match(request).then(cached => cached || (request.mode === "navigate" ? caches.match("/index.html") : undefined)))
   );
 });

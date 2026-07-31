@@ -1,16 +1,43 @@
   // ─── מרכזי — תומך בכל לקוח לפי sheetId ───────────────────────────────────
   // הלקוח משתף את הגיליון שלו עם האימייל שלך ומכניס את ה-ID באפליקציה
 
+  var GALILEO_SCRIPT_BUILD_ = "20260731-report-query-v4";
+
   function doPost(e) {
+    const json = jsonResponse_;
+    let writeSpreadsheet = null;
+    let invalidateAfterWrite = false;
     try {
-      const json = jsonResponse_;
       const data = JSON.parse(e.postData.contents);
       const action = data.action;
 
       // sheetId מגיע מהאפליקציה — כל לקוח שולח את שלו
       const SHEET_ID = data.sheetId || "1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no";
+
+      // ponytail: the version probe is the app's most frequent call (it polls on a
+      // timer) and only needs the ID string for its Properties key. openById costs
+      // 300-500ms of spreadsheet binding for nothing, so answer before we pay it.
+      if (action === "getOperatorRefreshVersion") {
+        return json({ version: PropertiesService.getScriptProperties()
+          .getProperty("operatorDataVersion:" + SHEET_ID) || "0" });
+      }
+      if (action === "getScriptBuild") {
+        return json({ build: GALILEO_SCRIPT_BUILD_ });
+      }
+
+      // ponytail: these three take only `data` — they never read the sheet.
+      // Routing them before openById saves 300-500ms of spreadsheet binding per send.
+      if (action === "sendGreenApiWhatsApp") return json(sendGreenApiWhatsApp_(data));
+      if (action === "resetGreenApiDeliveryGuard") return json(resetGreenApiDeliveryGuard_(data));
+      if (action === "getGreenApiStatus") return json(getGreenApiStatus_());
+      if (action === "ensureGreenApiPollWebhooks") return json(ensureGreenApiPollWebhooks_(data));
+
       const ss = SpreadsheetApp.openById(SHEET_ID);
-      if (operatorDataWriteActions_().indexOf(action) >= 0) bumpOperatorDataVersion_(ss);
+      invalidateAfterWrite = operatorDataWriteActions_().indexOf(action) >= 0;
+      if (invalidateAfterWrite) {
+        writeSpreadsheet = ss;
+        invalidateOperatorDataCaches_(ss);
+      }
 
       if (
         action === "sendAppNotificationToUser" ||
@@ -57,6 +84,19 @@
 
       if (action === "getClientSettings") {
         return json({ settings: getClientSettings_(ss) });
+      }
+
+      if (action === "getScriptDiagnostics") {
+        const reportsSheet = ss.getSheetByName("דוחות");
+        return json({
+          build: GALILEO_SCRIPT_BUILD_,
+          reportsSheetFound: !!reportsSheet,
+          reportsLastRow: reportsSheet ? reportsSheet.getLastRow() : 0,
+          reportsLastColumn: reportsSheet ? reportsSheet.getLastColumn() : 0,
+          reportsReadColumns: reportsSheet
+            ? Math.max(1, Math.min(reportsSheet.getLastColumn(), reportHeaders_().length))
+            : 0
+        });
       }
 
       if (action === "saveClientSettings") {
@@ -188,84 +228,24 @@
       }
 
       if (action === "getUnassignedClients") {
-        let sheet = ss.getSheetByName("לקוחות_ללא_שיוך");
-        if(!sheet) {
-          // fallback — return all clients without day assignment
-          sheet = ss.getSheetByName("לקוחות");
-          if(!sheet) return json({ clients:[] });
-          const rows = sheet.getDataRange().getValues();
-          let hi = rows.findIndex(r => isClientNameHeader_(r[0]));
-          if(hi===-1) hi=0;
-          const clients = rows.slice(hi+1).filter(r=>r[0]).map(r=>({
-            name:String(r[0]), phone:String(r[1]), address:String(r[2])
-          }));
-          return json({ clients });
-        }
-        const rows = sheet.getDataRange().getValues();
-        const clients = rows.slice(1).filter(r=>r[0]).map(r=>({
-          name:String(r[0]), phone:String(r[1]||""), address:String(r[2]||"")
-        }));
-        return json({ clients });
+        return json({ clients:getUnassignedClients_(ss) });
       }
-
-    if (action === "getFreeClients") {
-      // לקוחות ללא שיוך יום ומפעיל — מגיעים מטאב "לקוחות_חופשיים"
-      const sheet = ss.getSheetByName("לקוחות_חופשיים");
-      if(!sheet) return json({ clients:[] });
-        const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => String(r[0]).includes("שם"));
-        if(hi===-1) hi=0;
-        const clients = rows.slice(hi+1).filter(r=>r[0]).map(r=>({
-          name: String(r[0]), phone: String(r[1]||""), address: String(r[2]||""),
-          poolType: String(r[3]||"מלח"), gateCode: String(r[4]||"")
-        }));
-      return json({ clients });
-    }
 
     if (action === "getBootstrapData") {
-      const cache = CacheService.getScriptCache();
       const cacheKey = "bootstrap:" + ss.getId();
-      const cached = cache.get(cacheKey);
-      if (cached) {
-        try { return json(JSON.parse(cached)); } catch(e) {}
-      }
-      const result = {
-        users: getUsers_(ss),
-        clients: getClients_(ss),
-        tasks: getTasks_(ss),
-        adminOrders: getAdminOrders_(ss),
-        sharedSubOrders: getSubOperatorShares_(ss),
-        subOperatorApprovals: getSubOperatorApprovals_(ss),
-        pendingSubReports: getPendingSubReports_(ss),
-        materialApprovals: getMaterialApprovals_(ss),
-        settings: getClientSettings_(ss),
-        supplyDB: getSupplyDB_(ss),
-        lastReadings: getLastReadings_(ss),
-        unassignedClients: getUnassignedClients_(ss)
-      };
-      try { cache.put(cacheKey, JSON.stringify(result), 15); } catch(e) {}
+      const cached = cacheGetBig_(cacheKey);
+      if (cached) return json(cached);
+      const result = buildBootstrapData_(ss);
+      cachePutBig_(cacheKey, result, 21600);
       return json(result);
     }
 
     if (action === "getOperatorRefreshData") {
-      const cache = CacheService.getScriptCache();
       const cacheKey = "operatorRefresh:" + ss.getId();
-      const cached = cache.get(cacheKey);
-      if (cached) {
-        try { return json(JSON.parse(cached)); } catch(e) {}
-      }
-      const result = {
-        users: getUsers_(ss),
-        tasks: getTasks_(ss),
-        adminOrders: getAdminOrders_(ss),
-        sharedSubOrders: getSubOperatorShares_(ss),
-        subOperatorApprovals: getSubOperatorApprovals_(ss),
-        pendingSubReports: getPendingSubReports_(ss),
-        materialApprovals: getMaterialApprovals_(ss),
-        settings: getClientSettings_(ss),
-        lastReadings: getLastReadings_(ss)
-      };
-      try { cache.put(cacheKey, JSON.stringify(result), 8); } catch(e) {}
+      const cached = cacheGetBig_(cacheKey);
+      if (cached) return json(cached);
+      const result = buildOperatorRefreshData_(ss);
+      cachePutBig_(cacheKey, result, 21600);
       return json(result);
     }
 
@@ -276,14 +256,25 @@
     if (action === "saveClientPoolType") {
       const sheet = ss.getSheetByName("לקוחות");
       if(!sheet) return json({ error:"no sheet" });
-        const rows = sheet.getDataRange().getValues();
-        for(let i=1;i<rows.length;i++){
-          if(String(rows[i][0])===String(data.clientName)){
-            sheet.getRange(i+1,6).setValue(data.poolType);
-            return json({ success:true });
-          }
-        }
-        return json({ error:"client not found" });
+      const rows = sheet.getDataRange().getValues();
+      const headerRowIndex = findHeaderRowIndex_(sheet, ["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח"]);
+      const headers = (rows[headerRowIndex] || []).map(h => String(h || "").trim());
+      const nameIdx = headers.findIndex(isClientNameHeader_);
+      const clientIdIdx = headers.findIndex(h => ["clientid","client_id","id"].includes(String(h || "").trim().toLowerCase()));
+      const poolTypeIdx = headers.findIndex(h => ["סוג_בריכה","סוג בריכה","pooltype"].includes(String(h || "").trim().toLowerCase()));
+      const wantedId = String(data.clientId || "").trim();
+      const wantedName = normalizeReportValue_(data.clientName).toLowerCase();
+      const matches = [];
+      for(let i=headerRowIndex + 1;i<rows.length;i++){
+        const rowId = clientIdIdx >= 0 ? String(rows[i][clientIdIdx] || "").trim() : "";
+        const rowName = nameIdx >= 0 ? normalizeReportValue_(rows[i][nameIdx]).toLowerCase() : "";
+        if ((wantedId && rowId === wantedId) || (!wantedId && wantedName && rowName === wantedName)) matches.push(i);
+      }
+      if (!matches.length) return json({ error:"client not found" });
+      if (!wantedId && matches.length > 1) return json({ error:"ambiguous client name" });
+      if (poolTypeIdx < 0) return json({ error:"pool type column not found" });
+      sheet.getRange(matches[0] + 1, poolTypeIdx + 1).setValue(data.poolType);
+      return json({ success:true });
       }
 
       if (action === "saveOperatorIssue") {
@@ -358,45 +349,50 @@
       }
 
       if (action === "saveTasks") {
-        let sheet = ss.getSheetByName("משימות");
-        const headers = taskHeaders_();
-        if (!sheet) {
-          sheet = ss.insertSheet("משימות");
-          sheet.appendRow(headers);
-        }
-        ensureColumns(sheet, headers);
-        const rows = sheet.getDataRange().getValues();
-        let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID" || String(r[0]).toLowerCase() === "id");
-        if (hi === -1) hi = 0;
-        sheet.getRange(hi + 1, 1, 1, headers.length).setValues([headers]);
-        const dataStart = hi + 2;
-        const last = sheet.getLastRow();
-        if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
-        const taskRows = dedupeTasks_(data.tasks || []).filter(t => !isAdminOrderTask_(t)).map(t => ([
-          t.id,
-          t.date,
-          t.client,
-          t.operators.join(","),
-          t.status,
-          JSON.stringify(t.changeLog),
-          t.orderIndex || 0,
-          t.adminNote || "",
-          t.createdByAdminOrder === true,
-          t.clientId || "",
-          t.operatorCreated === true,
-          t.adminApproval || "",
-          t.requestedBy || ""
-        ]));
-        if (taskRows.length) sheet.getRange(dataStart, 1, taskRows.length, headers.length).setValues(taskRows);
-        return json({ success: true });
+        return json(withGalileoWriteLock_(function () {
+          return { success:true, tasks:saveTasks_(ss, data.tasks || []) };
+        }));
       }
+
+      if (action === "mutateTasks") {
+        return json(withGalileoWriteLock_(function () {
+          return mutateTasks_(ss, data);
+        }));
+      }
+
+      if (action === "setTaskReportCompletion") {
+        return json(withGalileoWriteLock_(function () {
+          return setTaskReportCompletion_(ss, data);
+        }));
+      }
+
       if (action === "getAdminOrders") {
         return json({ adminOrders: getAdminOrders_(ss) });
       }
 
       if (action === "saveAdminOrders") {
-        saveAdminOrders_(ss, data.adminOrders || []);
-        return json({ success: true });
+        return json(withGalileoWriteLock_(function () {
+          saveAdminOrders_(ss, data.adminOrders || []);
+          return { success:true, adminOrders:getAdminOrders_(ss) };
+        }));
+      }
+
+      if (action === "saveAdminOrderScope") {
+        return json(withGalileoWriteLock_(function () {
+          return saveAdminOrderScope_(ss, data);
+        }));
+      }
+
+      if (action === "ackAdminOrderChange") {
+        return json(withGalileoWriteLock_(function () {
+          return ackAdminOrderChange_(ss, data);
+        }));
+      }
+
+      if (action === "setOperatorTaskApproval") {
+        return json(withGalileoWriteLock_(function () {
+          return setOperatorTaskApproval_(ss, data);
+        }));
       }
 
       if (action === "getSubOperatorShares") {
@@ -428,12 +424,20 @@
 
       if (action === "saveReport") {
         const r = Object.assign({}, data.report || {});
+        r.queueRevision = String(data.queueRevision || r.queueRevision || "").trim();
+        r.queueUpdatedAt = Number(data.queueUpdatedAt || r.queueUpdatedAt || 0);
+        const identityResult = ensureReportClientIdentity_(ss, r);
+        if (!identityResult.success) return json(identityResult);
         const resolvedOperator = reportOperatorName_(ss, r);
         if (resolvedOperator) r.operator = resolvedOperator;
         if (!String(r.id || "").trim()) r.id = Utilities.getUuid();
+        const existingReportSheets = reportSheetList_(ss);
         const lock = LockService.getScriptLock();
         try {
           lock.waitLock(10000);
+          if (!acceptReportQueueVersion_(ss, r, data)) {
+            return json({ success:false, error:"superseded_report_version", superseded:true, id:r.id || "" });
+          }
           if (data.supplyUpdate) {
             const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
             if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
@@ -446,7 +450,9 @@
           let mainRow = 0;
           let savedId = String(r.id || "");
           let wrote = false;
+          let updated = false;
           const writtenSheets = [];
+          const updatedSheets = [];
           const savedLocations = [];
           targets.forEach(sheet => {
             const existing = findDuplicateReportRow_(sheet, r);
@@ -454,6 +460,17 @@
               if (!savedRow) savedRow = existing.row;
               if (sheet.getName() === mainSheet.getName()) mainRow = existing.row;
               if (!savedId && existing.id) savedId = existing.id;
+              if (savedId && existing.id === savedId) {
+                const currentValues = sheet.getRange(existing.row, 1, 1, sheet.getLastColumn()).getValues()[0];
+                if (
+                  !reportRowMatchesReport_(currentValues, r) ||
+                  !reportRowQueueVersionMatchesReport_(currentValues, r)
+                ) {
+                  sheet.getRange(existing.row, 1, 1, reportHeaders_().length).setValues([reportRowValues_(r)]);
+                  updated = true;
+                  updatedSheets.push(sheet.getName());
+                }
+              }
               savedLocations.push({ sheet:sheet.getName(), row:existing.row });
               return;
             }
@@ -466,16 +483,24 @@
             writtenSheets.push(sheet.getName());
             savedLocations.push({ sheet:sheet.getName(), row:savedRow });
           });
+          const removedSheets = deleteReportCopiesOutsideTargets_(
+            existingReportSheets,
+            savedId || r.id || "",
+            targets.map(sheet => sheet.getName())
+          );
           writeReportIndex_(ss, savedId || r.id || "", savedLocations);
           data._savedReportRow = mainRow || savedRow;
-          data._savedReportDuplicate = !wrote;
+          data._savedReportDuplicate = !wrote && !updated;
+          data._savedReportUpdated = updated;
           data._savedReportId = savedId || r.id || "";
           data._savedReportTargets = targets.map(sheet => sheet.getName());
           data._savedReportWrittenSheets = writtenSheets;
+          data._savedReportUpdatedSheets = updatedSheets;
+          data._savedReportRemovedSheets = removedSheets;
         } finally {
           try { lock.releaseLock(); } catch(e) {}
         }
-        refreshClientTreatmentCounter_(ss, r.client);
+        refreshClientTreatmentCounter_(ss, r.client, r.clientId);
         markSubOperatorShareDone_(ss, r);
         data._chlorineReminder = queueChlorineTabletReminderSafe_(ss, r, data, data._savedReportId || r.id || "");
 
@@ -530,27 +555,35 @@
           }
         }
 
-        return json({ success: true, duplicate: !!data._savedReportDuplicate, row: data._savedReportRow || 0, id: data._savedReportId || r.id || "", targets: data._savedReportTargets || [], writtenSheets: data._savedReportWrittenSheets || [], chlorineReminder: data._chlorineReminder || null });
+        return json({ success: true, duplicate: !!data._savedReportDuplicate, updated: !!data._savedReportUpdated, row: data._savedReportRow || 0, id: data._savedReportId || r.id || "", targets: data._savedReportTargets || [], writtenSheets: data._savedReportWrittenSheets || [], updatedSheets: data._savedReportUpdatedSheets || [], removedSheets: data._savedReportRemovedSheets || [], chlorineReminder: data._chlorineReminder || null });
       }
 
       if (action === "updateReport") {
         const r = Object.assign({}, data.report || {});
+        r.queueRevision = String(data.queueRevision || r.queueRevision || "").trim();
+        r.queueUpdatedAt = Number(data.queueUpdatedAt || r.queueUpdatedAt || 0);
+        const identityResult = ensureReportClientIdentity_(ss, r);
+        if (!identityResult.success) return json(identityResult);
         const resolvedOperator = reportOperatorName_(ss, r);
         if (resolvedOperator) r.operator = resolvedOperator;
+        const existingReportSheets = reportSheetList_(ss);
         const lock = LockService.getScriptLock();
         let result = null;
         try {
           lock.waitLock(10000);
+          if (!acceptReportQueueVersion_(ss, r, data)) {
+            return json({ success:false, error:"superseded_report_version", superseded:true, id:r.id || "" });
+          }
           if (data.supplyUpdate) {
             const supplyResult = upsertSupplyDBRow_(ss, data.supplyUpdate);
             if (!supplyResult.success) return json({ success:false, error:supplyResult.error || "supply save failed" });
           }
-          result = updateReportAcrossSheets_(ss, data.original || {}, r);
+          result = updateReportAcrossSheets_(ss, data.original || {}, r, existingReportSheets);
           if (!result.updated) return json({ success:false, error:"report row not found" });
         } finally {
           try { lock.releaseLock(); } catch(e) {}
         }
-        refreshClientTreatmentCounter_(ss, result.report && result.report.client);
+        refreshClientTreatmentCounter_(ss, result.report && result.report.client, result.report && result.report.clientId);
         markSubOperatorShareDone_(ss, result.report);
         const reminderResult = queueChlorineTabletReminderSafe_(ss, result.report, data, result.id);
         return json({ success:true, row:result.mainRow || result.row, id:result.id, copiesUpdated:result.updated, copiesCreated:result.created, chlorineReminder:reminderResult });
@@ -566,25 +599,7 @@
       }
 
       if (action === "getSupplyDB") {
-        const sheet = ss.getSheetByName("ציוד_לקוחות");
-        if (!sheet) return json({ supplyDB: {} });
-        ensureNextSupplyPriceColumn_(sheet);
-        const rows = sheet.getDataRange().getValues();
-        const db = {};
-        rows.slice(3).filter(r => r[0]).forEach(r => {
-          db[String(r[0])] = {
-            acid: r[1] === "כן", phUp: r[2] === "כן", phUpSupply: r[2] === "כן",
-            saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 0,
-            updatedAt: String(r[5]),
-            supplyNote: String(r[6]||""),
-            nextSupplyDate: String(r[7]||""),
-            assignedOperator: String(r[8]||""),
-            materialPrices: parseNextSupplyPrices_(r[9]),
-            supplyId: String(r[10] || ""),
-            clientId: String(r[11] || "")
-          };
-        });
-        return json({ supplyDB: db });
+        return json({ supplyDB: getSupplyDB_(ss) });
       }
 
       if (action === "getMgmtClients") {
@@ -610,13 +625,37 @@
         const query = String(data.query || data.search || "").trim().toLowerCase();
         const wantedClient = String(data.client || data.clientName || "").trim().toLowerCase();
         const wantedClientId = String(data.clientId || "").trim();
+        const namedClients = wantedClient
+          ? allClientRecords_(ss).filter(client => String(client.name || "").trim().toLowerCase() === wantedClient)
+          : [];
+        if (!wantedClientId && wantedClient && namedClients.length > 1) {
+          return json({ reports:[], error:"ambiguous client name" });
+        }
+        const allowLegacyNameMatch = !wantedClientId || !wantedClient || namedClients.length === 1;
         const limit = Math.max(0, Number(data.limit || 0) || 0);
-        let dataRows = allReportRows_(ss);
+        const reportQuery = {
+          fromDate:fromDate,
+          toDate:toDate,
+          query:query,
+          wantedClient:wantedClient,
+          wantedClientId:wantedClientId,
+          allowLegacyNameMatch:allowLegacyNameMatch,
+          limit:limit
+        };
+        const reportRowsCacheKey = reportQueryCacheKey_(ss, reportQuery);
+        let dataRows = cacheGetBig_(reportRowsCacheKey);
+        if (!Array.isArray(dataRows)) {
+          const mainReportsSheet = ss.getSheetByName("דוחות");
+          dataRows = mainReportsSheet
+            ? reportRowsForQuery_(mainReportsSheet, reportQuery)
+            : allReportRows_(ss);
+          cachePutBig_(reportRowsCacheKey, dataRows, 300);
+        }
         if (wantedClient || wantedClientId) {
           dataRows = dataRows.filter(r => {
             const rowClientId = String(reportCell_(r,24) || "").trim();
             if (wantedClientId && rowClientId) return rowClientId === wantedClientId;
-            return wantedClient && String(reportCell_(r,2) || "").trim().toLowerCase() === wantedClient;
+            return allowLegacyNameMatch && wantedClient && String(reportCell_(r,2) || "").trim().toLowerCase() === wantedClient;
           });
         }
         if (fromDate) dataRows = dataRows.filter(r => normalizeSheetDate_(reportCell_(r,0)) >= fromDate);
@@ -635,35 +674,39 @@
         }
         dataRows = dedupeReportRows_(dataRows).sort((a,b) => normalizeSheetDate_(reportCell_(a,0)).localeCompare(normalizeSheetDate_(reportCell_(b,0))));
         if (limit && dataRows.length > limit) dataRows = dataRows.slice(dataRows.length - limit);
-        const reports = dataRows.map((r,i) => ({
-          id: reportIdCell_(r),
-          _fromSheet: true,
-          reportDate: normalizeSheetDate_(reportCell_(r,0)) || String(reportCell_(r,0)).slice(0,10),
-          operator: String(reportCell_(r,1)),
-          client: String(reportCell_(r,2)),
-          chlorine: reportCell_(r,3),
-          ph: reportCell_(r,4),
-          salt: reportCell_(r,5),
-          waterLevel: String(reportCell_(r,6)),
-          clarity: String(reportCell_(r,7)),
-          fat: String(reportCell_(r,8)),
-          flow: String(reportCell_(r,9)),
-          elModel: String(reportCell_(r,10)||""),
-          elSerial: String(reportCell_(r,11)||""),
-          elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||"").slice(0,10),
-          elNext: reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||"").slice(0,10),
-          poolStatus: String(reportCell_(r,15))||"\u05de\u05d0\u05d5\u05d6\u05e0\u05ea",
-          customStatusText: String(reportCell_(r,16)||""),
-          restrictedUntil: reportCell_(r,17) instanceof Date ? Utilities.formatDate(reportCell_(r,17),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,17)||"").slice(0,10),
-          notes: String(reportCell_(r,18)||""),
-          supplyLabel: String(reportCell_(r,14)||""),
-          chlora: reportCell_(r,19)||0,
-          hth: reportCell_(r,20)||0,
-          phUp: reportCell_(r,21)||0,
-          acidLiters: reportCell_(r,22)||0,
-          suppliedEquipment: String(reportCell_(r,23)||""),
-          clientId: String(reportCell_(r,24)||""),
-        }));
+        const reports = dataRows.map((r,i) => {
+          const waterCheckOnly = reportWaterCheckOnlyFromRow_(r);
+          return {
+            id: reportIdCell_(r),
+            _fromSheet: true,
+            reportDate: normalizeSheetDate_(reportCell_(r,0)) || String(reportCell_(r,0)).slice(0,10),
+            operator: String(reportCell_(r,1)),
+            client: String(reportCell_(r,2)),
+            chlorine: reportCell_(r,3),
+            ph: waterCheckOnly ? null : reportCell_(r,4),
+            salt: waterCheckOnly ? null : reportCell_(r,5),
+            waterLevel: waterCheckOnly ? "" : String(reportCell_(r,6)),
+            clarity: waterCheckOnly ? "" : String(reportCell_(r,7)),
+            fat: waterCheckOnly ? "" : String(reportCell_(r,8)),
+            flow: String(reportCell_(r,9)),
+            elModel: waterCheckOnly ? "" : String(reportCell_(r,10)||""),
+            elSerial: waterCheckOnly ? "" : String(reportCell_(r,11)||""),
+            elDate: waterCheckOnly ? "" : (reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||"").slice(0,10)),
+            elNext: waterCheckOnly ? "" : (reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||"").slice(0,10)),
+            poolStatus: waterCheckOnly ? "" : (String(reportCell_(r,15))||"\u05de\u05d0\u05d5\u05d6\u05e0\u05ea"),
+            customStatusText: waterCheckOnly ? "" : String(reportCell_(r,16)||""),
+            restrictedUntil: waterCheckOnly ? "" : (reportCell_(r,17) instanceof Date ? Utilities.formatDate(reportCell_(r,17),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,17)||"").slice(0,10)),
+            notes: waterCheckOnly ? "" : String(reportCell_(r,18)||""),
+            supplyLabel: waterCheckOnly ? "" : String(reportCell_(r,14)||""),
+            chlora: waterCheckOnly ? reportCell_(r,19) : (reportCell_(r,19)||0),
+            hth: waterCheckOnly ? reportCell_(r,20) : (reportCell_(r,20)||0),
+            phUp: waterCheckOnly ? null : (reportCell_(r,21)||0),
+            acidLiters: waterCheckOnly ? null : (reportCell_(r,22)||0),
+            suppliedEquipment: waterCheckOnly ? "" : String(reportCell_(r,23)||""),
+            clientId: String(reportCell_(r,24)||""),
+            waterCheckOnly
+          };
+        });
         return json({ reports });
       }
 
@@ -733,6 +776,10 @@
 
     } catch(err) {
       return json({ error: err.message });
+    } finally {
+      if (invalidateAfterWrite && writeSpreadsheet) {
+        try { bumpOperatorDataVersion_(writeSpreadsheet); } catch(e) {}
+      }
     }
   }
 
@@ -759,10 +806,8 @@
     s = clientSS.getSheetByName("דוחות");
     if(!s) {
       s = clientSS.insertSheet("דוחות");
-      s.appendRow(["תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק"]);
-    } else {
-      ensureColumns(s, ["תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק"]);
     }
+    ensureReportsSheetReportId_(s);
     
     // ── משימות ──
     s = clientSS.getSheetByName("משימות");
@@ -776,9 +821,9 @@
     s = clientSS.getSheetByName("חלוקת_עבודה");
     if(!s) {
       s = clientSS.insertSheet("חלוקת_עבודה");
-      s.appendRow(["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"]);
+      s.appendRow(["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog","clientId"]);
     } else {
-      ensureColumns(s, ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"]);
+      ensureColumns(s, ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog","clientId"]);
     }
     
     // ── ציוד_לקוחות ──
@@ -910,19 +955,12 @@
       .everyMinutes(5)
       .create();
 
-    ScriptApp.newTrigger("syncDailyMaterialApprovals")
-      .timeBased()
-      .everyDays(1)
-      .atHour(5)
-      .nearMinute(0)
-      .create();
-
     ScriptApp.newTrigger("cleanupSuperMessagesHourly")
       .timeBased()
       .everyHours(1)
       .create();
 
-    Logger.log("✅ Triggers נוצרו — checkNotifications כל 5 דקות, syncDailyMaterialApprovals כל יום ב-05:00, cleanupSuperMessagesHourly כל שעה");
+    Logger.log("✅ Triggers נוצרו — checkNotifications כל 5 דקות, cleanupSuperMessagesHourly כל שעה");
   }
 
   function checkNotifications() {
@@ -969,7 +1007,7 @@
           title: `🚨 ${urgent.length} תקלות קריטיות לא טופלו!`,
           message: urgent.map(r => r[2]).join(", ")
         });
-        Logger.log("📢 תזכורת תקלות נשלחה לאדמינים בלבד: " + JSON.stringify(res));
+        Logger.log("Admin issue reminder push status: " + !!res.success);
       }
     }
 
@@ -1037,19 +1075,19 @@
     const clientsSheet = ss.getSheetByName("לקוחות");
     if (!clientsSheet) return;
 
-    const clientRows = clientsSheet.getDataRange().getValues();
-    if (clientRows.length < 2) {
+    const clients = getClients_(ss);
+    if (!clients.length) {
       props.setProperty(key, "done");
       return;
     }
 
     const dayName = hebrewDayName_(today);
-    const assigned = clientRows.slice(1)
-      .filter(r => r[0])
-      .map(r => ({
-        client: String(r[0] || "").trim(),
-        operator: String(r[7] || "").trim(),
-        days: String(r[6] || "").split(",").map(normalizeHebrewDay_).filter(Boolean)
+    const assigned = clients
+      .map(client => ({
+        client: String(client.name || "").trim(),
+        clientId: String(client.clientId || "").trim(),
+        operator: String(client.regularOperator || "").trim(),
+        days: String(client.regularDays || "").split(",").map(normalizeHebrewDay_).filter(Boolean)
       }))
       .filter(x => x.client && x.days.includes(dayName));
 
@@ -1058,17 +1096,20 @@
     reportRows.forEach(r => {
       const date = normalizeSheetDate_(reportCell_(r,0));
       const client = String(reportCell_(r,2) || "").trim();
-      if (date === today && client) alreadyReported[client] = true;
+      const clientId = String(reportCell_(r,24) || "").trim();
+      if (date === today && client) alreadyReported[poolIdentityKey_(clientId, client)] = true;
     });
 
     let appended = 0;
     assigned.forEach(item => {
-      if (alreadyReported[item.client]) return;
+      const poolKey = poolIdentityKey_(item.clientId, item.client);
+      if (alreadyReported[poolKey]) return;
       const missingReport = {
         id: Utilities.getUuid(),
         reportDate: today,
         operator: item.operator,
         client: item.client,
+        clientId: item.clientId,
         chlorine: 0, ph: 0, salt: 0,
         waterLevel: "", clarity: "", fat: "", flow: "",
         elModel: "", elSerial: "", elDate: "", elNext: "",
@@ -1082,7 +1123,7 @@
       targetSheets.forEach(sheet => {
         if (!findDuplicateReportRow_(sheet, missingReport).row) sheet.appendRow(reportRowValues_(missingReport));
       });
-      alreadyReported[item.client] = true;
+      alreadyReported[poolKey] = true;
       appended++;
     });
 
@@ -1101,19 +1142,42 @@
     if (!clientsRows.length) return [];
     const headerRowIndex = findHeaderRowIndex_(clientsSheet, ["שם_לקוח", "שם לקוח", "יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל"]);
     const headers = (clientsRows[headerRowIndex] || []).map(h => String(h || "").trim());
-    const balanceIdx = headers.indexOf("יתרת_טיפולים_חודשית");
-    const countIdx = headers.indexOf("מונה_טיפולים_בפועל");
-    const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
-    const quotaMonthIdx = headers.indexOf("חודש_טיפולים");
+    const normalizedHeaders = headers.map(h => String(h || "").replace(/[\s_\-]/g, "").toLowerCase());
+    const columnOf = (names, fallback) => {
+      const wanted = names.map(name => String(name || "").replace(/[\s_\-]/g, "").toLowerCase());
+      const index = normalizedHeaders.findIndex(header => wanted.indexOf(header) >= 0);
+      return index >= 0 ? index : fallback;
+    };
+    const clientIdIdx = columnOf(["clientId","client_id","id"], -1);
+    const nameIdx = columnOf(["שם_לקוח","שם לקוח","שם","לקוח","שם הלקוח","client","name"], 0);
+    const regularDaysIdx = columnOf(["ימים_קבועים","ימים קבועים","regularDays"], 6);
+    const balanceIdx = columnOf(["יתרת_טיפולים_חודשית"], -1);
+    const countIdx = columnOf(["מונה_טיפולים_בפועל"], -1);
+    const quotaIdx = columnOf(["מכסת_טיפולים_חודשית"], -1);
+    const quotaMonthIdx = columnOf(["חודש_טיפולים"], -1);
     const monthKey = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM");
     const counts = {};
+    const legacyCounts = {};
+    const clientNameCounts = {};
+
+    clientsRows.slice(headerRowIndex + 1).forEach(row => {
+      const name = normalizeReportValue_(row[nameIdx]).toLowerCase();
+      if (name) clientNameCounts[name] = (clientNameCounts[name] || 0) + 1;
+    });
 
     dedupeReportRows_(reportRowsFromSheet_(getMainReportsSheet_(ss))).forEach(r => {
       const date = normalizeSheetDate_(reportCell_(r,0));
       const client = String(reportCell_(r,2) || "").trim();
+      const clientId = String(reportCell_(r,24) || "").trim();
       const notes = String(reportCell_(r,18) || "").trim();
-      if (!client || !date.startsWith(monthKey) || notes === "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc") return;
-      counts[client] = (counts[client] || 0) + 1;
+      if (!client || !date.startsWith(monthKey) || reportWaterCheckOnlyFromRow_(r) || notes === "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc") return;
+      if (clientId) {
+        const key = poolIdentityKey_(clientId, client);
+        counts[key] = (counts[key] || 0) + 1;
+      } else {
+        const nameKey = normalizeReportValue_(client).toLowerCase();
+        legacyCounts[nameKey] = (legacyCounts[nameKey] || 0) + 1;
+      }
     });
 
     const treatments = [];
@@ -1124,12 +1188,15 @@
     const quotaValues = quotaIdx >= 0 ? dataRows.map(row => [row[quotaIdx]]) : null;
     const monthValues = quotaMonthIdx >= 0 ? dataRows.map(row => [row[quotaMonthIdx]]) : null;
     for (let i = headerRowIndex + 1; i < clientsRows.length; i++) {
-      const client = String(clientsRows[i][0] || "").trim();
+      const client = String(clientsRows[i][nameIdx] || "").trim();
       if (!client) continue;
+      const clientId = clientIdIdx >= 0 ? String(clientsRows[i][clientIdIdx] || "").trim() : "";
+      const normalizedClient = normalizeReportValue_(client).toLowerCase();
       const dataIndex = i - dataStartRow;
-      const actual = counts[client] || 0;
+      const actual = (counts[poolIdentityKey_(clientId, client)] || 0) +
+        (clientNameCounts[normalizedClient] === 1 ? (legacyCounts[normalizedClient] || 0) : 0);
       const row = clientsRows[i];
-      const regularDays = String(row[6] || "");
+      const regularDays = String(row[regularDaysIdx] || "");
       const savedMonth = quotaMonthIdx >= 0 ? String(row[quotaMonthIdx] || "").trim() : "";
       const typedQuota = quotaIdx >= 0 ? Number(row[quotaIdx] || 0) : 0;
       const typedBalance = balanceIdx >= 0 ? Number(row[balanceIdx] || 0) : 0;
@@ -1143,7 +1210,7 @@
       if (countValues) countValues[dataIndex][0] = actual;
       if (quotaValues) quotaValues[dataIndex][0] = quota;
       if (monthValues) monthValues[dataIndex][0] = monthKey;
-      treatments.push({ client, monthlyTreatmentBalance: balance, monthlyTreatmentCount: actual, monthlyTreatmentQuota: quota });
+      treatments.push({ client, clientId, monthlyTreatmentBalance: balance, monthlyTreatmentCount: actual, monthlyTreatmentQuota: quota });
     }
     if (dataRows.length) {
       if (balanceValues) clientsSheet.getRange(dataStartRow + 1, balanceIdx + 1, dataRows.length, 1).setValues(balanceValues);
@@ -1154,8 +1221,9 @@
     return treatments;
   }
 
-  function refreshClientTreatmentCounter_(ss, clientName) {
+  function refreshClientTreatmentCounter_(ss, clientName, clientId) {
     const wantedClient = String(clientName || "").trim();
+    const wantedClientId = String(clientId || "").trim();
     if (!wantedClient) return null;
     const clientsSheet = ss.getSheetByName("לקוחות");
     if (!clientsSheet) return null;
@@ -1164,22 +1232,43 @@
     if (!rows.length) return null;
     const headerRowIndex = findHeaderRowIndex_(clientsSheet, ["שם_לקוח", "שם לקוח", "יתרת_טיפולים_חודשית", "מונה_טיפולים_בפועל"]);
     const headers = (rows[headerRowIndex] || []).map(h => String(h || "").trim());
-    const balanceIdx = headers.indexOf("יתרת_טיפולים_חודשית");
-    const countIdx = headers.indexOf("מונה_טיפולים_בפועל");
-    const quotaIdx = headers.indexOf("מכסת_טיפולים_חודשית");
-    const quotaMonthIdx = headers.indexOf("חודש_טיפולים");
-    const clientRowIndex = rows.findIndex((row, index) => index > headerRowIndex && String(row[0] || "").trim() === wantedClient);
+    const normalizedHeaders = headers.map(h => String(h || "").replace(/[\s_\-]/g, "").toLowerCase());
+    const columnOf = (names, fallback) => {
+      const wanted = names.map(name => String(name || "").replace(/[\s_\-]/g, "").toLowerCase());
+      const index = normalizedHeaders.findIndex(header => wanted.indexOf(header) >= 0);
+      return index >= 0 ? index : fallback;
+    };
+    const clientIdIdx = columnOf(["clientId","client_id","id"], -1);
+    const nameIdx = columnOf(["שם_לקוח","שם לקוח","שם","לקוח","שם הלקוח","client","name"], 0);
+    const regularDaysIdx = columnOf(["ימים_קבועים","ימים קבועים","regularDays"], 6);
+    const balanceIdx = columnOf(["יתרת_טיפולים_חודשית"], -1);
+    const countIdx = columnOf(["מונה_טיפולים_בפועל"], -1);
+    const quotaIdx = columnOf(["מכסת_טיפולים_חודשית"], -1);
+    const quotaMonthIdx = columnOf(["חודש_טיפולים"], -1);
+    const normalizedWantedName = normalizeReportValue_(wantedClient).toLowerCase();
+    const matchingNameRows = rows.filter((row, index) => index > headerRowIndex && normalizeReportValue_(row[nameIdx]).toLowerCase() === normalizedWantedName);
+    if (!wantedClientId && matchingNameRows.length !== 1) return null;
+    const clientRowIndex = rows.findIndex((row, index) => {
+      if (index <= headerRowIndex) return false;
+      const rowId = clientIdIdx >= 0 ? String(row[clientIdIdx] || "").trim() : "";
+      if (wantedClientId) return rowId === wantedClientId;
+      return normalizeReportValue_(row[nameIdx]).toLowerCase() === normalizedWantedName;
+    });
     if (clientRowIndex < 0) return null;
 
     const monthKey = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM");
     const actual = dedupeReportRows_(reportRowsFromSheet_(getMainReportsSheet_(ss))).reduce((count, row) => {
       const date = normalizeSheetDate_(reportCell_(row,0));
       const client = String(reportCell_(row,2) || "").trim();
+      const rowClientId = String(reportCell_(row,24) || "").trim();
       const notes = String(reportCell_(row,18) || "").trim();
-      return client === wantedClient && date.startsWith(monthKey) && notes !== "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc" ? count + 1 : count;
+      const samePool = wantedClientId
+        ? (rowClientId ? rowClientId === wantedClientId : matchingNameRows.length === 1 && normalizeReportValue_(client).toLowerCase() === normalizedWantedName)
+        : normalizeReportValue_(client).toLowerCase() === normalizedWantedName;
+      return samePool && date.startsWith(monthKey) && !reportWaterCheckOnlyFromRow_(row) && notes !== "\u05dc\u05d0 \u05d1\u05d5\u05e6\u05e2 \u05d8\u05d9\u05e4\u05d5\u05dc" ? count + 1 : count;
     }, 0);
     const row = rows[clientRowIndex];
-    const regularDays = String(row[6] || "");
+    const regularDays = String(row[regularDaysIdx] || "");
     const savedMonth = quotaMonthIdx >= 0 ? String(row[quotaMonthIdx] || "").trim() : "";
     const typedQuota = quotaIdx >= 0 ? Number(row[quotaIdx] || 0) : 0;
     const typedBalance = balanceIdx >= 0 ? Number(row[balanceIdx] || 0) : 0;
@@ -1193,7 +1282,7 @@
     if (countIdx >= 0) clientsSheet.getRange(clientRowIndex + 1, countIdx + 1).setValue(actual);
     if (quotaIdx >= 0) clientsSheet.getRange(clientRowIndex + 1, quotaIdx + 1).setValue(quota);
     if (quotaMonthIdx >= 0) clientsSheet.getRange(clientRowIndex + 1, quotaMonthIdx + 1).setValue(monthKey);
-    return { client:wantedClient, monthlyTreatmentBalance:balance, monthlyTreatmentCount:actual, monthlyTreatmentQuota:quota };
+    return { client:wantedClient, clientId:wantedClientId, monthlyTreatmentBalance:balance, monthlyTreatmentCount:actual, monthlyTreatmentQuota:quota };
   }
 
   function countClientCalendarTreatments_(regularDays, date) {
@@ -1319,6 +1408,12 @@
       };
     }
 
+    const statusCacheKey = "greenApiState:" + config.idInstance;
+    try {
+      const hit = CacheService.getScriptCache().get(statusCacheKey);
+      if (hit) return JSON.parse(hit);
+    } catch(e) {}
+
     const url = config.apiUrl + "/waInstance" + config.idInstance + "/getStateInstance/" + config.apiTokenInstance;
     const res = UrlFetchApp.fetch(url, {
       method: "get",
@@ -1334,19 +1429,274 @@
       parsed = { raw:text };
     }
 
-    Logger.log("Green API state URL: " + url);
     Logger.log("Green API state status: " + code);
-    Logger.log("Green API state response: " + text);
 
     const state = String(parsed.stateInstance || parsed.state || "");
 
-    return {
+    const result = {
       success: code >= 200 && code < 300 && state === "authorized",
       ok: code >= 200 && code < 300 && state === "authorized",
       status: code,
       stateInstance: state,
       response: parsed
     };
+
+    // ponytail: cache authorized only. A cached failure would outlive the fix for it.
+    if (result.success) {
+      try { CacheService.getScriptCache().put(statusCacheKey, JSON.stringify(result), 300); } catch(e) {}
+    }
+    return result;
+  }
+
+  function greenApiMessageType_(data) {
+    return String(data.messageType || data.whatsappMessageType || (data.reportId ? "reportCompletion" : "")).trim();
+  }
+
+  function greenApiIdempotencyKey_(data) {
+    const reportId = String(data.reportId || "").trim();
+    const messageType = greenApiMessageType_(data);
+    if (!reportId || !messageType) return "";
+    try {
+      const raw = [String(data.sheetId || ""), reportId, messageType].join("|");
+      const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8)
+        .map(value => (value < 0 ? value + 256 : value).toString(16).padStart(2, "0"))
+        .join("");
+      return "greenApiSent:" + digest;
+    } catch(e) {
+      return "";
+    }
+  }
+
+  function greenApiLedgerLocation_(key) {
+    const digest = String(key || "").split(":").pop() || "";
+    return {
+      property:"greenApiLedger:" + digest.slice(0, 2),
+      token:digest.slice(2, 18)
+    };
+  }
+
+  function greenApiReadLedgerEntry_(key) {
+    if (!key) return null;
+    try {
+      const location = greenApiLedgerLocation_(key);
+      const raw = PropertiesService.getScriptProperties().getProperty(location.property);
+      if (!raw) return null;
+      const bucket = JSON.parse(raw);
+      if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) {
+        return { status:"error", error:"ledger_read_failed" };
+      }
+      const entry = bucket[location.token];
+      if (entry === undefined) return null;
+      if (!Array.isArray(entry) || !entry[0]) {
+        return { status:"error", error:"ledger_read_failed" };
+      }
+      const status = String(entry[0]);
+      const idMessage = String(entry[1] || "");
+      const at = Number(entry[2] || 0);
+      if (
+        ["sending","sent","unknown"].indexOf(status) < 0 ||
+        !Number.isFinite(at) ||
+        at <= 0 ||
+        (status === "sent" && !idMessage)
+      ) {
+        return { status:"error", error:"ledger_read_failed" };
+      }
+      const age = Date.now() - at;
+      if (age > 180 * 24 * 60 * 60 * 1000) return null;
+      return { status:status, idMessage:idMessage, at:at };
+    } catch(e) {
+      return { status:"error", error:"ledger_read_failed" };
+    }
+  }
+
+  function greenApiWriteLedgerEntry_(key, status, idMessage) {
+    if (!key) return;
+    const location = greenApiLedgerLocation_(key);
+    const properties = PropertiesService.getScriptProperties();
+    let bucket = {};
+    const raw = properties.getProperty(location.property);
+    if (raw) {
+      bucket = JSON.parse(raw);
+      if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) {
+        throw new Error("ledger_write_failed");
+      }
+    }
+    const cutoff = Date.now() - 180 * 24 * 60 * 60 * 1000;
+    Object.keys(bucket).forEach(token => {
+      if (!Array.isArray(bucket[token]) || Number(bucket[token][2] || 0) < cutoff) delete bucket[token];
+    });
+    if (status) bucket[location.token] = [status, String(idMessage || ""), Date.now()];
+    else delete bucket[location.token];
+    properties.setProperty(location.property, JSON.stringify(bucket));
+  }
+
+  function greenApiLedgerResult_(entry, chatId) {
+    if (!entry) return null;
+    if (entry.status === "error") {
+      return {
+        success:false,
+        ok:false,
+        error:"idempotency_guard_unavailable",
+        retryable:true,
+        idempotent:true
+      };
+    }
+    if (entry.status === "sent" && entry.idMessage) {
+      return {
+        success:true,
+        ok:true,
+        status:200,
+        chatId:chatId,
+        idMessage:entry.idMessage,
+        response:{ idMessage:entry.idMessage },
+        duplicate:true,
+        idempotent:true
+      };
+    }
+    if (entry.status === "sending" && Date.now() - entry.at < 10 * 60 * 1000) {
+      return { success:false, ok:false, error:"message_send_in_progress", retryable:true, idempotent:true };
+    }
+    if (entry.status === "sending" || entry.status === "unknown") {
+      return { success:false, ok:false, error:"delivery_status_unknown", retryable:false, idempotent:true };
+    }
+    return null;
+  }
+
+  function greenApiCachedSendResult_(cache, key, chatId) {
+    if (!key) return null;
+    try {
+      const cached = JSON.parse(cache.get(key) || "null");
+      if (!cached || !cached.idMessage) return null;
+      return {
+        success: true,
+        ok: true,
+        status: Number(cached.status || 200),
+        chatId: chatId,
+        idMessage: String(cached.idMessage),
+        response: { idMessage:String(cached.idMessage) },
+        duplicate: true,
+        idempotent: true
+      };
+    } catch(e) {
+      return null;
+    }
+  }
+
+  function beginGreenApiIdempotentSend_(key, chatId) {
+    if (!key) return { proceed:true };
+    let cache = null;
+    try { cache = CacheService.getScriptCache(); } catch(e) {}
+    const cached = greenApiCachedSendResult_(cache, key, chatId);
+    if (cached) return { proceed:false, result:cached };
+    const persisted = greenApiLedgerResult_(greenApiReadLedgerEntry_(key), chatId);
+    if (persisted) return { proceed:false, result:persisted };
+
+    let lock = null;
+    let acquiredLock = false;
+    try {
+      lock = LockService.getScriptLock();
+      if (!lock.hasLock()) {
+        if (!lock.tryLock(5000)) {
+          return { proceed:false, result:{ success:false, ok:false, error:"message_send_in_progress", retryable:true, idempotent:true } };
+        }
+        acquiredLock = true;
+      }
+    } catch(e) {
+      return {
+        proceed:false,
+        result:{ success:false, ok:false, error:"idempotency_guard_unavailable", retryable:true, idempotent:true }
+      };
+    }
+    try {
+      const lockedCached = greenApiCachedSendResult_(cache, key, chatId);
+      if (lockedCached) return { proceed:false, result:lockedCached };
+      const lockedPersisted = greenApiLedgerResult_(greenApiReadLedgerEntry_(key), chatId);
+      if (lockedPersisted) return { proceed:false, result:lockedPersisted };
+      if (cache && cache.get(key + ":sending")) {
+        return { proceed:false, result:{ success:false, ok:false, error:"message_send_in_progress", retryable:true, idempotent:true } };
+      }
+      greenApiWriteLedgerEntry_(key, "sending", "");
+      if (cache) cache.put(key + ":sending", "1", 120);
+      return { proceed:true };
+    } catch(e) {
+      return {
+        proceed:false,
+        result:{ success:false, ok:false, error:"idempotency_guard_unavailable", retryable:true, idempotent:true }
+      };
+    } finally {
+      try { if (lock && acquiredLock) lock.releaseLock(); } catch(e) {}
+    }
+  }
+
+  function finishGreenApiIdempotentSend_(key, result) {
+    if (!key) return;
+    let cache = null;
+    try { cache = CacheService.getScriptCache(); } catch(e) {}
+    let lock = null;
+    let acquiredLock = false;
+    try {
+      lock = LockService.getScriptLock();
+      if (!lock.hasLock()) {
+        if (!lock.tryLock(5000)) return;
+        acquiredLock = true;
+      }
+      if (result && result.success && result.idMessage) {
+        greenApiWriteLedgerEntry_(key, "sent", result.idMessage);
+        if (cache) {
+          cache.put(key, JSON.stringify({
+            status: result.status || 200,
+            idMessage: result.idMessage
+          }), 21600);
+        }
+      } else if (result && Number(result.status || 0) >= 400 && Number(result.status || 0) < 500) {
+        greenApiWriteLedgerEntry_(key, "", "");
+      } else {
+        greenApiWriteLedgerEntry_(key, "unknown", "");
+      }
+    } catch(e) {
+    } finally {
+      try { if (cache) cache.remove(key + ":sending"); } catch(e) {}
+      try { if (lock && acquiredLock) lock.releaseLock(); } catch(e) {}
+    }
+  }
+
+  function resetGreenApiDeliveryGuard_(data) {
+    if (!data || data.confirmReset !== true) {
+      return { success:false, error:"explicit_confirmation_required" };
+    }
+    const key = greenApiIdempotencyKey_(data);
+    if (!key) return { success:false, error:"missing_delivery_identity" };
+    const lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(5000);
+      const entry = greenApiReadLedgerEntry_(key);
+      if (entry && entry.status === "error") {
+        return { success:false, error:"idempotency_guard_unavailable" };
+      }
+      let cache = null;
+      try { cache = CacheService.getScriptCache(); } catch(e) {}
+      if (
+        (entry && entry.status === "sent") ||
+        greenApiCachedSendResult_(cache, key, "")
+      ) {
+        return { success:false, error:"delivery_already_confirmed" };
+      }
+      if (entry && entry.status === "sending" && Date.now() - entry.at < 10 * 60 * 1000) {
+        return { success:false, error:"message_send_in_progress" };
+      }
+      greenApiWriteLedgerEntry_(key, "", "");
+      try {
+        if (cache) {
+          cache.remove(key);
+          cache.remove(key + ":sending");
+        }
+      } catch(e) {}
+      return { success:true };
+    } catch(e) {
+      return { success:false, error:"idempotency_guard_unavailable" };
+    } finally {
+      try { lock.releaseLock(); } catch(e) {}
+    }
   }
 
   function sendGreenApiWhatsApp_(data) {
@@ -1379,44 +1729,48 @@
     }
 
     const chatId = phone + "@c.us";
+    const idempotencyKey = greenApiIdempotencyKey_(data);
+    const idempotency = beginGreenApiIdempotentSend_(idempotencyKey, chatId);
+    if (!idempotency.proceed) return idempotency.result;
 
     const url = config.apiUrl + "/waInstance" + config.idInstance + "/sendMessage/" + config.apiTokenInstance;
     const payload = {
       chatId: chatId,
       message: message
     };
-
-    const res = UrlFetchApp.fetch(url, {
-      method: "post",
-      contentType: "application/json",
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-
-    const code = res.getResponseCode();
-    const text = res.getContentText();
-    let parsed = {};
+    let result = null;
     try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      parsed = { raw:text };
+      const res = UrlFetchApp.fetch(url, {
+        method: "post",
+        contentType: "application/json",
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+
+      const code = res.getResponseCode();
+      const text = res.getContentText();
+      let parsed = {};
+      try {
+        parsed = JSON.parse(text);
+      } catch(e) {
+        parsed = { raw:text };
+      }
+
+      Logger.log("Green API status: " + code);
+
+      const idMessage = parsed.idMessage || "";
+      result = {
+        success: code >= 200 && code < 300 && !parsed.error && !!idMessage,
+        ok: code >= 200 && code < 300 && !parsed.error && !!idMessage,
+        status: code,
+        chatId: chatId,
+        idMessage: idMessage,
+        response: parsed
+      };
+      return result;
+    } finally {
+      finishGreenApiIdempotentSend_(idempotencyKey, result);
     }
-
-    Logger.log("Green API URL: " + url);
-    Logger.log("Green API chatId: " + chatId);
-    Logger.log("Green API status: " + code);
-    Logger.log("Green API response: " + text);
-
-    const idMessage = parsed.idMessage || "";
-
-    return {
-      success: code >= 200 && code < 300 && !parsed.error && !!idMessage,
-      ok: code >= 200 && code < 300 && !parsed.error && !!idMessage,
-      status: code,
-      chatId: chatId,
-      idMessage: idMessage,
-      response: parsed
-    };
   }
 
   function sendGreenApiPoll_(data, ss) {
@@ -1583,9 +1937,7 @@
     const success = code >= 200 && code < 300 && parsed.saveSettings !== false && !parsed.error;
     if (success) props.setProperty(cacheKey, webhookUrl + "|" + now);
 
-    Logger.log("Green API webhook setup URL: " + webhookUrl);
     Logger.log("Green API webhook setup status: " + code);
-    Logger.log("Green API webhook setup response: " + text);
 
     return {
       success: success,
@@ -1668,9 +2020,13 @@
     if (fallback) return fallback;
     const wantedId = normalizeReportValue_(clientId).toLowerCase();
     const wantedName = normalizeReportValue_(clientName).toLowerCase();
-    const clients = getClients_(ss);
-    const found = clients.find(c => wantedId && normalizeReportValue_(c.clientId).toLowerCase() === wantedId) ||
-      clients.find(c => wantedName && normalizeReportValue_(c.name).toLowerCase() === wantedName);
+    const clients = allClientRecords_(ss);
+    const found = wantedId
+      ? clients.find(c => normalizeReportValue_(c.clientId).toLowerCase() === wantedId)
+      : (() => {
+          const matches = clients.filter(c => wantedName && normalizeReportValue_(c.name).toLowerCase() === wantedName);
+          return matches.length === 1 ? matches[0] : null;
+        })();
     return normalizeGreenApiPhone_(found && found.phone);
   }
 
@@ -1695,7 +2051,7 @@
     try {
       return queueChlorineTabletReminder_(ss, report, data, reportIdOverride);
     } catch(e) {
-      Logger.log("Chlorine reminder queue failed: " + e);
+      Logger.log("Chlorine reminder queue failed");
       return { success:false, error:String(e) };
     }
   }
@@ -1799,7 +2155,7 @@
         }
 
         try {
-          const res = sendGreenApiWhatsApp_({ phone, message, client, reportId });
+          const res = sendGreenApiWhatsApp_({ phone, message, client, reportId, messageType:"chlorineReminder", sheetId:ss.getId() });
           if (res && res.success) {
             sent++;
             updateChlorineReminderRow_(sheet, rowNumber, headers, {
@@ -1832,7 +2188,7 @@
 
       return { success:true, sent, failed };
     } catch(e) {
-      Logger.log("sendDueChlorineTabletReminders failed: " + e);
+      Logger.log("Chlorine reminder send failed");
       return { success:false, error:String(e) };
     } finally {
       try { lock.releaseLock(); } catch(e) {}
@@ -1967,8 +2323,8 @@
     if (changed) range.setValues(next);
   }
 
-  function supplyIdForClient_(client) {
-    const normalized = normalizeReportValue_(client).toLowerCase();
+  function supplyIdForClient_(client, clientId) {
+    const normalized = poolIdentityKey_(clientId, client);
     const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, normalized, Utilities.Charset.UTF_8);
     return "SUP-" + Utilities.base64EncodeWebSafe(digest).replace(/=+$/,"").slice(0, 12);
   }
@@ -1994,6 +2350,23 @@
       if (!client) return { success:false, error:"missing supply client" };
       const map = supplyHeaderMap_(sheet);
       const normalizedClient = normalizeReportValue_(client).toLowerCase();
+      let sameNamePoolCount = 0;
+      const clientsSheet = ss.getSheetByName("לקוחות");
+      if (clientsSheet) {
+        const clientRows = clientsSheet.getDataRange().getValues();
+        const clientHeaderIndex = clientRows.findIndex(values => values.some(isClientNameHeader_));
+        const clientHeaders = (clientRows[clientHeaderIndex] || []).map(value => String(value || "").trim());
+        const clientNameIndex = clientHeaders.findIndex(isClientNameHeader_);
+        if (clientNameIndex >= 0) {
+          sameNamePoolCount = clientRows.slice(clientHeaderIndex + 1)
+            .filter(values => normalizeReportValue_(values[clientNameIndex]).toLowerCase() === normalizedClient)
+            .length;
+        }
+      }
+      if (!clientId && sameNamePoolCount !== 1) {
+        return { success:false, error:"ambiguous supply client", client:client };
+      }
+      const allowLegacyNameFallback = sameNamePoolCount === 1;
       let targetRow = 0;
       const last = sheet.getLastRow();
       if (last >= 4) {
@@ -2006,7 +2379,7 @@
             break;
           }
         }
-        if (!targetRow) {
+        if (!targetRow && allowLegacyNameFallback) {
           for (let i = 0; i < clients.length; i++) {
             const rowClientId = String(clientIds[i] && clientIds[i][0] || "").trim();
             if (clientId && rowClientId) continue;
@@ -2032,7 +2405,7 @@
         "nextSupplyDate": row[7] || "",
         "assignedOperator": row[8] || "",
         "מחיר_פר_חומר_לטיפול_הבא": row[9] || defaultNextSupplyPricesText_(),
-        "supplyId": row[10] || supplyIdForClient_(client),
+        "supplyId": row[10] || supplyIdForClient_(client, clientId),
         "clientId": clientId
       };
       Object.keys(values).forEach(function(header) {
@@ -2057,8 +2430,12 @@
   }
 
   function writeSupplyDB_(ss, db) {
-    Object.keys(db || {}).forEach(client => {
-      const v = db[client] || {};
+    Object.keys(db || {}).forEach(storageKey => {
+      const v = db[storageKey] || {};
+      const rawKey = String(storageKey || "");
+      const client = String(v.client || (rawKey.indexOf("legacy:") === 0 ? rawKey.slice(7) : rawKey) || "").trim();
+      const clientId = String(v.clientId || "").trim();
+      if (!client) return;
       upsertSupplyDBRow_(ss, [
         client,
         v.acid ? "כן" : "לא",
@@ -2070,8 +2447,8 @@
         v.nextSupplyDate || "",
         v.assignedOperator || "",
         JSON.stringify(parseNextSupplyPrices_(v.materialPrices)),
-        v.supplyId || supplyIdForClient_(client),
-        v.clientId || ""
+        v.supplyId || supplyIdForClient_(client, clientId),
+        clientId
       ]);
     });
     return;
@@ -2130,11 +2507,23 @@
 
   function syncDailyMaterialApprovals_(ss, date) {
     const targetDate = String(date || Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd")).slice(0, 10);
+    return {
+      success: true,
+      disabled: true,
+      date: targetDate,
+      synced: [],
+      waitingForOrder: []
+    };
+    /*
+      Legacy customer-poll sync is intentionally disabled. Customers no longer
+      approve materials, and name-only answers cannot identify one of several pools.
+    */
     const orders = getAdminOrders_(ss).filter(o => String(o.date || "").slice(0, 10) === targetDate && o.client && o.operator);
-    const orderByClient = {};
+    const ordersByClient = {};
     orders.sort((a,b) => Number(a.orderIndex || 9999) - Number(b.orderIndex || 9999)).forEach(o => {
       const key = normalizeReportValue_(o.client);
-      if (!orderByClient[key]) orderByClient[key] = o;
+      if (!ordersByClient[key]) ordersByClient[key] = [];
+      ordersByClient[key].push(o);
     });
 
     const approvals = getMaterialApprovals_(ss).filter(isApprovedMaterialApproval_);
@@ -2143,18 +2532,23 @@
     const waitingForOrder = [];
 
     approvals.forEach(approval => {
-      const order = orderByClient[normalizeReportValue_(approval.client)];
+      const matchingOrders = ordersByClient[normalizeReportValue_(approval.client)] || [];
       const supply = materialSupplyFromApproval_(approval);
       if (!hasMaterialSupply_(supply)) return;
-      if (!order) {
+      if (matchingOrders.length !== 1) {
         waitingForOrder.push(approval.client);
         return;
       }
 
+      const order = matchingOrders[0];
       const client = order.client || approval.client;
-      const prev = db[client] || {};
-      db[client] = {
+      const clientId = String(order.clientId || "").trim();
+      const storageKey = clientId || ("legacy:" + client);
+      const prev = db[storageKey] || {};
+      db[storageKey] = {
         ...prev,
+        client: client,
+        clientId: clientId,
         acid: !!(prev.acid || supply.acid),
         phUpSupply: !!(prev.phUpSupply || supply.phUpSupply),
         saltPkg: !!(prev.saltPkg || supply.saltPkg),
@@ -2165,7 +2559,7 @@
         assignedOperator: order.operator
       };
       markMaterialApprovalSynced_(ss, approval, "auto_added", order.operator, targetDate);
-      synced.push({ client:client, operator:order.operator });
+      synced.push({ client:client, clientId:clientId, operator:order.operator });
     });
 
     if (synced.length) writeSupplyDB_(ss, db);
@@ -2277,7 +2671,7 @@
     };
 
     const result = handleGreenApiIncomingWebhook_(fakeWebhook, ss);
-    Logger.log(JSON.stringify(result));
+    Logger.log("Green API webhook dry run status: " + !!result.success);
     return result;
   }
 
@@ -2307,7 +2701,7 @@
     const rawCol = headers.indexOf("raw");
     const rowIndex = values.findIndex((row, idx) => idx > 0 && String(row[pollCol] || "") === pollMessageId);
     if (rowIndex < 1) {
-      Logger.log("Ignored unknown Green API poll update: " + pollMessageId + " / " + answer);
+      Logger.log("Ignored unknown Green API poll update");
       return { success:true, ignored:true, matched:false, reason:"unknown_poll", pollMessageId:pollMessageId };
     }
     if (rowIndex < 1) {
@@ -2335,7 +2729,7 @@
     }
     const allowedOptions = Array.isArray(storedRaw.options) ? storedRaw.options.map(String) : [];
     if (allowedOptions.length && allowedOptions.indexOf(answer) < 0) {
-      Logger.log("Ignored unexpected Green API poll answer: " + pollMessageId + " / " + answer);
+      Logger.log("Ignored unexpected Green API poll answer");
       return { success:true, ignored:true, matched:true, reason:"unexpected_answer", pollMessageId:pollMessageId, answer:answer };
     }
     const answerIndex = allowedOptions.indexOf(answer);
@@ -2353,7 +2747,7 @@
         message: `${values[rowIndex][1] || "לקוח"} · ${answer}`
       });
     } catch(e) {
-      Logger.log("Material approval admin notification failed: " + e);
+      Logger.log("Material approval admin notification failed");
     }
 
     return { success:true, saved:true, matched:true, answer:answer, status:status };
@@ -2417,6 +2811,9 @@
     const clientId = String(data.clientId || "").trim();
     const note = String(data.note || "");
     if (!client) return { success:false, error:"missing client" };
+    if (!clientId && clientNameMatchCount_(ss, client) !== 1) {
+      return { success:false, error:"ambiguous client name", client:client };
+    }
 
     const sheet = getClientInternalNotesSheet_(ss);
     const rows = sheet.getDataRange().getValues();
@@ -2463,9 +2860,7 @@
       parsed = { raw:text };
     }
 
-    Logger.log("Push target: " + label);
     Logger.log("Push status: " + status);
-    Logger.log("Push response: " + text);
 
     const recipients = Number(parsed.recipients || 0);
     const ok = status >= 200 && status < 300 && recipients > 0 && !parsed.errors;
@@ -2520,8 +2915,7 @@
     }
 
     const duplicate = status === 409 || String(text || "").toLowerCase().indexOf("already") >= 0;
-    Logger.log("Push user sync " + username + " status: " + status);
-    Logger.log("Push user sync " + username + " response: " + text);
+    Logger.log("Push user sync status: " + status);
 
     return {
       success: (status >= 200 && status < 300) || duplicate,
@@ -2578,7 +2972,7 @@
   function syncAppNotificationUsers() {
     const ss = getNotificationSyncSpreadsheet_();
     const res = syncAppNotificationUsers_(ss);
-    Logger.log(JSON.stringify(res));
+    Logger.log("Push user sync completed: " + !!res.success);
     return res;
   }
 
@@ -2623,7 +3017,7 @@
       title: "בדיקת התראה",
       message: "בדיקה מגוגל סקריפט"
     }, ss);
-    Logger.log(JSON.stringify(res));
+    Logger.log("Push test completed: " + !!res.success);
     return res;
   }
 
@@ -2701,7 +3095,7 @@
       message: messageParts.join(" · ") || "התקלה שפתחת טופלה"
     }, ss);
 
-    Logger.log("Operator issue done notification: " + JSON.stringify(res));
+    Logger.log("Operator issue done push status: " + !!res.success);
     return res;
   }
 
@@ -2727,7 +3121,7 @@
       message: messageParts.join(" · ") || "תקלה קריטית אושרה ונמצאת בטיפול מיידי"
     }, ss);
 
-    Logger.log("Operator critical issue ack notification: " + JSON.stringify(res));
+    Logger.log("Operator issue acknowledgement push status: " + !!res.success);
     return res;
   }
 
@@ -2765,14 +3159,42 @@
   }
 
   function reportHeaders_() {
-    return ["reportId","תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק","clientId"];
+    return ["reportId","תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק","clientId","waterCheckOnly","queueRevision","queueUpdatedAt"];
   }
 
   function reportRowValues_(r) {
-    return [r.id || Utilities.getUuid(), r.reportDate, r.operator, r.client, r.chlorine, r.ph, r.salt,
-      r.waterLevel, r.clarity, r.fat, r.flow, r.elModel, r.elSerial,
-      r.elDate, r.elNext, r.supplyLabel, r.poolStatus, r.customStatusText,
-      r.restrictedUntil, r.notes, r.chlora||0, r.hth||0, r.phUp||0, r.acidLiters||0, r.suppliedEquipment||"", r.clientId || ""];
+    const waterCheckOnly = isTruthy_(r.waterCheckOnly);
+    return [
+      r.id || Utilities.getUuid(),
+      r.reportDate,
+      r.operator,
+      r.client,
+      r.chlorine,
+      waterCheckOnly ? "" : r.ph,
+      waterCheckOnly ? "" : r.salt,
+      waterCheckOnly ? "" : r.waterLevel,
+      waterCheckOnly ? "" : r.clarity,
+      waterCheckOnly ? "" : r.fat,
+      r.flow,
+      waterCheckOnly ? "" : r.elModel,
+      waterCheckOnly ? "" : r.elSerial,
+      waterCheckOnly ? "" : r.elDate,
+      waterCheckOnly ? "" : r.elNext,
+      waterCheckOnly ? "" : r.supplyLabel,
+      waterCheckOnly ? "" : r.poolStatus,
+      waterCheckOnly ? "" : r.customStatusText,
+      waterCheckOnly ? "" : r.restrictedUntil,
+      waterCheckOnly ? "" : r.notes,
+      r.chlora || 0,
+      r.hth || 0,
+      waterCheckOnly ? "" : (r.phUp || 0),
+      waterCheckOnly ? "" : (r.acidLiters || 0),
+      waterCheckOnly ? "" : (r.suppliedEquipment || ""),
+      r.clientId || "",
+      waterCheckOnly,
+      r.queueRevision || "",
+      Number(r.queueUpdatedAt || 0)
+    ];
   }
 
   function reportHasIdColumn_(row) {
@@ -2789,6 +3211,35 @@
     return reportHasIdColumn_(row) ? String(row[0] || "").trim() : "";
   }
 
+  function reportWaterCheckOnlyFromRow_(row) {
+    return isTruthy_(reportCell_(row,25));
+  }
+
+  function normalizeReportComparableValue_(value, index) {
+    if ([0,12,13,17].indexOf(index) >= 0) return normalizeReportDate_(value);
+    if (index === 25) return isTruthy_(value) ? "true" : "false";
+    return normalizeReportValue_(value);
+  }
+
+  function reportRowContentKey_(row) {
+    const values = [];
+    for (let index = 0; index <= 25; index++) {
+      values.push(normalizeReportComparableValue_(reportCell_(row,index), index));
+    }
+    return JSON.stringify(values);
+  }
+
+  function reportRowMatchesReport_(row, report) {
+    return reportRowContentKey_(row) === reportRowContentKey_(reportRowValues_(report));
+  }
+
+  function reportRowQueueVersionMatchesReport_(row, report) {
+    return (
+      String(reportCell_(row, 26) || "").trim() === String(report && report.queueRevision || "").trim() &&
+      Number(reportCell_(row, 27) || 0) === Number(report && report.queueUpdatedAt || 0)
+    );
+  }
+
   function ensureReportsSheetReportId_(sheet) {
     if (!sheet) return;
     const lastRow = Math.max(sheet.getLastRow(), 1);
@@ -2803,6 +3254,9 @@
       sheet.getRange(headerRowNumber, 1).setValue("reportId");
     }
     const headers = reportHeaders_();
+    if (sheet.getMaxColumns() < headers.length) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
+    }
     sheet.getRange(headerRowNumber, 1, 1, headers.length).setValues([headers]);
     const headerValues = sheet.getRange(headerRowNumber, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0].map(String);
     if (headerValues.indexOf("clientId") < 0) {
@@ -2810,16 +3264,20 @@
     }
     const dataRowCount = Math.max(sheet.getLastRow() - headerRowNumber, 0);
     if (!dataRowCount) return;
-    const idRange = sheet.getRange(headerRowNumber + 1, 1, dataRowCount, 2);
-    const data = idRange.getValues();
+    const idRange = sheet.getRange(headerRowNumber + 1, 1, dataRowCount, 1);
+    const ids = idRange.getValues();
+    const data = sheet.getRange(headerRowNumber + 1, 1, dataRowCount, sheet.getLastColumn()).getValues();
     const updates = [];
     let changed = false;
-    data.forEach(r => {
-      if (!String(r[0] || "").trim() && r[1]) {
-        updates.push([Utilities.getUuid(), r[1]]);
+    data.forEach((r, index) => {
+      if (!String(ids[index][0] || "").trim() && r[1]) {
+        const comparableRow = r.slice();
+        comparableRow[0] = "legacy";
+        const clientId = String(reportCell_(comparableRow,24) || "").trim();
+        updates.push([clientId ? deterministicLegacyReportId_(comparableRow) : Utilities.getUuid()]);
         changed = true;
       } else {
-        updates.push(r);
+        updates.push([ids[index][0]]);
       }
     });
     if (changed && updates.length) idRange.setValues(updates);
@@ -2851,13 +3309,87 @@
     const direct = canonicalOperatorName_(report && report.operator);
     const reportClientId = String(report && report.clientId || "").trim();
     const reportClient = normalizeReportValue_(report && report.client);
-    const clients = getClientsByHeaders_(ss);
-    const match = clients.find(c => {
-      const cid = String(c.clientId || "").trim();
-      if (reportClientId && cid && reportClientId === cid) return true;
-      return reportClient && normalizeReportValue_(c.name) === reportClient;
-    });
+    const clients = allClientRecords_(ss);
+    const match = reportClientId
+      ? clients.find(c => String(c.clientId || "").trim() === reportClientId)
+      : (() => {
+          const matches = clients.filter(c => reportClient && normalizeReportValue_(c.name) === reportClient);
+          return matches.length === 1 ? matches[0] : null;
+        })();
     return canonicalOperatorName_(match && match.regularOperator) || direct;
+  }
+
+  function ensureReportClientIdentity_(ss, report) {
+    const clientId = String(report && report.clientId || "").trim();
+    if (clientId) return { success:true, clientId:clientId };
+
+    const clientName = normalizeReportValue_(report && report.client);
+    const matches = allClientRecords_(ss).filter(client =>
+      clientName && normalizeReportValue_(client.name) === clientName
+    );
+    if (matches.length > 1) {
+      return { success:false, error:"ambiguous client name", client:report && report.client || "" };
+    }
+    if (matches.length === 1) {
+      report.clientId = String(matches[0].clientId || "").trim();
+    }
+    return { success:true, clientId:String(report && report.clientId || "").trim() };
+  }
+
+  function reportQueueVersionKey_(ss, reportId) {
+    const id = String(reportId || "").trim();
+    if (!id) return "";
+    const raw = [ss.getId(), id].join("|");
+    const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8)
+      .map(value => (value < 0 ? value + 256 : value).toString(16).padStart(2, "0"))
+      .join("");
+    return "reportQueueVersion:" + digest.slice(0, 40);
+  }
+
+  function storedReportQueueVersion_(ss, reportId) {
+    const id = String(reportId || "").trim();
+    const sheet = ss.getSheetByName("דוחות");
+    if (!id || !sheet || sheet.getLastRow() < 2) return { version:0, revision:"" };
+    ensureReportsSheetReportId_(sheet);
+    const rows = sheet.getDataRange().getValues();
+    const headerIndex = rows.findIndex(row => String(row[0] || "").trim() === "reportId");
+    if (headerIndex < 0) return { version:0, revision:"" };
+    const headers = rows[headerIndex].map(value => String(value || "").trim());
+    const revisionIndex = headers.indexOf("queueRevision");
+    const versionIndex = headers.indexOf("queueUpdatedAt");
+    for (let index = rows.length - 1; index > headerIndex; index--) {
+      if (String(rows[index][0] || "").trim() !== id) continue;
+      return {
+        version:versionIndex >= 0 ? Number(rows[index][versionIndex] || 0) : 0,
+        revision:revisionIndex >= 0 ? String(rows[index][revisionIndex] || "").trim() : ""
+      };
+    }
+    return { version:0, revision:"" };
+  }
+
+  function acceptReportQueueVersion_(ss, report, data) {
+    const version = Number(data && data.queueUpdatedAt || 0);
+    const revision = String(data && data.queueRevision || "").trim();
+    const key = reportQueueVersionKey_(ss, report && report.id);
+    if (!key) return true;
+    const stored = storedReportQueueVersion_(ss, report && report.id);
+    if (stored.version > version) return false;
+    if (stored.version > 0 && !version) return false;
+    if (
+      stored.version > 0 &&
+      stored.version === version &&
+      stored.revision &&
+      revision &&
+      stored.revision !== revision
+    ) return false;
+    if (!version) return true;
+    try {
+      const cache = CacheService.getScriptCache();
+      const current = Number(cache.get(key) || 0);
+      if (current > version) return false;
+      cache.put(key, String(version), 21600);
+    } catch(e) {}
+    return true;
   }
 
   function getOperatorReportsSheet_(ss, operator) {
@@ -2865,7 +3397,6 @@
     let sheet = ss.getSheetByName(name);
     if (!sheet) {
       sheet = ss.insertSheet(name);
-      sheet.appendRow(reportHeaders_());
     }
     ensureReportsSheetReportId_(sheet);
     return sheet;
@@ -2875,10 +3406,27 @@
     let sheet = ss.getSheetByName("דוחות");
     if (!sheet) {
       sheet = ss.insertSheet("דוחות");
-      sheet.appendRow(reportHeaders_());
     }
     ensureReportsSheetReportId_(sheet);
     return sheet;
+  }
+
+  function isReportDataSheet_(sheet) {
+    if (!sheet || sheet.getLastRow() < 1 || sheet.getLastColumn() < 1) return false;
+    const expected = reportHeaders_();
+    const rows = sheet.getRange(
+      1,
+      1,
+      Math.min(sheet.getLastRow(), 10),
+      Math.min(sheet.getLastColumn(), expected.length)
+    ).getValues();
+    return rows.some(row => {
+      const headers = row.map(value => String(value || "").trim());
+      if (headers[0] === expected[0]) {
+        return expected.slice(0, 5).every((header, index) => headers[index] === header);
+      }
+      return expected.slice(1, 5).every((header, index) => headers[index] === header);
+    });
   }
 
   function reportSheetList_(ss) {
@@ -2897,7 +3445,10 @@
     });
     ss.getSheets().forEach(sheet => {
       const name = sheet.getName();
-      const isOperatorSheet = !!operatorSheetNames[name] || name.indexOf("דוחות - ") === 0;
+      const isOperatorSheet =
+        !!operatorSheetNames[name] ||
+        name.indexOf("דוחות - ") === 0 ||
+        isReportDataSheet_(sheet);
       if (isOperatorSheet && sheets.indexOf(sheet) < 0) sheets.push(sheet);
     });
     sheets.forEach(ensureReportsSheetReportId_);
@@ -2940,7 +3491,7 @@
 
   function reportRowConfirmed_(row, report) {
     const wantedId = String(report && report.id || "").trim();
-    if (wantedId && reportIdCell_(row) === wantedId) return true;
+    if (wantedId && reportIdCell_(row) === wantedId) return reportRowMatchesReport_(row, report);
     return reportDuplicateKeyFromRow_(row) === reportDuplicateKeyFromReport_(report);
   }
 
@@ -2953,8 +3504,221 @@
     return rows.slice(hi + 1).filter(r => reportCell_(r,0));
   }
 
-  function allReportRows_(ss) {
-    return reportSheetList_(ss).reduce((out, sheet) => out.concat(reportRowsFromSheet_(sheet)), []);
+  function reportQueryCacheKey_(ss, query) {
+    const raw = JSON.stringify(query || {});
+    const digest = Utilities.computeDigest(
+      Utilities.DigestAlgorithm.SHA_256,
+      raw,
+      Utilities.Charset.UTF_8
+    ).map(value => (value < 0 ? value + 256 : value).toString(16).padStart(2, "0")).join("");
+    return [
+      "reportQuery",
+      ss.getId(),
+      getOperatorDataVersion_(ss),
+      GALILEO_SCRIPT_BUILD_,
+      digest.slice(0, 24)
+    ].join(":");
+  }
+
+  function reportRowsForQuery_(sheet, query) {
+    if (!sheet || sheet.getLastRow() < 2) return [];
+    const lastRow = sheet.getLastRow();
+    const lastColumn = Math.max(1, Math.min(sheet.getLastColumn(), reportHeaders_().length));
+    const previewRowCount = Math.min(lastRow, 10);
+    const preview = sheet.getRange(
+      1,
+      1,
+      previewRowCount,
+      Math.min(lastColumn, reportHeaders_().length)
+    ).getValues();
+    let headerIndex = preview.findIndex(row => String(row[0] || "").trim() === "reportId");
+    if (headerIndex < 0) headerIndex = preview.findIndex(row => String(row[0] || "").indexOf("תאריך") >= 0);
+    if (headerIndex < 0) headerIndex = 0;
+    const headers = (preview[headerIndex] || []).map(value => String(value || "").trim());
+    const hasIdColumn = headers[0] === "reportId";
+    const columnNumber = (name, fallback) => {
+      const index = headers.indexOf(name);
+      return index >= 0 ? index + 1 : fallback;
+    };
+    const dateColumn = columnNumber("תאריך", hasIdColumn ? 2 : 1);
+    const clientColumn = columnNumber("לקוח", hasIdColumn ? 4 : 3);
+    const clientIdColumn = headers.indexOf("clientId") >= 0 ? headers.indexOf("clientId") + 1 : 0;
+    const dataStartRow = headerIndex + 2;
+    const dataRowCount = Math.max(0, lastRow - dataStartRow + 1);
+    if (!dataRowCount) return [];
+    const dateValueIndex = hasIdColumn ? 1 : 0;
+    const normalizedDateByRow = {};
+
+    let candidateRows = null;
+    const intersectCandidates = rows => {
+      const next = {};
+      (rows || []).forEach(row => { next[Number(row)] = true; });
+      if (candidateRows === null) {
+        candidateRows = next;
+        return;
+      }
+      Object.keys(candidateRows).forEach(row => {
+        if (!next[row]) delete candidateRows[row];
+      });
+    };
+
+    if (query.fromDate || query.toDate) {
+      const dateRange = sheet.getRange(dataStartRow, dateColumn, dataRowCount, 1);
+      const displayedDates = dateRange.getDisplayValues();
+      let rawDates = null;
+      const matchingRows = [];
+      displayedDates.forEach((row, index) => {
+        let date = normalizeSheetDate_(row[0]);
+        if (!date && String(row[0] || "").trim()) {
+          if (!rawDates) rawDates = dateRange.getValues();
+          date = normalizeSheetDate_(rawDates[index][0]);
+        }
+        if (!date) return;
+        normalizedDateByRow[dataStartRow + index] = date;
+        if (query.fromDate && date < query.fromDate) return;
+        if (query.toDate && date > query.toDate) return;
+        matchingRows.push(dataStartRow + index);
+      });
+      intersectCandidates(matchingRows);
+    }
+
+    if (query.wantedClient || query.wantedClientId) {
+      const names = sheet.getRange(dataStartRow, clientColumn, dataRowCount, 1).getValues();
+      const ids = clientIdColumn
+        ? sheet.getRange(dataStartRow, clientIdColumn, dataRowCount, 1).getValues()
+        : [];
+      const matchingRows = [];
+      names.forEach((row, index) => {
+        const rowId = clientIdColumn ? String(ids[index][0] || "").trim() : "";
+        const rowName = String(row[0] || "").trim().toLowerCase();
+        if (query.wantedClientId && rowId) {
+          if (rowId === query.wantedClientId) matchingRows.push(dataStartRow + index);
+          return;
+        }
+        if (query.allowLegacyNameMatch && query.wantedClient && rowName === query.wantedClient) {
+          matchingRows.push(dataStartRow + index);
+        }
+      });
+      intersectCandidates(matchingRows);
+    }
+
+    if (query.query) {
+      let foundRows = null;
+      try {
+        const seenRows = {};
+        foundRows = [];
+        sheet.createTextFinder(query.query)
+          .matchCase(false)
+          .useRegularExpression(false)
+          .findAll()
+          .forEach(range => {
+            const row = range.getRow();
+            if (row >= dataStartRow && !seenRows[row]) {
+              seenRows[row] = true;
+              foundRows.push(row);
+            }
+          });
+      } catch(e) {
+        foundRows = null;
+      }
+      if (Array.isArray(foundRows)) intersectCandidates(foundRows);
+    }
+
+    if (candidateRows === null) {
+      const wanted = Math.max(1, Number(query.limit || 250));
+      const first = Math.max(dataStartRow, lastRow - wanted + 1);
+      candidateRows = {};
+      for (let row = first; row <= lastRow; row++) candidateRows[row] = true;
+    }
+
+    let indexes = Object.keys(candidateRows).map(Number).sort((a,b) => a-b);
+    const limit = Math.max(0, Number(query.limit || 0));
+    if (limit && indexes.length > limit * 4) indexes = indexes.slice(indexes.length - limit * 4);
+    if (!indexes.length) return [];
+
+    const wantedRows = {};
+    indexes.forEach(row => { wantedRows[row] = true; });
+    const groups = [];
+    indexes.forEach(row => {
+      const current = groups[groups.length - 1];
+      if (current && row - current.end <= 75 && row - current.start < 500) {
+        current.end = row;
+      } else {
+        groups.push({start:row, end:row});
+      }
+    });
+
+    const result = [];
+    groups.forEach(group => {
+      const rows = sheet.getRange(group.start, 1, group.end - group.start + 1, lastColumn).getValues();
+      rows.forEach((row, index) => {
+        const sheetRow = group.start + index;
+        if (normalizedDateByRow[sheetRow]) row[dateValueIndex] = normalizedDateByRow[sheetRow];
+        if (wantedRows[sheetRow] && reportCell_(row,0)) result.push(row);
+      });
+    });
+    return result;
+  }
+
+  function allReportRows_(ss, reportSheets) {
+    const sheets = Array.isArray(reportSheets) ? reportSheets : reportSheetList_(ss);
+    if (!sheets.length) return [];
+
+    const clientNameCounts = {};
+    allClientRecords_(ss).forEach(client => {
+      const key = normalizeReportValue_(client && client.name).toLowerCase();
+      if (key) clientNameCounts[key] = (clientNameCounts[key] || 0) + 1;
+    });
+    const legacyNameIsUnique = row =>
+      clientNameCounts[normalizeReportValue_(reportCell_(row,2)).toLowerCase()] === 1;
+    const primaryRows = reportRowsFromSheet_(sheets[0]);
+    const primaryContentKeys = {};
+    const seenIds = {};
+    primaryRows.forEach(row => {
+      const id = reportIdCell_(row);
+      const clientId = String(reportCell_(row,24) || "").trim();
+      if (id) seenIds[id] = true;
+      if (clientId || legacyNameIsUnique(row)) {
+        primaryContentKeys[reportRowContentKey_(row)] = true;
+      }
+    });
+
+    const rows = primaryRows.slice();
+    sheets.slice(1).forEach(sheet => {
+      reportRowsFromSheet_(sheet).forEach(row => {
+        const id = reportIdCell_(row);
+        const clientId = String(reportCell_(row,24) || "").trim();
+        if (id && seenIds[id]) return;
+        const safeLegacyMatch = !clientId && legacyNameIsUnique(row);
+        if ((clientId || safeLegacyMatch) && primaryContentKeys[reportRowContentKey_(row)]) {
+          if (id) seenIds[id] = true;
+          return;
+        }
+        rows.push(row);
+        if (id) seenIds[id] = true;
+      });
+    });
+    return rows;
+  }
+
+  function deleteReportCopiesOutsideTargets_(reportSheets, reportId, targetNames) {
+    const id = String(reportId || "").trim();
+    if (!id) return [];
+    const keep = {};
+    (targetNames || []).forEach(name => { keep[String(name || "")] = true; });
+    const removedSheets = [];
+    (reportSheets || []).forEach(sheet => {
+      if (keep[sheet.getName()] || sheet.getLastRow() < 2) return;
+      const ids = sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues();
+      let removed = false;
+      for (let index = ids.length - 1; index >= 0; index--) {
+        if (String(ids[index][0] || "").trim() !== id) continue;
+        sheet.deleteRow(index + 1);
+        removed = true;
+      }
+      if (removed) removedSheets.push(sheet.getName());
+    });
+    return removedSheets;
   }
 
   function dedupeReportRows_(rows) {
@@ -2962,29 +3726,51 @@
     const deduped = [];
     (rows || []).forEach(row => {
       const id = reportIdCell_(row);
-      const key = id ? ("id:" + id) : ("key:" + reportDuplicateKeyFromRow_(row));
-      if (seen[key] !== undefined) deduped[seen[key]] = row;
-      else {
-        seen[key] = deduped.length;
+      if (!id) {
         deduped.push(row);
+        return;
+      }
+      const key = "id:" + id;
+      const existingIndex = seen[key];
+      if (existingIndex !== undefined) {
+        deduped[existingIndex] = row;
+      } else {
+        const index = deduped.length;
+        deduped.push(row);
+        seen[key] = index;
       }
     });
     return deduped;
   }
 
-  function updateReportAcrossSheets_(ss, original, report) {
+  function updateReportAcrossSheets_(ss, original, report, reportSheets) {
     const matches = [];
+    const seenMatches = {};
+    const addMatch = (sheet, row) => {
+      if (!sheet || !row) return;
+      const key = sheet.getSheetId() + ":" + row;
+      if (seenMatches[key]) return;
+      seenMatches[key] = true;
+      matches.push({ sheet:sheet, row:row });
+    };
     const wantedId = String(report && report.id || original && (original.id || original.localId) || "").trim();
     const indexed = readReportIndex_(ss, wantedId);
-    if (indexed.length) {
-      indexed.forEach(match => matches.push({ sheet:match.sheet, row:match.row }));
-    } else {
-      reportSheetList_(ss).forEach(sheet => {
+    indexed.forEach(match => addMatch(match.sheet, match.row));
+    (reportSheets || reportSheetList_(ss)).forEach(sheet => {
+      if (wantedId) {
+        if (sheet.getLastRow() < 2) return;
+        sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues().forEach((row, index) => {
+          if (String(row[0] || "").trim() === wantedId) addMatch(sheet, index + 1);
+        });
+      } else {
         const row = findLatestReportRow_(sheet, original, report);
-        if (row) matches.push({ sheet:sheet, row:row });
-      });
-    }
+        addMatch(sheet, row);
+      }
+    });
     if (!matches.length) return { updated:0, created:0, row:0, mainRow:0, id:"", report:report };
+    matches.sort((left, right) =>
+      left.sheet.getName().localeCompare(right.sheet.getName()) || left.row - right.row
+    );
 
     let savedId = String(report && report.id || "").trim();
     if (!savedId) {
@@ -2998,19 +3784,22 @@
     const requiredNames = [mainSheet.getName(), operatorSheet.getName()];
     let mainRow = 0;
     const obsoleteMatches = [];
+    const keptRequiredSheets = {};
     matches.forEach(match => {
-      if (requiredNames.indexOf(match.sheet.getName()) < 0) {
+      const sheetName = match.sheet.getName();
+      if (requiredNames.indexOf(sheetName) < 0 || keptRequiredSheets[sheetName]) {
         obsoleteMatches.push(match);
         return;
       }
+      keptRequiredSheets[sheetName] = true;
       match.sheet.getRange(match.row, 1, 1, reportHeaders_().length).setValues([reportRowValues_(finalReport)]);
-      if (match.sheet.getName() === "דוחות") mainRow = match.row;
+      if (sheetName === "דוחות") mainRow = match.row;
     });
 
     let created = 0;
     const requiredSheets = [mainSheet, operatorSheet];
     requiredSheets.forEach(sheet => {
-      if (matches.some(match => match.sheet.getName() === sheet.getName())) return;
+      if (keptRequiredSheets[sheet.getName()]) return;
       sheet.appendRow(reportRowValues_(finalReport));
       created++;
       if (sheet.getName() === "דוחות") mainRow = sheet.getLastRow();
@@ -3020,7 +3809,10 @@
       .forEach(match => match.sheet.deleteRow(match.row));
     writeReportIndex_(ss, savedId, requiredSheets.map(sheet => ({
       sheet:sheet,
-      row:matches.find(match => match.sheet.getName() === sheet.getName())?.row || sheet.getLastRow()
+      row:matches.find(match =>
+        match.sheet.getName() === sheet.getName() &&
+        obsoleteMatches.indexOf(match) < 0
+      )?.row || sheet.getLastRow()
     })));
     return { updated:matches.length - obsoleteMatches.length, created:created, removed:obsoleteMatches.length, row:matches[0].row, mainRow:mainRow, id:savedId, report:finalReport };
   }
@@ -3075,7 +3867,15 @@
     const wantedId = String(report && report.id || original && (original.id || original.localId) || "").trim();
     const date = normalizeReportDate_(original.date || original.reportDate || report.reportDate);
     const client = normalizeReportValue_(original.client || report.client);
+    const clientId = String(original.clientId || report.clientId || "").trim();
     const operator = normalizeReportValue_(original.operator || report.operator);
+    const waterModeKnown = Object.prototype.hasOwnProperty.call(original || {}, "waterCheckOnly") ||
+      Object.prototype.hasOwnProperty.call(report || {}, "waterCheckOnly");
+    const wantedWaterMode = isTruthy_(
+      Object.prototype.hasOwnProperty.call(original || {}, "waterCheckOnly")
+        ? original.waterCheckOnly
+        : report.waterCheckOnly
+    );
     const rows = sheet.getDataRange().getValues();
     let hi = rows.findIndex(r => String(r[0]).includes("תאריך"));
     if (hi === -1) hi = 0;
@@ -3084,15 +3884,19 @@
       for (let i = rows.length - 1; i > hi; i--) {
         if (reportIdCell_(rows[i]) === wantedId) return i + 1;
       }
+      return 0;
     }
+    if (!clientId && clientNameMatchCount_(sheet.getParent(), client) !== 1) return 0;
 
     for (let i = rows.length - 1; i > hi; i--) {
       if (!rows[i][0]) continue;
-      if (wantedId && reportIdCell_(rows[i])) continue;
+      const rowClientId = String(reportCell_(rows[i],24) || "").trim();
+      if (clientId ? rowClientId !== clientId : rowClientId) continue;
       if (
         normalizeReportDate_(reportCell_(rows[i],0)) === date &&
         normalizeReportValue_(reportCell_(rows[i],1)) === operator &&
-        normalizeReportValue_(reportCell_(rows[i],2)) === client
+        normalizeReportValue_(reportCell_(rows[i],2)) === client &&
+        (!waterModeKnown || reportWaterCheckOnlyFromRow_(rows[i]) === wantedWaterMode)
       ) {
         return i + 1;
       }
@@ -3104,6 +3908,20 @@
   function isClientNameHeader_(value) {
     const h = String(value || "").trim();
     return h === "שם" || h === "שם_לקוח" || h === "שם לקוח" || h === "לקוח" || h === "שם הלקוח";
+  }
+
+  function clientNameMatchCount_(ss, clientName) {
+    const sheet = ss && ss.getSheetByName("לקוחות");
+    if (!sheet) return 0;
+    const rows = sheet.getDataRange().getValues();
+    const headerRowIndex = rows.findIndex(row => row.some(isClientNameHeader_));
+    if (headerRowIndex < 0) return 0;
+    const nameIndex = (rows[headerRowIndex] || []).findIndex(isClientNameHeader_);
+    if (nameIndex < 0) return 0;
+    const wanted = normalizeReportValue_(clientName).toLowerCase();
+    return rows.slice(headerRowIndex + 1)
+      .filter(row => normalizeReportValue_(row[nameIndex]).toLowerCase() === wanted)
+      .length;
   }
 
 function findDuplicateReportRow_(sheet, report) {
@@ -3183,7 +4001,9 @@ function findDuplicateReportRow_(sheet, report) {
       normalizeReportValue_(r.hth || 0),
       normalizeReportValue_(r.phUp || 0),
       normalizeReportValue_(r.acidLiters || 0),
-      normalizeReportValue_(r.suppliedEquipment || "")
+      normalizeReportValue_(r.suppliedEquipment || ""),
+      String(r.clientId || "").trim(),
+      isTruthy_(r.waterCheckOnly) ? "true" : "false"
     ].join("|");
   }
 
@@ -3211,7 +4031,9 @@ function findDuplicateReportRow_(sheet, report) {
       normalizeReportValue_(reportCell_(r,20) || 0),
       normalizeReportValue_(reportCell_(r,21) || 0),
       normalizeReportValue_(reportCell_(r,22) || 0),
-      normalizeReportValue_(reportCell_(r,23) || "")
+      normalizeReportValue_(reportCell_(r,23) || ""),
+      String(reportCell_(r,24) || "").trim(),
+      reportWaterCheckOnlyFromRow_(r) ? "true" : "false"
     ].join("|");
   }
 
@@ -3229,6 +4051,14 @@ function findDuplicateReportRow_(sheet, report) {
     return "";
   }
 
+  function deterministicLegacyReportId_(row) {
+    const raw = reportDuplicateKeyFromRow_(row);
+    const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8)
+      .map(value => (value < 0 ? value + 256 : value).toString(16).padStart(2, "0"))
+      .join("");
+    return "legacy-" + digest.slice(0, 32);
+  }
+
 function normalizeReportValue_(value) {
   if (value === null || value === undefined) return "";
   const s = String(value).trim();
@@ -3238,10 +4068,24 @@ function normalizeReportValue_(value) {
   return s;
 }
 
+function poolIdentityKey_(clientId, clientName) {
+  const id = String(clientId || "").trim();
+  return id
+    ? "id:" + id
+    : "name:" + normalizeReportValue_(clientName).toLowerCase();
+}
+
 function dedupeRowsByFirstCell_(rows) {
   const map = {};
-  (rows || []).filter(r => r && r[0]).forEach(r => {
-    map[normalizeReportValue_(r[0]).toLowerCase()] = r;
+  (rows || []).filter(r => r && r[0]).forEach((r, index) => {
+    const clientId = String(r[11] || "").trim();
+    const supplyId = String(r[10] || "").trim();
+    const key = clientId
+      ? poolIdentityKey_(clientId, r[0])
+      : supplyId
+      ? "supply:" + supplyId
+      : "legacy-row:" + index;
+    map[key] = r;
   });
   return Object.keys(map).map(k => map[k]);
 }
@@ -3270,10 +4114,13 @@ function normalizeAdminOrderDate_(value) {
 }
 
 function adminOrderKey_(o) {
+  const poolKey = String(o && o.clientId || "").trim()
+    ? poolIdentityKey_(o && o.clientId, o && o.client)
+    : "legacy-order:" + String(o && o.id || "");
   return [
     normalizeAdminOrderDate_(o && o.date),
     normalizeReportValue_(o && o.operator).toLowerCase(),
-    normalizeReportValue_(o && o.client).toLowerCase()
+    poolKey
   ].join("|");
 }
 
@@ -3428,8 +4275,34 @@ function getClientsByHeaders_(ss) {
   const countIdx = columnOf(["מונה_טיפולים_בפועל", "מונה טיפולים בפועל", "monthlyTreatmentCount"], 9);
   const quotaIdx = columnOf(["מכסת_טיפולים_חודשית", "מכסת טיפולים חודשית", "monthlyTreatmentQuota"], -1);
   const phoneIndexes = columnsOf(["phone", "mobile", "whatsapp", "wa"], phoneIdx);
+  const dataRows = rows.slice(hi + 1);
 
-  return rows.slice(hi + 1).filter(r => r[nameIdx]).map(r => ({
+  if (clientIdIdx >= 0 && dataRows.length) {
+    const lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(10000);
+      const idRange = sheet.getRange(hi + 2, clientIdIdx + 1, dataRows.length, 1);
+      const latestIds = idRange.getValues();
+      const usedIds = {};
+      let idsChanged = false;
+      const idValues = dataRows.map((row, index) => {
+        const hasClient = !!String(row[nameIdx] || "").trim();
+        let id = String(latestIds[index][0] || "").trim();
+        if (hasClient && (!id || usedIds[id])) {
+          id = "client-" + Utilities.getUuid();
+          idsChanged = true;
+        }
+        row[clientIdIdx] = id;
+        if (id) usedIds[id] = true;
+        return [id];
+      });
+      if (idsChanged) idRange.setValues(idValues);
+    } finally {
+      try { lock.releaseLock(); } catch(e) {}
+    }
+  }
+
+  return dataRows.filter(r => r[nameIdx]).map(r => ({
     clientId: String(clientIdIdx >= 0 ? r[clientIdIdx] || "" : ""),
     name: String(r[nameIdx] || ""),
     phone: firstPhone(r, phoneIndexes),
@@ -3448,6 +4321,21 @@ function getClientsByHeaders_(ss) {
 
 function getClients_(ss) {
   return getClientsByHeaders_(ss);
+}
+
+function allClientRecords_(ss) {
+  const records = getClients_(ss).slice();
+  if (ss.getSheetByName("לקוחות_ללא_שיוך")) {
+    records.push.apply(records, getUnassignedClients_(ss));
+  }
+  const seenIds = {};
+  return records.filter(client => {
+    const id = String(client && client.clientId || "").trim();
+    if (!id) return true;
+    if (seenIds[id]) return false;
+    seenIds[id] = true;
+    return true;
+  });
 }
 
 function getClientSettingsSheet_(ss) {
@@ -3685,15 +4573,22 @@ function saveClients_(sheet, clients) {
 
   const dataStart = headerRow + 1;
   const lastRow = sheet.getLastRow();
-  const existing = {};
-  const existingByRow = {};
   const nameIdx = colOf("name");
+  const clientIdIdx = colOf("clientId");
+  const existingById = {};
+  const existingByName = {};
   if (lastRow >= dataStart) {
     sheet.getRange(dataStart, 1, lastRow - headerRow, lastCol).getValues().forEach((row, offset) => {
       const name = String(row[nameIdx >= 0 ? nameIdx : 0] || "").trim();
+      const id = clientIdIdx >= 0 ? String(row[clientIdIdx] || "").trim() : "";
       const rowNumber = dataStart + offset;
-      if (name) existing[normalizeReportValue_(name)] = { row, rowNumber };
-      existingByRow[rowNumber] = row;
+      const record = { row, rowNumber };
+      if (id) existingById[id] = record;
+      if (name) {
+        const nameKey = normalizeReportValue_(name).toLowerCase();
+        if (!existingByName[nameKey]) existingByName[nameKey] = [];
+        existingByName[nameKey].push(record);
+      }
     });
   }
 
@@ -3720,7 +4615,7 @@ function saveClients_(sheet, clients) {
   const valueFor = (c, key, original) => {
     const monthIdx = colOf("monthlyTreatmentMonth");
     const values = {
-      clientId: String(c.clientId || c.id || (colOf("clientId") >= 0 ? original[colOf("clientId")] : "") || stableClientId_(c)),
+      clientId: String(c.clientId || c.id || (clientIdIdx >= 0 ? original[clientIdIdx] : "") || ("client-" + Utilities.getUuid())),
       name: String(c.name || "").trim(),
       phone: String(c.phone || ""),
       address: String(c.address || ""),
@@ -3745,12 +4640,19 @@ function saveClients_(sheet, clients) {
   let updated = 0;
   let appended = 0;
   let matched = 0;
-  const byClientName = {};
-  clients.filter(c => c && String(c.name || "").trim()).forEach(c => {
-    byClientName[normalizeReportValue_(c.originalName || c.name).toLowerCase()] = c;
+  const uniqueClients = {};
+  clients.filter(c => c && String(c.name || "").trim()).forEach((c, index) => {
+    const id = String(c.clientId || c.id || "").trim();
+    const key = id ? ("id:" + id) : ("row:" + index);
+    uniqueClients[key] = c;
   });
-  Object.keys(byClientName).map(key => byClientName[key]).forEach(c => {
-    const record = existing[normalizeReportValue_(c.originalName || c.name)] || existing[normalizeReportValue_(c.name)];
+  Object.keys(uniqueClients).map(key => uniqueClients[key]).forEach(c => {
+    const wantedId = String(c.clientId || c.id || c.originalClientId || "").trim();
+    const originalNameKey = normalizeReportValue_(c.originalName || c.name).toLowerCase();
+    const nameCandidates = existingByName[originalNameKey] || [];
+    const record = (wantedId && existingById[wantedId]) ||
+      (c.originalName && nameCandidates.length === 1 ? nameCandidates[0] : null) ||
+      (!wantedId && nameCandidates.length === 1 ? nameCandidates[0] : null);
     if (record) {
       matched++;
       managedKeys.forEach(key => {
@@ -3772,18 +4674,15 @@ function saveClients_(sheet, clients) {
     sheet.appendRow(row);
     appended++;
   });
-  const requestedExisting = Object.keys(byClientName).length;
-  if (clients.length && requestedExisting && matched === 0 && appended === 0) {
-    return { success:false, error:"no matching client rows found", count:clients.length, updated, appended, matched };
-  }
   return { success:true, count:clients.length, updated, appended, matched };
 }
 
 function deleteClient_(sheet, data) {
   if (!sheet) return { success:false, error:"clients sheet not found" };
 
+  const targetId = String(data.clientId || data.id || "").trim();
   const targetName = String(data.originalName || data.clientName || data.name || "").trim();
-  if (!targetName) return { success:false, error:"missing client name" };
+  if (!targetId && !targetName) return { success:false, error:"missing client identity" };
 
   const headerRowIndex = findHeaderRowIndex_(sheet, ["שם_לקוח", "שם לקוח", "שם", "לקוח", "שם הלקוח"]);
   const headerRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 3;
@@ -3795,23 +4694,36 @@ function deleteClient_(sheet, data) {
   const headers = sheet.getRange(headerRow, 1, 1, lastCol).getValues()[0].map(h => String(h || "").trim());
   let nameIdx = headers.findIndex(h => isClientNameHeader_(h));
   if (nameIdx < 0) nameIdx = 0;
+  const clientIdIdx = headers.findIndex(h => ["clientid","client_id","id"].includes(String(h || "").trim().toLowerCase()));
 
   const targetKey = normalizeReportValue_(targetName).toLowerCase();
   const rows = sheet.getRange(dataStart, 1, lastRow - headerRow, lastCol).getValues();
+  const matches = [];
   for (let i = rows.length - 1; i >= 0; i--) {
+    const rowId = clientIdIdx >= 0 ? String(rows[i][clientIdIdx] || "").trim() : "";
     const rowName = String(rows[i][nameIdx] || "").trim();
-    if (normalizeReportValue_(rowName).toLowerCase() === targetKey) {
-      const rowNumber = dataStart + i;
-      sheet.deleteRow(rowNumber);
-      return { success:true, deleted:true, row:rowNumber, clientName:targetName };
-    }
+    if ((targetId && rowId === targetId) || (!targetId && normalizeReportValue_(rowName).toLowerCase() === targetKey)) matches.push(i);
   }
+  if (!matches.length) return { success:false, error:"client not found", clientName:targetName, clientId:targetId };
+  if (!targetId && matches.length > 1) return { success:false, error:"ambiguous client name", clientName:targetName };
+  const rowNumber = dataStart + matches[0];
+  sheet.deleteRow(rowNumber);
+  return { success:true, deleted:true, row:rowNumber, clientName:targetName, clientId:targetId };
 
-  return { success:false, error:"client not found", clientName:targetName };
 }
 
 function taskHeaders_() {
   return ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog","orderIndex","adminNote","createdByAdminOrder","clientId","operatorCreated","adminApproval","requestedBy"];
+}
+
+function withGalileoWriteLock_(callback) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    return callback();
+  } finally {
+    try { lock.releaseLock(); } catch(e) {}
+  }
 }
 
 function taskColumnIndex_(headers, names, fallback) {
@@ -3871,15 +4783,160 @@ function getTasks_(ss) {
     };
   }).filter(t => !isAdminOrderTask_(t));
 }
+
+function saveTasks_(ss, tasks) {
+  let sheet = ss.getSheetByName("משימות");
+  const headers = taskHeaders_();
+  if (!sheet) {
+    sheet = ss.insertSheet("משימות");
+    sheet.appendRow(headers);
+  }
+  ensureColumns(sheet, headers);
+  const rows = sheet.getDataRange().getValues();
+  let hi = rows.findIndex(r => String(r[0]).toUpperCase() === "ID" || String(r[0]).toLowerCase() === "id");
+  if (hi === -1) hi = 0;
+  sheet.getRange(hi + 1, 1, 1, headers.length).setValues([headers]);
+  const dataStart = hi + 2;
+  const last = sheet.getLastRow();
+  if (last >= dataStart) sheet.deleteRows(dataStart, last - dataStart + 1);
+  const cleanTasks = dedupeTasks_(tasks || []).filter(t => !isAdminOrderTask_(t));
+  const taskRows = cleanTasks.map(t => ([
+    t.id,
+    t.date,
+    t.client,
+    t.operators.join(","),
+    t.status,
+    JSON.stringify(t.changeLog),
+    t.orderIndex || 0,
+    t.adminNote || "",
+    t.createdByAdminOrder === true,
+    t.clientId || "",
+    t.operatorCreated === true,
+    t.adminApproval || "",
+    t.requestedBy || ""
+  ]));
+  if (taskRows.length) sheet.getRange(dataStart, 1, taskRows.length, headers.length).setValues(taskRows);
+  return cleanTasks;
+}
+
+function mutateTasks_(ss, data) {
+  const deleteIds = {};
+  (data && data.deleteIds || []).forEach(function (id) {
+    deleteIds[String(id)] = true;
+  });
+  const currentTasks = getTasks_(ss).filter(function (task) {
+    return !deleteIds[String(task && task.id)];
+  });
+  const taskIndexes = {};
+  currentTasks.forEach(function (task, index) {
+    taskIndexes[String(task && task.id)] = index;
+  });
+  (data && data.upserts || []).forEach(function (task) {
+    if (!task || task.id === null || task.id === undefined || !task.date || !task.client) return;
+    const key = String(task.id);
+    if (taskIndexes[key] === undefined) {
+      taskIndexes[key] = currentTasks.length;
+      currentTasks.push(task);
+    } else {
+      currentTasks[taskIndexes[key]] = task;
+    }
+  });
+  const savedTasks = saveTasks_(ss, currentTasks);
+  return { success:true, tasks:savedTasks };
+}
+
+function taskMatchesReport_(task, report) {
+  if (normalizeAdminOrderDate_(task && task.date) !== normalizeAdminOrderDate_(report && report.reportDate)) return false;
+  const taskClientId = String(task && task.clientId || "").trim();
+  const reportClientId = String(report && report.clientId || "").trim();
+  if (taskClientId || reportClientId) {
+    if (!taskClientId || !reportClientId || taskClientId !== reportClientId) return false;
+  } else {
+    return false;
+  }
+  const operator = normalizeReportValue_(report && report.operator).toLowerCase();
+  return !!operator && (task && task.operators || []).some(function (value) {
+    return normalizeReportValue_(value).toLowerCase() === operator;
+  });
+}
+
+function setTaskReportCompletion_(ss, data) {
+  const report = data && data.report || {};
+  const requestedTaskId = String(data && data.taskId || "").trim();
+  const completed = data && data.completed !== false;
+  const tasks = getTasks_(ss);
+  const matchingTasks = tasks.filter(function (task) {
+    return taskMatchesReport_(task, report);
+  });
+  let task = requestedTaskId
+    ? matchingTasks.find(function (candidate) { return String(candidate.id) === requestedTaskId; })
+    : null;
+  if (!task) {
+    task = matchingTasks.find(function (candidate) {
+      return completed ? candidate.status !== "done" : candidate.status === "done";
+    }) || matchingTasks[0] || null;
+  }
+  if (!task) return { success:true, taskFound:false, tasks:tasks };
+
+  if (completed && task.status === "done") {
+    return { success:true, taskFound:true, task:task, tasks:tasks };
+  }
+  if (!completed && task.status !== "done") {
+    return { success:true, taskFound:true, task:task, tasks:tasks };
+  }
+
+  const completionNotes = {"דוח הוגש — בוצעה":true, "דוח נשמר — בוצעה":true};
+  const completedByReport = data && data.completedByReport === true ||
+    (task.changeLog || []).some(function (entry) {
+      return completionNotes[String(entry && entry.note || "")] === true;
+    });
+  if (!completed && !completedByReport) {
+    return { success:true, taskFound:true, task:task, tasks:tasks, unchanged:true };
+  }
+
+  const actor = String(data && data.actor || "");
+  const reportId = String(report && report.id || "");
+  const nextTask = completed
+    ? Object.assign({}, task, {
+        status:"done",
+        completedAt:String(data && data.completedAt || ""),
+        completedBy:actor,
+        reportId:reportId,
+        changeLog:(task.changeLog || []).concat([{
+          at:String(data && data.at || ""),
+          note:"דוח נשמר — בוצעה",
+          by:actor
+        }])
+      })
+    : Object.assign({}, task, {
+        status:"pending",
+        completedAt:"",
+        completedBy:"",
+        reportId:"",
+        changeLog:(task.changeLog || []).concat([{
+          at:String(data && data.at || ""),
+          note:"דוח מקומי נמחק — הוחזרה לממתינה",
+          by:actor
+        }])
+      });
+  const nextTasks = tasks.map(function (candidate) {
+    return String(candidate.id) === String(task.id) ? nextTask : candidate;
+  });
+  const savedTasks = saveTasks_(ss, nextTasks);
+  return { success:true, taskFound:true, task:nextTask, tasks:savedTasks };
+}
 function isAdminOrderTask_(t) {
   return !!(t && (t.createdByAdminOrder === true || Number(t.orderIndex || 0) > 0));
 }
 
 function taskKey_(t) {
   const operators = (t && t.operators || []).map(op => normalizeReportValue_(op).toLowerCase()).filter(Boolean).sort().join(",");
+  const poolKey = String(t && t.clientId || "").trim()
+    ? poolIdentityKey_(t && t.clientId, t && t.client)
+    : "legacy-task:" + String(t && t.id || "");
   return [
     normalizeAdminOrderDate_(t && t.date),
-    normalizeReportValue_(t && t.client).toLowerCase(),
+    poolKey,
     operators
   ].join("|");
 }
@@ -3942,7 +4999,7 @@ function getAdminOrders_(ss) {
   if (hi === -1) hi = 2;
   const existingKeys = {};
   orders.forEach(o => {
-    existingKeys[[o.date, normalizeReportValue_(o.operator), normalizeReportValue_(o.client)].join("|")] = true;
+    existingKeys[adminOrderKey_(o)] = true;
   });
   const legacyOrders = rows.slice(hi + 1).filter(r => r[0]).map(r => {
     let date = r[1];
@@ -3968,7 +5025,7 @@ function getAdminOrders_(ss) {
     };
   }).filter(Boolean);
   legacyOrders.forEach(o => {
-    const key = [o.date, normalizeReportValue_(o.operator), normalizeReportValue_(o.client)].join("|");
+    const key = adminOrderKey_(o);
     if (!existingKeys[key]) orders.push(o);
   });
   return dedupeAdminOrders_(orders);
@@ -3994,6 +5051,175 @@ function saveAdminOrders_(ss, adminOrders) {
   sheet.clearContents();
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+}
+
+function adminOrderScopeMatches_(order, date, operator) {
+  return normalizeAdminOrderDate_(order && order.date) === date &&
+    normalizeReportValue_(order && order.operator).toLowerCase() === normalizeReportValue_(operator).toLowerCase();
+}
+
+function saveAdminOrderScope_(ss, data) {
+  const date = normalizeAdminOrderDate_(data && data.date);
+  const operator = String(data && data.operator || "").trim();
+  if (!date || !operator) return { success:false, error:"missing order scope" };
+
+  const currentOrders = getAdminOrders_(ss);
+  const existingByPool = {};
+  currentOrders.filter(function (order) {
+    return adminOrderScopeMatches_(order, date, operator);
+  }).forEach(function (order) {
+    existingByPool[poolIdentityKey_(order.clientId, order.client)] = order;
+  });
+
+  const changedAt = String(data && data.changedAt || "");
+  const changedBy = String(data && data.changedBy || "");
+  const incoming = dedupeAdminOrders_((data && data.orders || []).map(function (entry, index) {
+    return {
+      id:entry && entry.id,
+      date:date,
+      operator:operator,
+      client:String(entry && entry.client || ""),
+      clientId:String(entry && entry.clientId || ""),
+      orderIndex:Number(entry && entry.orderIndex || index + 1),
+      adminNote:String(entry && (entry.adminNote || entry.note) || "")
+    };
+  }));
+  const scopedOrders = incoming.map(function (entry, index) {
+    const existing = existingByPool[poolIdentityKey_(entry.clientId, entry.client)];
+    return Object.assign({}, existing || {}, entry, {
+      id:existing && existing.id || entry.id || [
+        "admin-order",
+        date,
+        normalizeReportValue_(operator).toLowerCase(),
+        entry.clientId || normalizeReportValue_(entry.client).toLowerCase()
+      ].join("-"),
+      status:existing && existing.status || "pending",
+      changeLog:existing && existing.changeLog && existing.changeLog.length
+        ? existing.changeLog
+        : [{at:changedAt, note:"סדר יום עודכן", by:changedBy, needsAck:false, ackedBy:[]}],
+      orderIndex:Number(entry.orderIndex || index + 1)
+    });
+  });
+  const nextOrders = dedupeAdminOrders_(
+    currentOrders.filter(function (order) {
+      return !adminOrderScopeMatches_(order, date, operator);
+    }).concat(scopedOrders)
+  );
+  saveAdminOrders_(ss, nextOrders);
+  return { success:true, adminOrders:nextOrders, scopeOrders:scopedOrders };
+}
+
+function ackAdminOrderChange_(ss, data) {
+  const orderId = String(data && data.orderId || "");
+  const logIndex = Number(data && data.logIndex);
+  const ackedBy = String(data && data.ackedBy || "").trim();
+  const orders = getAdminOrders_(ss);
+  const index = orders.findIndex(function (order) {
+    return String(order && order.id) === orderId;
+  });
+  if (index < 0) return { success:false, error:"admin order not found" };
+  const original = orders[index];
+  if (!Number.isInteger(logIndex) || logIndex < 0 || logIndex >= (original.changeLog || []).length) {
+    return { success:false, error:"admin order log not found" };
+  }
+  const nextLog = (original.changeLog || []).map(function (entry, entryIndex) {
+    if (entryIndex !== logIndex) return entry;
+    const names = Array.isArray(entry.ackedBy) ? entry.ackedBy.slice() : [];
+    if (ackedBy && names.indexOf(ackedBy) < 0) names.push(ackedBy);
+    return Object.assign({}, entry, {ackedBy:names});
+  });
+  const updatedOrder = Object.assign({}, original, {changeLog:nextLog});
+  const nextOrders = orders.map(function (order, orderIndex) {
+    return orderIndex === index ? updatedOrder : order;
+  });
+  saveAdminOrders_(ss, nextOrders);
+  return {
+    success:true,
+    adminOrders:nextOrders,
+    adminOrder:updatedOrder,
+    acknowledgedLog:nextLog[logIndex]
+  };
+}
+
+function setOperatorTaskApproval_(ss, data) {
+  const taskId = String(data && data.taskId || "");
+  const approved = data && data.approved !== false;
+  const assignedOperators = (data && data.operators || []).map(function (value) {
+    return String(value || "").trim();
+  }).filter(Boolean);
+  if (approved && !assignedOperators.length) return { success:false, error:"missing operators" };
+
+  const currentTasks = getTasks_(ss);
+  const taskIndex = currentTasks.findIndex(function (task) {
+    return String(task && task.id) === taskId;
+  });
+  if (taskIndex < 0) return { success:false, error:"task not found" };
+  const target = currentTasks[taskIndex];
+  const approvalLog = Object.assign({}, data && data.approvalLog || {});
+  const nextTask = Object.assign({}, target, {
+    operators:assignedOperators.length ? assignedOperators : target.operators,
+    adminApproval:approved ? "approved" : "rejected",
+    status:approved ? (target.status === "rejected" ? "pending" : (target.status || "pending")) : "rejected",
+    changeLog:(target.changeLog || []).concat([approvalLog])
+  });
+  const nextTasks = currentTasks.map(function (task, index) {
+    return index === taskIndex ? nextTask : task;
+  });
+
+  const currentOrders = getAdminOrders_(ss);
+  let nextOrders = currentOrders.slice();
+  if (approved) {
+    const date = normalizeAdminOrderDate_(target.date);
+    const note = String(data && data.adminNote || "");
+    assignedOperators.forEach(function (operator) {
+      const existingIndex = nextOrders.findIndex(function (order) {
+        const sameScope = adminOrderScopeMatches_(order, date, operator);
+        const orderClientId = String(order && order.clientId || "").trim();
+        const taskClientId = String(target && target.clientId || "").trim();
+        return sameScope && !!orderClientId && !!taskClientId && orderClientId === taskClientId;
+      });
+      if (existingIndex >= 0) {
+        nextOrders[existingIndex] = Object.assign({}, nextOrders[existingIndex], {
+          clientId:nextOrders[existingIndex].clientId || target.clientId || "",
+          adminNote:note || nextOrders[existingIndex].adminNote || "",
+          status:nextOrders[existingIndex].status || "pending"
+        });
+        return;
+      }
+      const nextOrderIndex = nextOrders.filter(function (order) {
+        return adminOrderScopeMatches_(order, date, operator);
+      }).reduce(function (max, order) {
+        return Math.max(max, Number(order.orderIndex || 0));
+      }, 0) + 1;
+      nextOrders.push({
+        id:["admin-order", date, normalizeReportValue_(operator).toLowerCase(), target.clientId || normalizeReportValue_(target.client).toLowerCase()].join("-"),
+        date:date,
+        operator:operator,
+        client:target.client,
+        clientId:target.clientId || "",
+        status:"pending",
+        changeLog:[approvalLog],
+        orderIndex:nextOrderIndex,
+        adminNote:note
+      });
+    });
+    nextOrders = dedupeAdminOrders_(nextOrders);
+  }
+
+  if (approved) saveAdminOrders_(ss, nextOrders);
+  try {
+    const savedTasks = saveTasks_(ss, nextTasks);
+    return { success:true, tasks:savedTasks, adminOrders:nextOrders, task:nextTask };
+  } catch(error) {
+    if (approved) {
+      try {
+        saveAdminOrders_(ss, currentOrders);
+      } catch(rollbackError) {
+        throw new Error("task approval failed and order rollback failed: " + error.message + "; " + rollbackError.message);
+      }
+    }
+    throw error;
+  }
 }
 
 function getSubOperatorShares_(ss) {
@@ -4071,11 +5297,14 @@ function saveSubOperatorShares_(ss, sharedSubOrders) {
     revoked: r[existingIdx.revoked]
   })).filter(r => !scopeKeys[subOperatorScopeKey_(r.date, r.operator, r.subUsername || r.subOperator)]);
   const rows = [...existingRows, ...incoming].filter(r => r && r.date && r.operator && r.client).map(r => {
+    const poolKey = String(r.clientId || "").trim()
+      ? poolIdentityKey_(r.clientId, r.client)
+      : "legacy-share:" + String(r.id || "");
     const key = [
       String(r.date || "").slice(0, 10),
       normalizeReportValue_(r.operator),
       normalizeReportValue_(r.subUsername || r.subOperator),
-      normalizeReportValue_(r.client)
+      poolKey
     ].join("|");
     if (seen[key]) return null;
     seen[key] = true;
@@ -4138,12 +5367,15 @@ function markSubOperatorShareDone_(ss, report) {
   const reportClient = normalizeReportValue_(report.client);
   const reportClientId = String(report.clientId || "").trim();
   if (!reportDate || !reportOperator || !reportClient) return;
+  if (!reportClientId && clientNameMatchCount_(ss, reportClient) !== 1) return;
   const completedAt = Utilities.formatDate(new Date(), "Asia/Jerusalem", "yyyy-MM-dd HH:mm:ss");
   for (let i = 1; i < rows.length; i++) {
     const sameDate = String(rows[i][idx.date] || "").slice(0, 10) === reportDate;
     const sameOperator = normalizeReportValue_(rows[i][idx.operator]) === reportOperator;
     const rowClientId = String(rows[i][idx.clientId] || "").trim();
-    const sameClient = reportClientId && rowClientId ? rowClientId === reportClientId : normalizeReportValue_(rows[i][idx.client]) === reportClient;
+    const sameClient = reportClientId
+      ? rowClientId === reportClientId
+      : !rowClientId && normalizeReportValue_(rows[i][idx.client]) === reportClient;
     if (!sameDate || !sameOperator || !sameClient) continue;
     sheet.getRange(i + 1, idx.status + 1).setValue("done");
     sheet.getRange(i + 1, idx.completedAt + 1).setValue(rows[i][idx.completedAt] || completedAt);
@@ -4256,8 +5488,21 @@ function getSupplyDB_(ss) {
   if (!sheet) return {};
   const rows = sheet.getDataRange().getValues();
   const db = {};
+  const clientIdsByName = {};
+  allClientRecords_(ss).forEach(clientRecord => {
+    const nameKey = normalizeReportValue_(clientRecord.name).toLowerCase();
+    const id = String(clientRecord.clientId || "").trim();
+    if (!nameKey || !id) return;
+    if (!clientIdsByName[nameKey]) clientIdsByName[nameKey] = [];
+    if (clientIdsByName[nameKey].indexOf(id) < 0) clientIdsByName[nameKey].push(id);
+  });
   rows.slice(3).filter(r => r[0]).forEach(r => {
-    db[String(r[0])] = {
+    const client = String(r[0] || "");
+    const savedClientId = String(r[11] || "").trim();
+    const matchingIds = clientIdsByName[normalizeReportValue_(client).toLowerCase()] || [];
+    const clientId = savedClientId || (matchingIds.length === 1 ? matchingIds[0] : "");
+    db[clientId || ("legacy:" + client)] = {
+      client,
       acid: r[1] === "כן", phUp: r[2] === "כן", phUpSupply: r[2] === "כן",
       saltPkg: r[3] === "כן", saltBags: parseInt(r[4]) || 0,
       updatedAt: String(r[5]),
@@ -4266,7 +5511,7 @@ function getSupplyDB_(ss) {
       assignedOperator: String(r[8]||""),
       materialPrices: parseNextSupplyPrices_(r[9]),
       supplyId: String(r[10] || ""),
-      clientId: String(r[11] || "")
+      clientId
     };
   });
   return db;
@@ -4277,41 +5522,73 @@ function getLastReadings_(ss) {
   const histories = {};
   const clientNotes = getClientInternalNotes_(ss);
   const reportRows = dedupeReportRows_(allReportRows_(ss));
+  const clientIdsByName = {};
+  allClientRecords_(ss).forEach(client => {
+    const nameKey = normalizeReportValue_(client.name).toLowerCase();
+    const id = String(client.clientId || "").trim();
+    if (!nameKey || !id) return;
+    if (!clientIdsByName[nameKey]) clientIdsByName[nameKey] = [];
+    if (clientIdsByName[nameKey].indexOf(id) < 0) clientIdsByName[nameKey].push(id);
+  });
+  const reportPoolId = row => {
+    const savedId = String(reportCell_(row,24) || "").trim();
+    if (savedId) return savedId;
+    const nameKey = normalizeReportValue_(reportCell_(row,2)).toLowerCase();
+    const matchingIds = clientIdsByName[nameKey] || [];
+    return matchingIds.length === 1 ? matchingIds[0] : "";
+  };
   const lastReportNotes = {};
   reportRows.forEach(r => {
     const client = String(reportCell_(r,2) || "").trim();
+    const clientId = reportPoolId(r);
+    const poolKey = poolIdentityKey_(clientId, client);
     const date = normalizeSheetDate_(reportCell_(r,0));
     const note = String(reportCell_(r,16)||"").trim();
-    if (client && date && note && (!lastReportNotes[client] || date >= lastReportNotes[client].date)) {
-      lastReportNotes[client] = { note:note, date:date };
+    if (client && date && note && (!lastReportNotes[poolKey] || date >= lastReportNotes[poolKey].date)) {
+      lastReportNotes[poolKey] = { note:note, date:date };
     }
   });
-  reportRows.forEach(r => {
+  reportRows.forEach((r, reportOrder) => {
     const client = String(reportCell_(r,2) || "").trim();
     const date = normalizeSheetDate_(reportCell_(r,0));
     if (!client || !date) return;
-    const clientId = String(reportCell_(r,24)||"");
-    if (!histories[client]) histories[client] = {};
-    histories[client][date] = {
+    const clientId = reportPoolId(r);
+    const poolKey = poolIdentityKey_(clientId, client);
+    const waterCheckOnly = reportWaterCheckOnlyFromRow_(r);
+    if (!histories[poolKey]) histories[poolKey] = [];
+    histories[poolKey].push({
       client, clientId, date, reportDate:date,
-      chlorine: reportCell_(r,3), ph: reportCell_(r,4), salt: reportCell_(r,5),
-      chlora: reportCell_(r,19)||0, hth: reportCell_(r,20)||0, phUp: reportCell_(r,21)||0, acidLiters: reportCell_(r,22)||0,
-      elModel: String(reportCell_(r,10)||""), elSerial: String(reportCell_(r,11)||""),
-      elDate: reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||""),
-      elNext: reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||""),
-      poolStatus: String(reportCell_(r,15)||""),
-      customStatusText: String(reportCell_(r,16)||""),
-      notes: String(reportCell_(r,18)||""),
-      missedTreatment: String(reportCell_(r,18)||"").trim() === "לא בוצע טיפול"
-    };
+      chlorine: reportCell_(r,3),
+      ph: waterCheckOnly ? null : reportCell_(r,4),
+      salt: waterCheckOnly ? null : reportCell_(r,5),
+      chlora: waterCheckOnly ? reportCell_(r,19) : (reportCell_(r,19)||0),
+      hth: waterCheckOnly ? reportCell_(r,20) : (reportCell_(r,20)||0),
+      phUp: waterCheckOnly ? null : (reportCell_(r,21)||0),
+      acidLiters: waterCheckOnly ? null : (reportCell_(r,22)||0),
+      elModel: waterCheckOnly ? "" : String(reportCell_(r,10)||""),
+      elSerial: waterCheckOnly ? "" : String(reportCell_(r,11)||""),
+      elDate: waterCheckOnly ? "" : (reportCell_(r,12) instanceof Date ? Utilities.formatDate(reportCell_(r,12),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,12)||"")),
+      elNext: waterCheckOnly ? "" : (reportCell_(r,13) instanceof Date ? Utilities.formatDate(reportCell_(r,13),"Asia/Jerusalem","yyyy-MM-dd") : String(reportCell_(r,13)||"")),
+      poolStatus: waterCheckOnly ? "" : String(reportCell_(r,15)||""),
+      customStatusText: waterCheckOnly ? "" : String(reportCell_(r,16)||""),
+      notes: waterCheckOnly ? "" : String(reportCell_(r,18)||""),
+      missedTreatment: !waterCheckOnly && String(reportCell_(r,18)||"").trim() === "לא בוצע טיפול",
+      waterCheckOnly,
+      _reportOrder: reportOrder
+    });
   });
-  Object.keys(histories).forEach(client => {
-    const ordered = Object.keys(histories[client]).sort((a,b) => b.localeCompare(a)).map(date => histories[client][date]).slice(0,4);
+  Object.keys(histories).forEach(poolKey => {
+    const ordered = histories[poolKey]
+      .sort((a,b) => b.date.localeCompare(a.date) || b._reportOrder - a._reportOrder)
+      .slice(0,4);
     if (!ordered.length) return;
-    const latest = ordered[0];
-    const clientNote = (latest.clientId && clientNotes.byId[latest.clientId]) || clientNotes.byClient[client] || null;
-    const reportNote = lastReportNotes[client] || null;
-    readings[client] = {
+    const latest = Object.assign({}, ordered[0]);
+    delete latest._reportOrder;
+    const matchingClientIds = clientIdsByName[normalizeReportValue_(latest.client).toLowerCase()] || [];
+    const legacyClientNote = matchingClientIds.length === 1 ? clientNotes.byClient[latest.client] : null;
+    const clientNote = (latest.clientId && clientNotes.byId[latest.clientId]) || legacyClientNote || null;
+    const reportNote = lastReportNotes[poolKey] || null;
+    readings[latest.clientId || latest.client] = {
       ...latest,
       customStatusText: clientNote ? clientNote.note : (reportNote ? reportNote.note : latest.customStatusText),
       internalNoteDate: clientNote ? clientNote.date : "",
@@ -4326,7 +5603,8 @@ function getLastReadings_(ss) {
         chlora: reading.chlora,
         hth: reading.hth,
         phUp: reading.phUp,
-        acidLiters: reading.acidLiters
+        acidLiters: reading.acidLiters,
+        waterCheckOnly: reading.waterCheckOnly
       }))
     };
   });
@@ -4335,18 +5613,46 @@ function getLastReadings_(ss) {
 function getUnassignedClients_(ss) {
   let sheet = ss.getSheetByName("לקוחות_ללא_שיוך");
   if(!sheet) {
-    sheet = ss.getSheetByName("לקוחות");
-    if(!sheet) return [];
-    const rows = sheet.getDataRange().getValues();
-    let hi = rows.findIndex(r => isClientNameHeader_(r[0]));
-    if(hi===-1) hi=0;
-    return rows.slice(hi+1).filter(r=>r[0]).map(r=>({
-      name:String(r[0]), phone:String(r[1]), address:String(r[2])
-    }));
+    return getClients_(ss);
   }
+  ensureColumns(sheet, ["clientId"]);
   const rows = sheet.getDataRange().getValues();
-  return rows.slice(1).filter(r=>r[0]).map(r=>({
-    name:String(r[0]), phone:String(r[1]||""), address:String(r[2]||"")
+  if (!rows.length) return [];
+  const headers = rows[0].map(h => String(h || "").trim());
+  const foundNameIdx = headers.findIndex(isClientNameHeader_);
+  const nameIdx = foundNameIdx >= 0 ? foundNameIdx : 0;
+  const phoneIdx = headers.findIndex(h => ["טלפון","נייד","phone","mobile"].indexOf(String(h || "").trim().toLowerCase()) >= 0);
+  const addressIdx = headers.findIndex(h => ["כתובת","address"].indexOf(String(h || "").trim().toLowerCase()) >= 0);
+  const clientIdIdx = headers.findIndex(h => ["clientid","client_id","id"].indexOf(String(h || "").trim().toLowerCase()) >= 0);
+  const dataRows = rows.slice(1);
+  if (clientIdIdx >= 0 && dataRows.length) {
+    const lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(10000);
+      const idRange = sheet.getRange(2, clientIdIdx + 1, dataRows.length, 1);
+      const latestIds = idRange.getValues();
+      const used = {};
+      let changed = false;
+      const nextIds = dataRows.map((row, index) => {
+        let id = String(latestIds[index][0] || "").trim();
+        if (row[nameIdx] && (!id || used[id])) {
+          id = "client-" + Utilities.getUuid();
+          changed = true;
+        }
+        row[clientIdIdx] = id;
+        if (id) used[id] = true;
+        return [id];
+      });
+      if (changed) idRange.setValues(nextIds);
+    } finally {
+      try { lock.releaseLock(); } catch(e) {}
+    }
+  }
+  return dataRows.filter(r=>r[nameIdx]).map(r=>({
+    clientId:String(clientIdIdx >= 0 ? r[clientIdIdx] || "" : ""),
+    name:String(r[nameIdx] || ""),
+    phone:String(phoneIdx >= 0 ? r[phoneIdx] || "" : ""),
+    address:String(addressIdx >= 0 ? r[addressIdx] || "" : "")
   }));
 }
 
@@ -4613,28 +5919,164 @@ function operatorDataVersionKey_(ss) {
   return "operatorDataVersion:" + ss.getId();
 }
 
+// ponytail: CacheService drops any single value over 100KB and reports success,
+// so the old bootstrap cache was writing nothing and every login re-read 12 sheets.
+// Split across numbered keys; a missing chunk just misses the cache.
+var CACHE_CHUNK_ = 90000;
+
+function cachePutBig_(key, obj, seconds) {
+  try {
+    var text = JSON.stringify(obj);
+    var parts = {};
+    var count = Math.ceil(text.length / CACHE_CHUNK_);
+    for (var i = 0; i < count; i++) parts[key + ":" + i] = text.substr(i * CACHE_CHUNK_, CACHE_CHUNK_);
+    parts[key + ":n"] = String(count);
+    CacheService.getScriptCache().putAll(parts, seconds);
+  } catch (e) {}
+}
+
+function cacheGetBig_(key) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var count = Number(cache.get(key + ":n") || 0);
+    if (!count) return null;
+    var keys = [];
+    for (var i = 0; i < count; i++) keys.push(key + ":" + i);
+    var parts = cache.getAll(keys);
+    var text = "";
+    for (var j = 0; j < count; j++) {
+      var part = parts[key + ":" + j];
+      if (part === null || part === undefined) return null; // partial expiry — treat as a miss
+      text += part;
+    }
+    return JSON.parse(text);
+  } catch (e) { return null; }
+}
+
+function cacheRemoveBig_(key) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var count = Number(cache.get(key + ":n") || 0);
+    var keys = [key + ":n"];
+    for (var i = 0; i < count; i++) keys.push(key + ":" + i);
+    cache.removeAll(keys);
+  } catch (e) {}
+}
+
 function getOperatorDataVersion_(ss) {
   return PropertiesService.getScriptProperties().getProperty(operatorDataVersionKey_(ss)) || "0";
+}
+
+function invalidateOperatorDataCaches_(ss) {
+  try {
+    cacheRemoveBig_("operatorRefresh:" + ss.getId());
+    cacheRemoveBig_("bootstrap:" + ss.getId());
+  } catch(e) {}
 }
 
 function bumpOperatorDataVersion_(ss) {
   const version = String(Date.now());
   PropertiesService.getScriptProperties().setProperty(operatorDataVersionKey_(ss), version);
-  try {
-    const cache = CacheService.getScriptCache();
-    cache.remove("operatorRefresh:" + ss.getId());
-    cache.remove("bootstrap:" + ss.getId());
-  } catch(e) {}
+  invalidateOperatorDataCaches_(ss);
   return version;
+}
+
+// ─── בונים ומחמם קאש ──────────────────────────────────────────────────────────
+
+function buildBootstrapData_(ss) {
+  return {
+    users: getUsers_(ss),
+    clients: getClients_(ss),
+    tasks: getTasks_(ss),
+    adminOrders: getAdminOrders_(ss),
+    sharedSubOrders: getSubOperatorShares_(ss),
+    subOperatorApprovals: getSubOperatorApprovals_(ss),
+    pendingSubReports: getPendingSubReports_(ss),
+    materialApprovals: getMaterialApprovals_(ss),
+    settings: getClientSettings_(ss),
+    supplyDB: getSupplyDB_(ss),
+    lastReadings: getLastReadings_(ss),
+    unassignedClients: getUnassignedClients_(ss)
+  };
+}
+
+function buildOperatorRefreshData_(ss) {
+  return {
+    users: getUsers_(ss),
+    tasks: getTasks_(ss),
+    adminOrders: getAdminOrders_(ss),
+    sharedSubOrders: getSubOperatorShares_(ss),
+    subOperatorApprovals: getSubOperatorApprovals_(ss),
+    pendingSubReports: getPendingSubReports_(ss),
+    materialApprovals: getMaterialApprovals_(ss),
+    settings: getClientSettings_(ss),
+    lastReadings: getLastReadings_(ss)
+  };
+}
+
+/**
+ * מחמם קאש. להתקין כטריגר מבוסס־זמן.
+ *
+ * זה לא "שומר על השרת ער" — ל-Apps Script אין תהליך שאפשר לשמור חם, כל doPost
+ * הוא ריצה חדשה. מה שכן אפשר לשלוט בו זה הקאש, וזה בדיוק החלק היקר:
+ * 12 קריאות גיליון מלאות. הטריגר דואג שהקריאה הזו תיפול עליו ולא על מפעיל.
+ *
+ * ID של גיליונות מגיע מ-Script Property בשם WARM_SHEET_IDS (מופרד בפסיקים),
+ * כדי שהוספת לקוח לא תדרוש שינוי קוד.
+ */
+function warmGalileoCache() {
+  const raw = PropertiesService.getScriptProperties().getProperty("WARM_SHEET_IDS") || "";
+  const ids = raw.split(",").map(function (v) { return v.trim(); }).filter(Boolean);
+  const report = { checked: ids.length, warmed: 0, skipped: 0, failed: 0 };
+
+  for (let i = 0; i < ids.length; i++) {
+    try {
+      if (warmOneSheet_(ids[i])) report.warmed++; else report.skipped++;
+    } catch (e) {
+      report.failed++;
+      console.error("warm failed for " + ids[i] + ": " + e);
+    }
+  }
+  console.log("warmGalileoCache: " + JSON.stringify(report));
+  return report;
+}
+
+/** מחזיר true אם באמת נעשתה עבודה. false = הקאש כבר היה חם. */
+function warmOneSheet_(sheetId) {
+  const cache = CacheService.getScriptCache();
+  const bootKey = "bootstrap:" + sheetId;
+  const refreshKey = "operatorRefresh:" + sheetId;
+
+  // ponytail: כל הרעיון הוא שהריצה תהיה חינמית כשאין מה לעשות. בדיקת נוכחות
+  // היא קריאת קאש אחת; רק אם היא נכשלת משלמים על openById וקריאת הגיליונות.
+  const needBoot = !cache.get(bootKey + ":n");
+  const needRefresh = !cache.get(refreshKey + ":n");
+  if (!needBoot && !needRefresh) return false;
+
+  const ss = SpreadsheetApp.openById(sheetId);
+  if (needBoot) cachePutBig_(bootKey, buildBootstrapData_(ss), 21600);
+  if (needRefresh) cachePutBig_(refreshKey, buildOperatorRefreshData_(ss), 21600);
+  return true;
+}
+
+/** להריץ פעם אחת ידנית מהעורך כדי להתקין את הטריגר. */
+function installWarmTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(function (t) { return t.getHandlerFunction() === "warmGalileoCache"; })
+    .forEach(function (t) { ScriptApp.deleteTrigger(t); });
+
+  ScriptApp.newTrigger("warmGalileoCache").timeBased().everyMinutes(15).create();
+  return "installed: warmGalileoCache every 15 minutes";
 }
 
 function operatorDataWriteActions_() {
   return [
-    "saveTasks","saveAdminOrders","saveSubOperatorShares","saveSubOperatorApprovals",
+    "saveTasks","mutateTasks","setTaskReportCompletion","saveAdminOrders","saveAdminOrderScope",
+    "ackAdminOrderChange","setOperatorTaskApproval","saveSubOperatorShares","saveSubOperatorApprovals",
     "savePendingSubReports","saveReport","updateReport","saveSupplyDB","saveClients",
     "deleteClient","saveClientInternalNote","saveClientSettings","updateMaterialApproval",
     "syncDailyMaterialApprovals","saveSubOperatorAssignment","saveOperatorDoneAlert",
-    "dismissOperatorDoneAlert"
+    "dismissOperatorDoneAlert","saveClientPoolType","saveLicense"
   ];
 }
 
@@ -4701,22 +6143,7 @@ function operatorDataWriteActions_() {
     // ── טאב דוחות: הוסף עמודות חסרות ──
     const reportSheet = ss.getSheetByName("דוחות");
     if(reportSheet) {
-      const lastCol = reportSheet.getLastColumn();
-      const headers = reportSheet.getRange(1,1,1,lastCol).getValues()[0];
-    const neededR = ["chlora","hth","phUp","acidLiters","ציוד_שסופק"];
-      neededR.forEach((name, i) => {
-        if(!headers.includes(name)) {
-          reportSheet.getRange(1, lastCol+i+1).setValue(name);
-          Logger.log("✅ דוחות - הוספה: " + name);
-        }
-      });
-    }
-
-    // ── טאב לקוחות_חופשיים: צור אם לא קיים ──
-    if(!ss.getSheetByName("לקוחות_חופשיים")) {
-      const fc = ss.insertSheet("לקוחות_חופשיים");
-      fc.appendRow(["שם_לקוח","טלפון","כתובת","סוג_בריכה","קוד_שער"]);
-      Logger.log("✅ נוצר טאב: לקוחות_חופשיים");
+      ensureReportsSheetReportId_(reportSheet);
     }
 
     // ── טאב תקלות_מפעילים: צור אם לא קיים ──
@@ -4754,7 +6181,7 @@ function operatorDataWriteActions_() {
       title: "Client admin notification test",
       message: "Test notification for internal admin only"
     });
-    Logger.log(JSON.stringify(res));
+    Logger.log("Client admin push test status: " + !!res.success);
   }
 
   function auditClientSheetStructureFull(sheetId) {
@@ -4762,14 +6189,13 @@ function operatorDataWriteActions_() {
     const expected = {
       "Users": ["username","password","role","name","icon","welcomeMessage","phone","welcomeImage","welcomeInstagram","linkedOperator","assignedOperator"],
       "לקוחות": ["שם_לקוח","טלפון","כתובת","qr_url","קוד_שער","סוג_בריכה","ימים_קבועים","מפעיל_קבוע","ימי_בדיקת_מים","יתרת_טיפולים_חודשית","מונה_טיפולים_בפועל","מכסת_טיפולים_חודשית","חודש_טיפולים"],
-      "דוחות": ["תאריך","מפעיל","לקוח","כלור","pH","מלח","גובה_מים","צלילות","פס_שומן","זרימה","דגם_אלקטרודה","סריאלי_אלקטרודה","תאריך_ניקיון","תאריך_ניקיון_הבא","ציוד_נדרש","מצב_בריכה","פירוט_מצב","הגבלה_עד","הערות","chlora","hth","phUp","acidLiters","ציוד_שסופק"],
+      "דוחות": reportHeaders_(),
       "משימות": ["id","תאריך","לקוח","מפעילים","סטטוס","changeLog"],
       "חלוקת_עבודה": ["id","תאריך","מפעיל","לקוח","סדר","הערת_מנהל","סטטוס","changeLog"],
       "ציוד_לקוחות": ["לקוח","חומצת_מלח","מעלה_pH","שקי_מלח","כמות_שקים","עודכן","הערת_חומרים","nextSupplyDate","assignedOperator","מחיר_פר_חומר_לטיפול_הבא","supplyId","clientId"],
       "שעות_עבודה": ["id","מפעיל","תאריך","התחלה","סיום","סה\"כ"],
       "שעון_פעיל": ["username","operator","date","start","noonNotified"],
       "תקלות_מפעילים": ["id","מפעיל","לקוח","תיאור","דחיפות","סטטוס","תגובת_אדמין","תאריך"],
-      "לקוחות_חופשיים": ["שם_לקוח","טלפון","כתובת","סוג_בריכה","קוד_שער"],
       "לקוחות_ללא_שיוך": ["שם_לקוח","טלפון","כתובת","קוד_שער","סוג_בריכה"],
       "SubOperatorShares": ["date","operator","subUsername","subOperator","client","orderIndex","note","sharedAt","sharedBy","id","status","changeLog","completedAt","completedBy","reportId","revoked"],
       "SubOperatorApprovals": ["date","operator","subUsername","subOperator","approved","approvedAt","approvedBy"],
