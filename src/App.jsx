@@ -328,7 +328,7 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
-const APP_BUILD_ID = "20260731-pending-report-confirmation-1";
+const APP_BUILD_ID = "20260731-whatsapp-delivery-reconcile-1";
 const APP_VERSION_URL = "/version.json";
 const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
 const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
@@ -3162,6 +3162,10 @@ useEffect(() => {
   const [showPendingReportNames,setShowPendingReportNames] = useState(false);
   const [showPendingIssueDetails,setShowPendingIssueDetails] = useState(false);
   const [pendingBackgroundSync,setPendingBackgroundSync] = useState(false);
+  const pendingBackgroundSyncPausedRef = useRef(false);
+  const requestPendingBackgroundSync = () => {
+    if (!pendingBackgroundSyncPausedRef.current) setPendingBackgroundSync(true);
+  };
   const [showSuperAdmin,setShowSuperAdmin] = useState(false);
   const [showReportIssue,setShowReportIssue] = useState(false);
   const [issueDesc,setIssueDesc] = useState("");
@@ -4376,7 +4380,7 @@ useEffect(() => {
     };
     const alreadyQueued = pendingOperatorIssuesRef.current.some(item => samePendingOperatorIssue(item, issue));
     const pendingIssue = addPendingOperatorIssue(issue);
-    setPendingBackgroundSync(true);
+    requestPendingBackgroundSync();
     if (!alreadyQueued) setOperatorIssues(prev => [operatorIssueToRow(pendingIssue), ...prev]);
     return pendingIssue;
   };
@@ -5148,7 +5152,7 @@ useEffect(() => {
     );
     const pendingIssue = addPendingOperatorIssue(issue);
     if (!alreadyQueued) setOperatorIssues(prev => [operatorIssueToRow(pendingIssue), ...prev]);
-    setPendingBackgroundSync(true);
+    requestPendingBackgroundSync();
     setAction("operatorIssueReport", "loading");
     if (pendingIssue._localPersisted) {
       setShowOperatorIssue(false);
@@ -6447,7 +6451,7 @@ useEffect(() => {
         }
         if (!whatsAppResult.sent) {
           setDismissed(false);
-          setPendingBackgroundSync(true);
+          requestPendingBackgroundSync();
         }
       })();
       void autoShareOrderAfterReport(savedReport);
@@ -6693,7 +6697,7 @@ useEffect(() => {
       }
       setDismissed(false);
       if (typeof navigator !== "undefined" && navigator.onLine === false) {
-        setPendingBackgroundSync(true);
+        requestPendingBackgroundSync();
       }
     } catch (error) {
       immediateReportIdsRef.current.delete(String(report.id || ""));
@@ -6831,7 +6835,7 @@ useEffect(() => {
           );
           if (!whatsAppSent) {
             setDismissed(false);
-            setPendingBackgroundSync(true);
+            requestPendingBackgroundSync();
             setAction("submitReport", "local", 2200);
           }
         } else {
@@ -6873,7 +6877,7 @@ useEffect(() => {
             setAction("submitReport", "success", 1200);
           } else {
             setDismissed(false);
-            setPendingBackgroundSync(true);
+            requestPendingBackgroundSync();
             setAction("submitReport", "local", 2200);
           }
         } else {
@@ -6886,7 +6890,7 @@ useEffect(() => {
             console.warn("Failed sheet state persistence failed", error)
           );
           setDismissed(false);
-          setPendingBackgroundSync(true);
+          requestPendingBackgroundSync();
           setAction("submitReport", "local", 2200);
           showToast(subText("⚠️ הדוח נשמר בטלפון וממתין לשמירה בשיטס","⚠️ Report saved on this device and waiting to save to Sheets"));
         }
@@ -6928,15 +6932,20 @@ useEffect(() => {
       return !!item?.editingPaused || (!!pendingId && editingPendingReportIdsRef.current.has(pendingId));
     });
     const pausedEditingIds = new Set(pausedEditing.map(pendingReportStorageId));
+    // Unknown deliveries are safe to recheck only when the server can deduplicate by report ID.
     const blockedUnknown = pendingSource.filter(item =>
       !isPendingReportDeletedLocally(item) &&
       !pausedEditingIds.has(pendingReportStorageId(item)) &&
-      item?.lastError === "delivery_status_unknown"
+      item?.lastError === "delivery_status_unknown" &&
+      !String(getPendingReportPayload(item)?.id || "").trim()
     );
     const syncablePending = pendingSource.filter(item =>
       !isPendingReportDeletedLocally(item) &&
       !pausedEditingIds.has(pendingReportStorageId(item)) &&
-      item?.lastError !== "delivery_status_unknown"
+      (
+        item?.lastError !== "delivery_status_unknown" ||
+        !!String(getPendingReportPayload(item)?.id || "").trim()
+      )
     );
     const itemsToSync = Number.isFinite(maxItems) ? syncablePending.slice(0, Math.max(1, maxItems)) : syncablePending;
     const failed = [
@@ -7112,9 +7121,11 @@ useEffect(() => {
         return next;
       });
       setPendingBackgroundSync(
-        visibleFailed.some(item => item?.lastError !== "delivery_status_unknown") ||
-        cleanedSentVersions.size < sent.length ||
-        pendingOperatorIssues.length > 0
+        !pendingBackgroundSyncPausedRef.current && (
+          visibleFailed.some(item => item?.lastError !== "delivery_status_unknown") ||
+          cleanedSentVersions.size < sent.length ||
+          pendingOperatorIssues.length > 0
+        )
       );
       const onlySkippedImmediate = visibleFailed.length > 0 && visibleFailed.length === skippedImmediateCount && sent.length === 0;
       if (onlySkippedImmediate) {
@@ -7139,11 +7150,8 @@ useEffect(() => {
   const togglePendingBackgroundSync = (e) => {
     e?.stopPropagation?.();
     setPendingBackgroundSync(active => {
-      if (active && pending.length) {
-        showToast(subText("שליחה ברקע נשארת פעילה עד שכל הלקוחות יקבלו הודעה","Background sending stays active until every client receives a message"));
-        return true;
-      }
       const next = !active;
+      pendingBackgroundSyncPausedRef.current = !next;
       showToast(next
         ? subText("שליחת דוחות ברקע הופעלה","Background report sending started")
         : subText("שליחת דוחות ברקע נעצרה","Background report sending stopped"));
@@ -7212,7 +7220,7 @@ useEffect(() => {
       void persistPendingReportItem(resumedItem).catch(error => {
         console.warn("Pending report edit resume failed", error);
         setPendingReportItem(resumedItem);
-        setPendingBackgroundSync(true);
+        requestPendingBackgroundSync();
       });
     }
     setEditingReport(null);
@@ -7340,7 +7348,7 @@ useEffect(() => {
       await persistPendingReportItem(resumedItem).catch(error => {
         console.warn("Pending report delete resume failed", error);
         setPendingReportItem(resumedItem);
-        setPendingBackgroundSync(true);
+        requestPendingBackgroundSync();
       });
     };
 
@@ -7627,7 +7635,12 @@ useEffect(() => {
   pendingIssueSyncRunnerRef.current = syncPendingOperatorIssues;
 
   useEffect(() => {
-    if (pending.length || pendingOperatorIssues.length) setPendingBackgroundSync(true);
+    if (!pending.length && !pendingOperatorIssues.length) {
+      pendingBackgroundSyncPausedRef.current = false;
+      setPendingBackgroundSync(false);
+      return;
+    }
+    requestPendingBackgroundSync();
   }, [pending.length, pendingOperatorIssues.length]);
 
   useEffect(() => {
