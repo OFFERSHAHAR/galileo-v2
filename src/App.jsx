@@ -328,7 +328,7 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
-const APP_BUILD_ID = "20260615-super-admin-owner-1";
+const APP_BUILD_ID = "20260731-first-report-self-whatsapp-1";
 const APP_VERSION_URL = "/version.json";
 const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
 const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
@@ -416,6 +416,10 @@ function getScriptUrl() {
   const c = getCompany();
   return c.scriptUrl || localStorage.getItem("galileo_script_url") || FIXED_SCRIPT_URL;
 }
+function getConfiguredSheetId() {
+  const c = getCompany();
+  return String(c.sheetId || localStorage.getItem("galileo_sheet_id") || "").trim();
+}
 const sheetReadRequests = new Map();
 const SHEET_READ_ACTIONS = new Set([
   "getBootstrapData","getOperatorRefreshData","getTasks","getUsers","getAdminOrders",
@@ -426,8 +430,7 @@ const SHEET_READ_ACTIONS = new Set([
 ]);
 async function sheetCall(action, payload={}) {
   const execute = async () => {
-    const company = getCompany();
-    const sheetId = company.sheetId || localStorage.getItem("galileo_sheet_id") || "";
+    const sheetId = getConfiguredSheetId();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 45000);
     try {
@@ -440,8 +443,7 @@ async function sheetCall(action, payload={}) {
     }
   };
   if (!SHEET_READ_ACTIONS.has(action)) return execute();
-  const company = getCompany();
-  const key = `${getScriptUrl()}:${company.sheetId || localStorage.getItem("galileo_sheet_id") || ""}:${action}:${JSON.stringify(payload || {})}`;
+  const key = `${getScriptUrl()}:${getConfiguredSheetId()}:${action}:${JSON.stringify(payload || {})}`;
   if (sheetReadRequests.has(key)) return sheetReadRequests.get(key);
   const request = execute().finally(() => sheetReadRequests.delete(key));
   sheetReadRequests.set(key, request);
@@ -2360,7 +2362,7 @@ export default function App() {
   const [loginErr,setLoginErr] = useState("");
   const [loginLoading,setLoginLoading] = useState(false);
   const [appUpdate,setAppUpdate] = useState({checking:false,available:false,latest:"",error:false});
-  const [sheetId,setSheetId] = useState("");
+  const [sheetId,setSheetId] = useState(() => getConfiguredSheetId() ? "connected" : "");
   const [dataConnectionStatus,setDataConnectionStatus] = useState(() =>
     typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "checking"
   );
@@ -2952,7 +2954,7 @@ const reportFoundInSheet = (sheetReport = {}, report = {}) => {
   return fields.every(field => normalizeName(sheetReport?.[field]) === normalizeName(report?.[field]));
 };
 const getReportSheetStorageStatus = async (report) => {
-  if (!sheetId || !report?.client || !report?.reportDate) {
+  if (!getConfiguredSheetId() || !report?.client || !report?.reportDate) {
     return {checked:false, confirmed:false, matches:[]};
   }
   const res = await sheetCall("getReportStorageStatus", { report }).catch(() => null);
@@ -5327,7 +5329,10 @@ useEffect(() => {
           saveCompany(company);
           setCompanyName(company.name || DEFAULT_APP_NAME);
           setClientPlan({plan:res.plan, status:res.status});
-          if(res.sheetId) localStorage.setItem("galileo_sheet_id", res.sheetId);
+          if(res.sheetId) {
+            localStorage.setItem("galileo_sheet_id", res.sheetId);
+            setSheetId("connected");
+          }
         } else if(res?.valid === false) {
           setDataConnectionStatus("offline");
           showToast("מפתח הגישה לא אומת כרגע. האפליקציה נשארת פתוחה עם המידע השמור");
@@ -5802,7 +5807,7 @@ useEffect(() => {
   const syncPendingReportTaskCompletion = async (item, report = getPendingReportPayload(item)) => {
     const completion = item?.taskCompletion || {required:false, synced:true, taskId:"", lastError:""};
     if (completion.required && completion.synced === true) return item;
-    if (!sheetId) {
+    if (!getConfiguredSheetId()) {
       return {
         ...item,
         taskCompletion:{...completion, required:true, synced:false, lastError:"task_save_unavailable"}
@@ -6227,22 +6232,30 @@ useEffect(() => {
   const sendSelfWhatsAppTest = async () => {
     const actionKey = "sendSelfWhatsApp";
     if (isActionLoading(actionKey)) return;
-    const currentUserRecord = findPushUser(user?.username || user?.name || user?.phone) || user || {};
-    const phone = normalizeWhatsAppPhone(user?.phone || currentUserRecord?.phone);
+    setAction(actionKey, "loading");
+    const validPhoneFrom = (record = {}) => [record?.phone, user?.phone]
+      .map(normalizeWhatsAppPhone)
+      .find(value => /^9725\d{8}$/.test(value)) || "";
+    let currentUserRecord = findPushUser(user?.username || user?.name || user?.phone) || {};
+    const usersResponse = await sheetCall("getUsers").catch(() => null);
+    if (Array.isArray(usersResponse?.users)) {
+      const freshUsers = applyFetchedUsers(usersResponse.users);
+      currentUserRecord = freshUsers.find(candidate => sameUserIdentity(candidate, user)) || currentUserRecord;
+    }
+    const phone = validPhoneFrom(currentUserRecord);
     if (!phone) {
       setAction(actionKey, "error", 2200);
-      showToast(subText("⚠️ לא מוגדר מספר טלפון למשתמש המחובר","⚠️ No phone number is configured for the signed-in user"));
+      showToast(subText("⚠️ מספר הטלפון של המשתמש חסר או אינו תקין","⚠️ The signed-in user's phone number is missing or invalid"));
       haptic("medium");
       return;
     }
-    setAction(actionKey, "loading");
     const res = await sheetCall("sendGreenApiWhatsApp", {
       phone,
       chatId: `${phone}@c.us`,
       message: "כפתור שליחה לעצמי נלחץ",
       client: user?.name || user?.username || "מפעיל"
     }).catch(error => ({success:false,error:error?.message || "send_failed"}));
-    const sent = !!(res?.idMessage || res?.response?.idMessage);
+    const sent = !!(res?.success || res?.idMessage || res?.response?.idMessage);
     setAction(actionKey, sent ? "success" : "error", sent ? 1800 : 2600);
     showToast(sent
       ? subText("✅ הודעת הבדיקה נשלחה אליך","✅ Test message sent to you")
@@ -6323,7 +6336,7 @@ useEffect(() => {
 
     let saved = false;
     let savedReport = report;
-    if (sheetId) {
+    if (getConfiguredSheetId()) {
       const res = await sheetCall("saveReport", {
         report,
         photos: item.photos || [],
@@ -6773,7 +6786,7 @@ useEffect(() => {
     void (async () => {
       let activePendingItem = pendingItem;
       try {
-        const saveRequest = sheetId
+        const saveRequest = getConfiguredSheetId()
           ? (
               updateOriginal
                 ? sheetCall("updateReport", {
@@ -7255,7 +7268,7 @@ useEffect(() => {
   const reopenTaskAfterPendingDelete = async (item, report, hasOtherCompletion) => {
     if (hasOtherCompletion || getPendingUpdateOriginal(item)) return true;
     const completion = item?.taskCompletion || {};
-    if (!sheetId) return false;
+    if (!getConfiguredSheetId()) return false;
     const result = await sheetCall("setTaskReportCompletion", {
       completed:false,
       taskId:completion.taskId || "",
