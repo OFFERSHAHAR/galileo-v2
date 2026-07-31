@@ -328,7 +328,7 @@ function saveCompany(data) {
 
 const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
-const APP_BUILD_ID = "20260731-first-report-self-whatsapp-1";
+const APP_BUILD_ID = "20260731-pending-report-confirmation-1";
 const APP_VERSION_URL = "/version.json";
 const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
 const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
@@ -2961,9 +2961,14 @@ const getReportSheetStorageStatus = async (report) => {
   if (!Array.isArray(res?.matches)) {
     return {checked:false, confirmed:false, matches:[]};
   }
+  const wantedId = String(report?.id || "").trim();
+  const confirmed = res.matches.some(match =>
+    match?.confirmed === true ||
+    (!!wantedId && String(match?.id || "").trim() === wantedId)
+  );
   return {
     checked:true,
-    confirmed:res.matches.some(match => match?.confirmed === true),
+    confirmed,
     matches:res.matches
   };
 };

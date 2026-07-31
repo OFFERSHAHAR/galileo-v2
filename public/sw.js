@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "galileo-v2-cache-";
-const CACHE = `${CACHE_PREFIX}v15`;
+const CACHE = `${CACHE_PREFIX}v16`;
 const STATIC = ["/", "/index.html", "/manifest.json"];
 const DB_NAME = "galileo-sync-db";
 const DB_VERSION = 1;
@@ -155,7 +155,11 @@ function reportFoundInSheet(sheetReport = {}, report = {}) {
 async function confirmSaved(record, report) {
   if (!record.scriptUrl || !record.sheetId || !report.client || !report.reportDate) return false;
   const response = await postSheet(record.scriptUrl, record.sheetId, "getReportStorageStatus", { report });
-  return Array.isArray(response?.matches) && response.matches.some(item => item?.confirmed === true);
+  const wantedId = normalize(report.id);
+  return Array.isArray(response?.matches) && response.matches.some(item =>
+    item?.confirmed === true ||
+    (!!wantedId && normalize(item?.id) === wantedId)
+  );
 }
 
 async function notifyClients(message) {
