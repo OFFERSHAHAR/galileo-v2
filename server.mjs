@@ -319,6 +319,7 @@ async function handleApi(req, res, url) {
       void audit("owner_password_failed", { ip:clientIp(req), userAgent:userAgent(req) }, true);
       return json(res, 401, { error:"invalid_credentials" });
     }
+    ownerChallenges.clear();
     const id = randomToken(24);
     const ownerCode = String(randomBytes(4).readUInt32BE(0) % 1000000).padStart(6, "0");
     ownerChallenges.set(id, { code:ownerCode, ip:clientIp(req), userAgentHash:hash(userAgent(req)).toString("hex"), expiresAt:Date.now() + 5 * 60 * 1000 });
