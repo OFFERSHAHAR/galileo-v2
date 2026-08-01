@@ -77,10 +77,6 @@
     const configured = String(PropertiesService.getScriptProperties().getProperty("SECURITY_ALERT_EMAIL") || "").trim();
     if (configured) return configured;
     try {
-      const effective = String(Session.getEffectiveUser().getEmail() || "").trim();
-      if (effective) return effective;
-    } catch (e) {}
-    try {
       const sheetOwner = String(managementSpreadsheet_().getOwner().getEmail() || "").trim();
       if (sheetOwner) return sheetOwner;
     } catch (e) {}
