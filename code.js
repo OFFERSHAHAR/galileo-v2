@@ -73,9 +73,23 @@
     return { success:true, user:publicUser_(user), license:{ sheetId:license.sheetId, key:String(data.licenseKey || "").trim().toUpperCase() } };
   }
 
+  function securityAlertEmail_() {
+    const configured = String(PropertiesService.getScriptProperties().getProperty("SECURITY_ALERT_EMAIL") || "").trim();
+    if (configured) return configured;
+    try {
+      const effective = String(Session.getEffectiveUser().getEmail() || "").trim();
+      if (effective) return effective;
+    } catch (e) {}
+    try {
+      return String(DriveApp.getFileById(ScriptApp.getScriptId()).getOwner().getEmail() || "").trim();
+    } catch (e) {
+      return "";
+    }
+  }
+
   function sendOwnerLoginCode_(data) {
     const props = PropertiesService.getScriptProperties();
-    const email = String(props.getProperty("SECURITY_ALERT_EMAIL") || Session.getEffectiveUser().getEmail() || "").trim();
+    const email = securityAlertEmail_();
     const ownerId = String(props.getProperty("SECURITY_OWNER_USER_ID") || "or").trim().toLowerCase();
     const code = String(data.code || "").replace(/\D/g, "");
     if (!/^\d{6}$/.test(code)) return { sent:false, error:"invalid_code" };
@@ -106,7 +120,7 @@
     sheet.appendRow([new Date(), event, details]);
     const message = event + "\n" + details;
     let sent = false;
-    const email = String(props.getProperty("SECURITY_ALERT_EMAIL") || Session.getEffectiveUser().getEmail() || "").trim();
+    const email = securityAlertEmail_();
     if (email) {
       try { MailApp.sendEmail(email, "התראת אבטחה Galileo", message); sent = true; } catch (e) {}
     }
