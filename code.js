@@ -81,6 +81,10 @@
       if (effective) return effective;
     } catch (e) {}
     try {
+      const sheetOwner = String(managementSpreadsheet_().getOwner().getEmail() || "").trim();
+      if (sheetOwner) return sheetOwner;
+    } catch (e) {}
+    try {
       return String(DriveApp.getFileById(ScriptApp.getScriptId()).getOwner().getEmail() || "").trim();
     } catch (e) {
       return "";
@@ -6766,11 +6770,4 @@ function operatorDataWriteActions_() {
         .setBackground("#1E40AF")
         .setFontColor("#FFFFFF");
     });
-  }
-
-  function configureSecurityOwnerEmail() {
-    const email = String(Session.getEffectiveUser().getEmail() || "").trim();
-    if (!email) throw new Error("Owner email is unavailable for this account");
-    PropertiesService.getScriptProperties().setProperty("SECURITY_ALERT_EMAIL", email);
-    return { configured:true };
   }
