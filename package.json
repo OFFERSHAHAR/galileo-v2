@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "start": "node server.mjs",
     "build": "vite build",
+    "test": "node server.mjs --self-test",
     "preview": "vite preview",
     "mcp": "node galileo-mcp-server.js"
   },

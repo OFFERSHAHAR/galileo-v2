@@ -1,7 +1,120 @@
   // ─── מרכזי — תומך בכל לקוח לפי sheetId ───────────────────────────────────
   // הלקוח משתף את הגיליון שלו עם האימייל שלך ומכניס את ה-ID באפליקציה
 
-  var GALILEO_SCRIPT_BUILD_ = "20260731-report-query-v4";
+  var GALILEO_SCRIPT_BUILD_ = "20260801-secure-gateway-v1";
+
+  function managementSpreadsheet_() {
+    const id = PropertiesService.getScriptProperties().getProperty("MANAGEMENT_SHEET_ID") || "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
+    return SpreadsheetApp.openById(id);
+  }
+
+  function isBackendProxyAuthorized_(data) {
+    const expected = String(PropertiesService.getScriptProperties().getProperty("BACKEND_PROXY_SECRET") || "");
+    const provided = String(data && data.backendSecret || "");
+    if (!expected || !provided) return false;
+    const left = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, expected, Utilities.Charset.UTF_8);
+    const right = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, provided, Utilities.Charset.UTF_8);
+    let different = left.length ^ right.length;
+    for (let i = 0; i < Math.max(left.length, right.length); i++) different |= (left[i % left.length] ^ right[i % right.length]);
+    return different === 0;
+  }
+
+  function publicUser_(user) {
+    const blocked = { password:true, "סיסמה":true, "סיסמא":true };
+    const clean = {};
+    Object.keys(user || {}).forEach(key => {
+      if (!blocked[String(key).toLowerCase()]) clean[key] = user[key];
+    });
+    return clean;
+  }
+
+  function publicUsers_(ss) {
+    return getUsers_(ss).map(publicUser_);
+  }
+
+  function validateLicenseRequest_(data) {
+    const key = String(data && data.key || "").trim().toUpperCase();
+    if (!key) return { valid:false, reason:"מפתח לא תקין" };
+    const mgmt = managementSpreadsheet_();
+    const sheet = mgmt.getSheetByName("רישיונות");
+    if (!sheet) return { valid:false, reason:"טבלת רישיונות לא נמצאה" };
+    const rows = sheet.getDataRange().getValues();
+    const row = rows.slice(1).find(r => String(r[0]).trim().toUpperCase() === key);
+    if (!row) return { valid:false, reason:"מפתח לא תקין" };
+    const sheetId = String(row[2] || "").trim();
+    const licenseStatus = String(row[4] || "פעיל").trim();
+    const clientsSheet = mgmt.getSheetByName("לקוחות");
+    const client = clientsSheet
+      ? clientsSheet.getDataRange().getValues().slice(1).find(r => String(r[7] || "").trim() === sheetId)
+      : null;
+    const clientStatus = String(client && client[6] || "פעיל").trim();
+    if (licenseStatus === "מושהה" || clientStatus === "מושהה") {
+      return { valid:false, reason:"⛔ השירות מושהה — נא לפנות למנהל המערכת", suspended:true };
+    }
+    const expiry = row[5] ? (row[5] instanceof Date ? Utilities.formatDate(row[5],"Asia/Jerusalem","dd/MM/yyyy") : String(row[5])) : "";
+    const branding = getClientBrandingBySheetId_(sheetId);
+    return { valid:true, company:String(branding.company || row[1] || ""), sheetId, plan:String(row[3] || "PRO"), status:licenseStatus, expiry, adminEmail:String(row[6] || ""), ...branding };
+  }
+
+  function authenticateUser_(data) {
+    const license = validateLicenseRequest_({ key:data.licenseKey });
+    if (!license.valid || String(data.sheetId || "").trim() !== license.sheetId) {
+      return { success:false, error:license.suspended ? "license_suspended" : "invalid_credentials", reason:license.reason };
+    }
+    const username = String(data.username || "").trim().toLowerCase();
+    const password = String(data.password || "");
+    const user = getUsers_(SpreadsheetApp.openById(license.sheetId)).find(item =>
+      String(item.username || "").trim().toLowerCase() === username && String(item.password || "") === password
+    );
+    if (!user || String(user.status || user.Status || user["סטטוס"] || "פעיל").trim() === "מושהה") {
+      return { success:false, error:"invalid_credentials" };
+    }
+    return { success:true, user:publicUser_(user), license:{ sheetId:license.sheetId, key:String(data.licenseKey || "").trim().toUpperCase() } };
+  }
+
+  function sendOwnerLoginCode_(data) {
+    const props = PropertiesService.getScriptProperties();
+    const email = String(props.getProperty("SECURITY_ALERT_EMAIL") || "").trim();
+    const ownerId = String(props.getProperty("SECURITY_OWNER_USER_ID") || "or").trim().toLowerCase();
+    const code = String(data.code || "").replace(/\D/g, "");
+    if (!/^\d{6}$/.test(code)) return { sent:false, error:"invalid_code" };
+    let sent = false;
+    if (email) {
+      try {
+        MailApp.sendEmail(email, "קוד כניסה מאובטח ל-Galileo", "קוד הכניסה החד-פעמי שלך: " + code + "\nהקוד תקף ל-5 דקות.");
+        sent = true;
+      } catch (e) {}
+    }
+    try {
+      const push = sendAppNotificationToUser_({ externalUserId:ownerId, title:"קוד כניסה מאובטח", message:"קוד הכניסה: " + code + " (תקף ל-5 דקות)" }, managementSpreadsheet_());
+      sent = sent || !!(push && (push.success || push.sent || Number(push.recipients || 0) > 0));
+    } catch (e) {}
+    return { sent:sent };
+  }
+
+  function securityAlert_(data) {
+    const props = PropertiesService.getScriptProperties();
+    const ss = managementSpreadsheet_();
+    let sheet = ss.getSheetByName("SecurityAudit");
+    if (!sheet) {
+      sheet = ss.insertSheet("SecurityAudit");
+      sheet.appendRow(["timestamp", "event", "details"]);
+    }
+    const event = String(data.event || "security_event").slice(0, 120);
+    const details = JSON.stringify(data.details || {}).slice(0, 4000);
+    sheet.appendRow([new Date(), event, details]);
+    const message = event + "\n" + details;
+    let sent = false;
+    const email = String(props.getProperty("SECURITY_ALERT_EMAIL") || "").trim();
+    if (email) {
+      try { MailApp.sendEmail(email, "התראת אבטחה Galileo", message); sent = true; } catch (e) {}
+    }
+    try {
+      const push = sendAppNotificationToUser_({ externalUserId:String(props.getProperty("SECURITY_OWNER_USER_ID") || "or"), title:"התראת אבטחה", message:message }, ss);
+      sent = sent || !!(push && (push.success || push.sent || Number(push.recipients || 0) > 0));
+    } catch (e) {}
+    return { success:true, sent:sent };
+  }
 
   function doPost(e) {
     const json = jsonResponse_;
@@ -10,6 +123,15 @@
     try {
       const data = JSON.parse(e.postData.contents);
       const action = data.action;
+
+      // Green API posts its own unsigned webhook. Every Galileo action must come
+      // through the server proxy and carry the server-only secret.
+      if (action && !isBackendProxyAuthorized_(data)) return json({ success:false, error:"unauthorized" });
+
+      if (action === "validateLicense") return json(validateLicenseRequest_(data));
+      if (action === "authenticateUser") return json(authenticateUser_(data));
+      if (action === "sendOwnerLoginCode") return json(sendOwnerLoginCode_(data));
+      if (action === "securityAlert") return json(securityAlert_(data));
 
       // sheetId מגיע מהאפליקציה — כל לקוח שולח את שלו
       const SHEET_ID = data.sheetId || "1NthErqOJOFHJ482q3zg2daFX9SGCFeByXjdoZxvV-no";
@@ -107,19 +229,6 @@
         return json(trackUsageEvent_(ss, data.event || {}));
       }
 
-      if (action === "validateLicense") {
-        const sheet = ss.getSheetByName("רישיונות");
-        if(!sheet) return json({ valid:false, reason:"טבלת רישיונות לא נמצאה" });
-        const rows = sheet.getDataRange().getValues();
-        const row = rows.slice(1).find(r => String(r[0]).trim().toUpperCase() === String(data.key||"").trim().toUpperCase());
-        if(!row) return json({ valid:false, reason:"מפתח לא תקין" });
-        const status = String(row[4]||"פעיל");
-        if(status==="מושהה") return json({ valid:false, reason:"⛔ המנוי מושהה — צור קשר עם מנהל המערכת" });
-        const expiry = row[5] ? (row[5] instanceof Date ? Utilities.formatDate(row[5],"Asia/Jerusalem","dd/MM/yyyy") : String(row[5])) : "";
-        const branding = getClientBrandingBySheetId_(String(row[2] || ""));
-        return json({ valid:true, company:String(branding.company || row[1] || ""), sheetId:String(row[2]), plan:String(row[3]||"PRO"), status, expiry, adminEmail:String(row[6]||""), ...branding });
-      }
-
       if (action === "getLicenses") {
         const sheet = ss.getSheetByName("רישיונות");
         if(!sheet) return json({ licenses:[] });
@@ -150,8 +259,11 @@
       if (action === "updateLicenseStatus") {
         const sheet = ss.getSheetByName("רישיונות");
         if(!sheet) return json({ error:"no sheet" });
-        sheet.getRange(data.rowIndex + 1, 5).setValue(data.status);
-        return json({ success:true });
+        const rowIndex = Number(data.rowIndex);
+        if (!Number.isInteger(rowIndex) || rowIndex < 2 || rowIndex > sheet.getLastRow()) return json({ success:false, error:"invalid_row" });
+        const row = sheet.getRange(rowIndex, 1, 1, 7).getValues()[0];
+        sheet.getRange(rowIndex, 5).setValue(data.status);
+        return json({ success:true, license:{ key:String(row[0] || ""), sheetId:String(row[2] || ""), status:String(data.status || "") } });
       }
 
       if (action === "getMgmtClients") {
@@ -203,8 +315,11 @@
       if (action === "updateMgmtClientStatus") {
         const sheet = ss.getSheetByName("לקוחות");
         if(!sheet) return json({ error: "no sheet" });
-        sheet.getRange(data.rowIndex + 1, 7).setValue(data.status);
-        return json({ success: true });
+        const rowIndex = Number(data.rowIndex);
+        if (!Number.isInteger(rowIndex) || rowIndex < 2 || rowIndex > sheet.getLastRow()) return json({ success:false, error:"invalid_row" });
+        const row = sheet.getRange(rowIndex, 1, 1, Math.max(8, sheet.getLastColumn())).getValues()[0];
+        sheet.getRange(rowIndex, 7).setValue(data.status);
+        return json({ success:true, client:{ id:String(row[0] || ""), sheetId:String(row[7] || ""), status:String(data.status || "") } });
       }
 
       if (action === "updateMgmtIssueStatus") {
@@ -329,7 +444,7 @@
       }
 
       if (action === "getUsers") {
-        return json({ users: getUsers_(ss) });
+        return json({ users: publicUsers_(ss) });
       }
 
       if (action === "saveSubOperatorAssignment") {
@@ -5875,7 +5990,7 @@ function getClientBrandingBySheetId_(sheetId) {
   if (!id) return {};
 
   try {
-    const mgmt = SpreadsheetApp.openById("17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk");
+    const mgmt = managementSpreadsheet_();
     const sheet = mgmt.getSheetByName("לקוחות");
     if (!sheet) return {};
 
@@ -5985,7 +6100,7 @@ function bumpOperatorDataVersion_(ss) {
 
 function buildBootstrapData_(ss) {
   return {
-    users: getUsers_(ss),
+    users: publicUsers_(ss),
     clients: getClients_(ss),
     tasks: getTasks_(ss),
     adminOrders: getAdminOrders_(ss),
@@ -6002,7 +6117,7 @@ function buildBootstrapData_(ss) {
 
 function buildOperatorRefreshData_(ss) {
   return {
-    users: getUsers_(ss),
+    users: publicUsers_(ss),
     tasks: getTasks_(ss),
     adminOrders: getAdminOrders_(ss),
     sharedSubOrders: getSubOperatorShares_(ss),

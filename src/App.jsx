@@ -326,15 +326,11 @@ function saveCompany(data) {
   applyTenantBranding(data);
 }
 
-const FIXED_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKKk_M0noXnKrniCsBDO4dAUWPDkpK8YH0QhhpJQfSaCyfqmAQlLJOb-sN5atSj5nj/exec";
 const APP_VERSION = "v2.6 · 08.05.2026";
 const APP_BUILD_ID = "20260731-whatsapp-delivery-reconcile-1";
 const APP_VERSION_URL = "/version.json";
 const APP_ACCEPTED_BUILD_KEY = "galileo_accepted_app_build";
 const APP_REFRESH_PENDING_KEY = "galileo_refresh_accept_pending";
-const DEFAULT_SUPER_PASS = "1892346";
-const SUPER_PASS_VERSION = "20260615-1";
-const SUPER_PASS_VERSION_KEY = "galileo_super_pass_version";
 const OFFICIAL_INTERFACE_OWNER = "אור";
 
 const normalizeBuildId = (value) => String(value || "").trim();
@@ -379,26 +375,11 @@ async function hardRefreshApp() {
   window.location.replace(url.toString());
 }
 
-function getSuperPass() {
-  if (localStorage.getItem(SUPER_PASS_VERSION_KEY) !== SUPER_PASS_VERSION) {
-    localStorage.setItem("galileo_super_pass", DEFAULT_SUPER_PASS);
-    localStorage.setItem(SUPER_PASS_VERSION_KEY, SUPER_PASS_VERSION);
-    return DEFAULT_SUPER_PASS;
-  }
-  return localStorage.getItem("galileo_super_pass") || DEFAULT_SUPER_PASS;
-}
-function setSuperPass(p) {
-  localStorage.setItem("galileo_super_pass", p);
-  localStorage.setItem(SUPER_PASS_VERSION_KEY, SUPER_PASS_VERSION);
-}
-const MGMT_SHEET_ID = "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
 const SUPER_MESSAGE_TARGET = { username: "or", name: "אור מוסה" };
-const SUPER_MESSAGE_TARGET_PASSWORD = "1892346";
 
 function isSuperMessageTargetUser(user) {
   const username = String(user?.username || "").trim().toLowerCase();
-  const password = String(user?.password || "").trim();
-  return username === SUPER_MESSAGE_TARGET.username && password === SUPER_MESSAGE_TARGET_PASSWORD;
+  return username === SUPER_MESSAGE_TARGET.username;
 }
 
 function isSuperMessageForTarget(msg) {
@@ -406,15 +387,29 @@ function isSuperMessageForTarget(msg) {
   return to === SUPER_MESSAGE_TARGET.username;
 }
 
+async function apiCall(path, payload={}, signal) {
+  const r = await fetch(path, {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    credentials:"same-origin",
+    body:JSON.stringify(payload),
+    signal
+  });
+  const data = await r.json().catch(()=>({error:"invalid_server_response"}));
+  if (r.status === 401 || r.status === 403) {
+    window.dispatchEvent(new CustomEvent("galileo:auth-required", {detail:data}));
+  }
+  return data;
+}
+async function apiSession(owner=false) {
+  const r = await fetch(owner?"/api/owner/session":"/api/session", {credentials:"same-origin", cache:"no-store"});
+  const data = await r.json().catch(()=>null);
+  return r.ok ? data : {...(data||{}), _status:r.status};
+}
 async function mgmtCall(action, payload={}) {
   try {
-    const r = await fetch(FIXED_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action, sheetId: MGMT_SHEET_ID, ...payload})});
-    return await r.json();
+    return await apiCall("/api/backend", {action, ...payload});
   } catch { return null; }
-}
-function getScriptUrl() {
-  const c = getCompany();
-  return c.scriptUrl || localStorage.getItem("galileo_script_url") || FIXED_SCRIPT_URL;
 }
 function getConfiguredSheetId() {
   const c = getCompany();
@@ -434,8 +429,7 @@ async function sheetCall(action, payload={}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 45000);
     try {
-      const r = await fetch(getScriptUrl(),{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action, sheetId, ...payload}),signal:controller.signal});
-      return await r.json();
+      return await apiCall("/api/backend", {action, sheetId, ...payload}, controller.signal);
     } catch {
       return null;
     } finally {
@@ -443,7 +437,7 @@ async function sheetCall(action, payload={}) {
     }
   };
   if (!SHEET_READ_ACTIONS.has(action)) return execute();
-  const key = `${getScriptUrl()}:${getConfiguredSheetId()}:${action}:${JSON.stringify(payload || {})}`;
+  const key = `${getConfiguredSheetId()}:${action}:${JSON.stringify(payload || {})}`;
   if (sheetReadRequests.has(key)) return sheetReadRequests.get(key);
   const request = execute().finally(() => sheetReadRequests.delete(key));
   sheetReadRequests.set(key, request);
@@ -577,7 +571,6 @@ function makePendingReportRecord(item, previous) {
   return {
     id:pendingReportStorageId(item),
     item:mergedItem,
-    scriptUrl:getScriptUrl(),
     sheetId:company.sheetId || localStorage.getItem("galileo_sheet_id") || "",
     updatedAt:Date.now()
   };
@@ -1529,7 +1522,6 @@ function companyFromLicenseResponse(res = {}) {
     appName: res.appName || displayName,
     shortName: res.shortName || res.appName || displayName,
     sheetId: res.sheetId,
-    scriptUrl: FIXED_SCRIPT_URL,
     adminEmail: res.adminEmail || "",
     logoUrl: res.logoUrl || "",
     icon192Url: res.icon192Url || "",
@@ -1552,7 +1544,7 @@ function LicenseScreen({ onDone, onSuperAdmin }) {
   const validate = async () => {
     if(!key.trim()){setErr("נא להזין מפתח רישיון");return;}
     setLoading(true); setErr("");
-    const res = await mgmtCall("validateLicense",{key:key.trim()});
+    const res = await apiCall("/api/license",{key:key.trim()}).catch(()=>null);
     if(res?.valid){
       const company = companyFromLicenseResponse(res);
       saveLicense({key:key.trim(),company:res.company,sheetId:res.sheetId,plan:res.plan,status:res.status,expiry:res.expiry,adminEmail:res.adminEmail||"",logoUrl:res.logoUrl||"",appName:company.appName,shortName:company.shortName,icon192Url:company.icon192Url,icon512Url:company.icon512Url,appleIconUrl:company.appleIconUrl,themeColor:company.themeColor,backgroundColor:company.backgroundColor});
@@ -1624,7 +1616,12 @@ function LicensesTab({C2, inp2, showMsg}) {
     await mgmtCall("saveLicense",{license:[key, newLic.company, newLic.sheetId, newLic.plan, "פעיל", newLic.expiry||"", newLic.adminEmail||""]});
     setGenerated(key); setNewLic({company:"",sheetId:"",plan:"PRO",expiry:"",adminEmail:""}); loadLicenses();
   };
-  const updateLicenseStatus = async (rowIndex, status) => { await mgmtCall("updateLicenseStatus",{rowIndex, status}); loadLicenses(); showMsg(`✅ סטטוס עודכן ל${status}`); };
+  const updateLicenseStatus = async (rowIndex, status) => {
+    if(status==="מושהה" && !window.confirm("להשהות את הכניסה לשירות? הנתונים לא יימחקו.")) return;
+    await mgmtCall("updateLicenseStatus",{rowIndex, status});
+    loadLicenses();
+    showMsg(status==="מושהה" ? "⛔ השירות מושהה — נא לפנות למנהל המערכת" : "✅ השירות הופעל מחדש");
+  };
 
   return (
     <div>
@@ -2083,7 +2080,10 @@ function SuperMessageInbox({ user, C, showToast, showHomeCue=false, inline=false
 
 function SuperAdminScreen({ onClose }) {
   const [pass, setPass] = useState("");
+  const [ownerCode, setOwnerCode] = useState("");
+  const [challengeId, setChallengeId] = useState("");
   const [auth, setAuth] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState("issues");
   const [clients, setClients] = useState([]);
@@ -2091,9 +2091,6 @@ function SuperAdminScreen({ onClose }) {
   const [loading, setLoading] = useState(false);
   const [vis, setVis] = useState(false);
   const [dateFilter, setDateFilter] = useState("");
-  const [newPass, setNewPass] = useState("");
-  const [newPass2, setNewPass2] = useState("");
-  const [passMsg, setPassMsg] = useState("");
   const [editClient, setEditClient] = useState(null);
   const emptyClientForm = {name:"",contact:"",phone:"",email:"",plan:"PRO",status:"פעיל",sheetId:"",notes:"",logoUrl:"",appName:"",shortName:"",icon192Url:"",icon512Url:"",appleIconUrl:"",themeColor:DEFAULT_THEME_COLOR,backgroundColor:DEFAULT_THEME_COLOR};
   const [newClient, setNewClient] = useState(emptyClientForm);
@@ -2102,14 +2099,36 @@ function SuperAdminScreen({ onClose }) {
   const [saving, setSaving] = useState(false);
   const [toast2, setToast2] = useState("");
 
-  useEffect(()=>{ setTimeout(()=>setVis(true),10); },[]);
+  useEffect(()=>{
+    setTimeout(()=>setVis(true),10);
+    apiSession(true).then(session=>{
+      if(session?.kind === "owner") { setAuth(true); loadData(); }
+    }).catch(()=>{});
+  },[]);
   const close = () => { setVis(false); setTimeout(onClose,350); haptic("medium"); };
   const showMsg = (m) => { setToast2(m); setTimeout(()=>setToast2(""),2500); };
-  const login = () => { if(pass===getSuperPass()){ setAuth(true); loadData(); haptic("success"); } else { setErr("סיסמה שגויה"); haptic("medium"); } };
+  const login = async () => {
+    if(authLoading) return;
+    setAuthLoading(true); setErr("");
+    const payload = challengeId ? {challengeId, code:ownerCode} : {password:pass};
+    const result = await apiCall("/api/owner/login", payload).catch(()=>null);
+    setAuthLoading(false);
+    if(result?.challenge){ setChallengeId(result.challengeId); setPass(""); showMsg("🔐 קוד חד־פעמי נשלח לבעלים"); return; }
+    if(result?.success){ setAuth(true); setOwnerCode(""); loadData(); haptic("success"); return; }
+    setErr(result?.error === "login_locked" ? "הכניסה ננעלה זמנית" : result?.error === "invalid_code" ? "קוד שגוי או שפג תוקפו" : "הכניסה נדחתה");
+    haptic("medium");
+  };
   const loadData = async () => { setLoading(true); const [cRes, iRes] = await Promise.all([mgmtCall("getMgmtClients"), mgmtCall("getMgmtIssues")]); if(cRes?.clients) setClients(cRes.clients); if(iRes?.issues) setIssues(iRes.issues); setLoading(false); };
   const saveClient = async (row) => { setSaving(true); await mgmtCall("saveMgmtClient", { row }); await loadData(); setSaving(false); showMsg("✅ נשמר"); haptic("success"); };
   const deleteClient = async (rowIndex) => { if(!window.confirm("למחוק לקוח זה?")) return; setSaving(true); await mgmtCall("deleteMgmtClient", { rowIndex }); await loadData(); setSaving(false); showMsg("🗑️ לקוח נמחק"); };
-  const updateClientStatus = async (rowIndex, status) => { setSaving(true); await mgmtCall("updateMgmtClientStatus", { rowIndex, status }); await loadData(); setSaving(false); showMsg("✅ עודכן"); };
+  const updateClientStatus = async (rowIndex, status) => {
+    if(status==="מושהה" && !window.confirm("להשהות את הכניסה לשירות? הנתונים לא יימחקו.")) return;
+    setSaving(true);
+    await mgmtCall("updateMgmtClientStatus", { rowIndex, status });
+    await loadData();
+    setSaving(false);
+    showMsg(status==="מושהה" ? "⛔ השירות מושהה — נא לפנות למנהל המערכת" : "✅ סטטוס השירות עודכן");
+  };
   const updateIssueStatus = async (idx, newStatus) => { const updated = [...issues]; updated[idx] = [...updated[idx]]; updated[idx][5] = newStatus; setIssues(updated); await mgmtCall("updateMgmtIssueStatus", { rowIndex: idx+2, status: newStatus }); showMsg("✅ סטטוס עודכן"); };
   const addIssueNote = async (idx, note) => { if(!note.trim()) return; const updated = [...issues]; updated[idx] = [...updated[idx]]; updated[idx][6] = note; setIssues(updated); await mgmtCall("updateMgmtIssueStatus", { rowIndex: idx+2, status: updated[idx][5], note }); setIssueNote({}); showMsg("✅ הערה נוספה"); };
   const filteredIssues = issues.filter(i => !dateFilter || String(i[2]).slice(0,10)===dateFilter);
@@ -2196,9 +2215,17 @@ function SuperAdminScreen({ onClose }) {
               <div style={{fontSize:48,textAlign:"center",marginBottom:12}}>🔐</div>
               <div style={{fontWeight:900,fontSize:18,color:C2.text,textAlign:"center",marginBottom:20}}>כניסה מאובטחת</div>
               <div style={{fontWeight:800,fontSize:12,color:C2.muted,textAlign:"center",margin:"-12px 0 16px"}}>גישה לבעלים הרשמי: {OFFICIAL_INTERFACE_OWNER}</div>
-              <input type="password" value={pass} onChange={e=>{setPass(e.target.value);setErr("");}} placeholder="סיסמה סודית" style={{...inp2,marginBottom:err?8:16}} onKeyDown={e=>e.key==="Enter"&&login()}/>
+              {!challengeId?(
+                <input type="password" value={pass} onChange={e=>{setPass(e.target.value);setErr("");}} placeholder="סיסמת בעלים" autoComplete="current-password" style={{...inp2,marginBottom:err?8:16}} onKeyDown={e=>e.key==="Enter"&&login()}/>
+              ):(
+                <>
+                  <div style={{fontSize:12,fontWeight:800,color:C2.muted,textAlign:"center",marginBottom:10}}>קוד חד־פעמי נשלח לערוץ האבטחה של הבעלים</div>
+                  <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={ownerCode} onChange={e=>{setOwnerCode(e.target.value.replace(/\D/g,"").slice(0,6));setErr("");}} placeholder="000000" style={{...inp2,marginBottom:err?8:16,textAlign:"center",fontSize:22,letterSpacing:"0.25em"}} onKeyDown={e=>e.key==="Enter"&&login()}/>
+                </>
+              )}
               {err&&<div style={{background:"#ffebee",borderRadius:10,padding:"8px 14px",marginBottom:12,color:C2.red,fontSize:13,fontWeight:700,textAlign:"center"}}>⚠️ {err}</div>}
-              <Press onClick={login} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C2.blue},#42a5f5)`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.4)"}}>כניסה →</Press>
+              <Press onClick={login} style={{padding:"14px",borderRadius:14,background:authLoading?"#90caf9":`linear-gradient(135deg,${C2.blue},#42a5f5)`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.4)"}}>{authLoading?"⏳ מאמת...":challengeId?"אמת קוד →":"שלח קוד לבעלים →"}</Press>
+              {challengeId&&<Press onClick={()=>{setChallengeId("");setOwnerCode("");setErr("");}} style={{marginTop:8,padding:"9px",borderRadius:10,background:"#f0f4f8",color:C2.muted,fontWeight:800,fontSize:12,textAlign:"center"}}>התחל מחדש</Press>}
             </div>
           </div>
         ):(
@@ -2310,11 +2337,9 @@ function SuperAdminScreen({ onClose }) {
               )}
               {tab==="settings"&&(
                 <div style={{background:C2.white,borderRadius:16,padding:20,boxShadow:"0 2px 12px rgba(0,0,0,0.06)",border:`1px solid ${C2.border}`}}>
-                  <div style={{fontWeight:900,fontSize:16,color:C2.text,marginBottom:20}}>🔑 שינוי סיסמת כניסה</div>
-                  <div style={{marginBottom:12}}><label style={{fontSize:11,fontWeight:700,color:C2.muted,display:"block",marginBottom:6}}>סיסמה חדשה</label><input type="password" value={newPass} onChange={e=>setNewPass(e.target.value)} style={inp2} placeholder="לפחות 6 תווים"/></div>
-                  <div style={{marginBottom:16}}><label style={{fontSize:11,fontWeight:700,color:C2.muted,display:"block",marginBottom:6}}>אימות סיסמה</label><input type="password" value={newPass2} onChange={e=>setNewPass2(e.target.value)} style={inp2} placeholder="הזן שוב"/></div>
-                  {passMsg&&<div style={{background:passMsg.includes("✅")?"#e8f5e9":"#ffebee",borderRadius:10,padding:"10px 14px",marginBottom:14,color:passMsg.includes("✅")?C2.green:C2.red,fontSize:13,fontWeight:700,textAlign:"center"}}>{passMsg}</div>}
-                  <Press onClick={()=>{ if(!newPass||newPass.length<6){setPassMsg("⚠️ סיסמה חייבת להיות לפחות 6 תווים");return;} if(newPass!==newPass2){setPassMsg("⚠️ הסיסמאות לא תואמות");return;} setSuperPass(newPass); setNewPass(""); setNewPass2(""); setPassMsg("✅ סיסמה עודכנה!"); haptic("success"); setTimeout(()=>setPassMsg(""),3000); }} style={{padding:"14px",borderRadius:14,background:`linear-gradient(135deg,${C2.blue},#42a5f5)`,color:"#fff",fontWeight:900,fontSize:15,textAlign:"center",boxShadow:"0 6px 20px rgba(21,101,192,0.35)"}}>עדכן סיסמה</Press>
+                  <div style={{fontWeight:900,fontSize:16,color:C2.text,marginBottom:10}}>🔐 אבטחת בעלים</div>
+                  <div style={{fontSize:13,color:C2.muted,lineHeight:1.7,marginBottom:16}}>הסיסמה מנוהלת כסוד ב־Render ואינה נשמרת בדפדפן. כל כניסה דורשת גם קוד חד־פעמי שנשלח לבעלים.</div>
+                  <Press onClick={async()=>{await apiCall("/api/owner/logout",{}).catch(()=>null);setAuth(false);setChallengeId("");setPass("");showMsg("יצאת מממשק הסופר־אדמין");}} style={{padding:"12px",borderRadius:14,background:"#ffebee",color:C2.red,fontWeight:900,fontSize:14,textAlign:"center"}}>יציאה מאובטחת</Press>
                 </div>
               )}
             </div>
@@ -2336,6 +2361,7 @@ export default function App() {
   });
   const [companyName, setCompanyName] = useState(company.name||DEFAULT_APP_NAME);
   const [user,setUser] = useState(()=>getStoredUserForToday());
+  const [sessionChecking,setSessionChecking] = useState(()=>!!getStoredUserForToday());
   const [subOperatorLanguage,setSubOperatorLanguage] = useState(()=>{
     try {
       return localStorage.getItem(subOperatorLanguageStorageKey(getStoredUserForToday())) === "en" ? "en" : "he";
@@ -3247,6 +3273,39 @@ useEffect(() => {
       }, resetMs);
     }
   };
+  useEffect(()=>{
+    const stored = getStoredUserForToday();
+    if(!stored){ setSessionChecking(false); return; }
+    apiSession().then(session=>{
+      if(session?.kind === "user" && session.user){
+        setUser(session.user);
+        localStorage.setItem("galileo_user", JSON.stringify(session.user));
+      } else {
+        localStorage.removeItem("galileo_user");
+        localStorage.removeItem(LOGIN_DAY_KEY);
+        setUser(null);
+        setScreen("login");
+        if(session?.error === "license_suspended") setLoginErr("⛔ השירות מושהה — נא לפנות למנהל המערכת");
+      }
+    }).catch(()=>{
+      setUser(null);
+      setScreen("login");
+    }).finally(()=>setSessionChecking(false));
+  },[]);
+  useEffect(()=>{
+    const onAuthRequired = event => {
+      if(event.detail?.error !== "license_suspended" && event.detail?.error !== "auth_required") return;
+      localStorage.removeItem("galileo_user");
+      localStorage.removeItem(LOGIN_DAY_KEY);
+      setUser(null);
+      setScreen("login");
+      setLoginErr(event.detail?.error === "license_suspended"
+        ? "⛔ השירות מושהה — נא לפנות למנהל המערכת"
+        : "החיבור פג — נא להתחבר מחדש");
+    };
+    window.addEventListener("galileo:auth-required", onAuthRequired);
+    return ()=>window.removeEventListener("galileo:auth-required", onAuthRequired);
+  },[]);
   const isActionLoading = (key) => actionStatus[key] === "loading";
   const actionLabel = (key, labels) => labels[actionStatus[key] || "idle"] || labels.idle;
   const pushEnabledKey = (username) => `galileo_push_enabled_${String(username || "").trim().toLowerCase()}`;
@@ -3427,7 +3486,9 @@ useEffect(() => {
   };
   const applyFetchedUsers = (users=[]) => {
     if (!Array.isArray(users)) return [];
-    const cleanUsers = dedupeUsers(users);
+    const cleanUsers = dedupeUsers(users.map(user => Object.fromEntries(
+      Object.entries(user || {}).filter(([key]) => !["password","סיסמה","סיסמא"].includes(String(key).toLowerCase()))
+    )));
     setAllUsers(cleanUsers);
     try {
       const cached = JSON.parse(localStorage.getItem("galileo_cache") || "{}");
@@ -5125,7 +5186,7 @@ useEffect(() => {
       return next;
     });
   };
-  const handleLogout = () => { trackUsageEvent("logout", {screen}); localStorage.removeItem("galileo_user"); localStorage.removeItem(LOGIN_DAY_KEY); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
+  const handleLogout = () => { trackUsageEvent("logout", {screen}); void apiCall("/api/logout",{}); localStorage.removeItem("galileo_user"); localStorage.removeItem(LOGIN_DAY_KEY); setUser(null); setLoginUser(""); setLoginPass(""); setScreen("login"); haptic("medium"); };
 
   const showToast = (msg) => { clearTimeout(toastTimer.current); setToast({msg,visible:true}); toastTimer.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2500); };
 
@@ -5328,30 +5389,7 @@ useEffect(() => {
   useEffect(()=>{
     applyTenantBranding(getCompany());
     try { const cached = localStorage.getItem("galileo_cache"); if(cached){ const {users,clients:cls,tasks:tsk,adminOrders:ord,supplyDB:sdb,lastReadings:lr,sharedSubOrders:sh,subOperatorApprovals:ap,pendingSubReports:pr,sheetReports:sr}=JSON.parse(cached); if(users?.length) applyFetchedUsers(users); if(cls?.length) setClients(ensureClientIds(cls)); if(tsk) setTasks(tsk); if(ord) setAdminOrders(ord); if(sdb) setSupplyDB(sdb); if(lr) setLastReadings(lr); if(Array.isArray(sh)) setSharedSubOrders(sh); if(Array.isArray(ap)) setSubOperatorApprovals(ap); if(Array.isArray(pr)) setPendingSubReports(pr); if(Array.isArray(sr)) setSheetReports(sr); setSheetId("connected"); } } catch {}
-    const checkLicense = async () => {
-      const lic = getLicense(); if(!lic.key) return;
-      try {
-        const res = await mgmtCall("validateLicense",{key:lic.key});
-        if(res?.valid === true){
-          const company = companyFromLicenseResponse(res);
-          saveLicense({...lic, company:company.name, sheetId:res.sheetId, plan:res.plan, status:res.status, expiry:res.expiry, logoUrl:res.logoUrl||"", appName:company.appName, shortName:company.shortName, icon192Url:company.icon192Url, icon512Url:company.icon512Url, appleIconUrl:company.appleIconUrl, themeColor:company.themeColor, backgroundColor:company.backgroundColor});
-          saveCompany(company);
-          setCompanyName(company.name || DEFAULT_APP_NAME);
-          setClientPlan({plan:res.plan, status:res.status});
-          if(res.sheetId) {
-            localStorage.setItem("galileo_sheet_id", res.sheetId);
-            setSheetId("connected");
-          }
-        } else if(res?.valid === false) {
-          setDataConnectionStatus("offline");
-          showToast("מפתח הגישה לא אומת כרגע. האפליקציה נשארת פתוחה עם המידע השמור");
-        } else {
-          setDataConnectionStatus("offline");
-          showToast("לא ניתן לאמת את מפתח הגישה כרגע. החיבור נשמר ואפשר להמשיך לעבוד");
-        }
-      } catch {}
-    };
-    checkLicense(); setTimeout(()=>connectSheets(true), 80);
+    setTimeout(()=>connectSheets(true), 80);
   },[]);
 
   useEffect(()=>{
@@ -5596,23 +5634,6 @@ useEffect(() => {
     haptic("medium");
     setTimeout(()=>connectSheets(true), 80);
     connectPushUser(found.username, false).catch(e => console.warn("Push identity connect failed:", e));
-    // בדיקת מנוי מושהה ברקע — לא חוסם כניסה
-    setTimeout(async () => {
-      try {
-        const company = getCompany();
-        if (company.sheetId) {
-          const mgmtRes = await mgmtCall("getMgmtClients");
-          const myRecord = (mgmtRes?.clients||[]).find(c => String(c[7])===String(company.sheetId));
-          if (myRecord && myRecord[6]==="מושהה") {
-            setUser(null);
-            localStorage.removeItem("galileo_user");
-            localStorage.removeItem(LOGIN_DAY_KEY);
-            setScreen("login");
-            setLoginErr("⛔ המנוי שלך מושהה. לפרטים צור קשר עם מנהל המערכת.");
-          }
-        }
-      } catch(e) {}
-    }, 0);
   };
 
   const handleLogin = async () => {
@@ -5633,64 +5654,23 @@ useEffect(() => {
       return;
     }
 
-    // cache-first — כניסה מיידית אם המשתמש קיים ב-cache
-    try {
-      const cacheData = JSON.parse(localStorage.getItem("galileo_cache")||"{}");
-      if (Array.isArray(cacheData.users) && cacheData.users.length > 0) {
-        const found = cacheData.users.find(u =>
-          String(u.username||"").toLowerCase().trim() === inputUser &&
-          String(u.password||"").trim() === inputPass
-        );
-        if (found) {
-          setAction("login", "success", 1200);
-          _doLogin(found);
-          setLoginLoading(false);
-          // רענן Sheets ברקע
-          sheetCall("getUsers").then(uRes => {
-            if (Array.isArray(uRes?.users) && uRes.users.length > 0) {
-              const cleanUsers = applyFetchedUsers(uRes.users);
-              try {
-                const c = JSON.parse(localStorage.getItem("galileo_cache")||"{}");
-                localStorage.setItem("galileo_cache", JSON.stringify({...c, users:cleanUsers, cachedAt:Date.now()}));
-              } catch(e) {}
-            }
-          }).catch(()=>{});
-          return;
-        }
-      }
-    } catch(e) {}
+    const license = getLicense();
+    const result = await apiCall("/api/login", {
+      username:inputUser,
+      password:inputPass,
+      sheetId:getConfiguredSheetId(),
+      licenseKey:license.key || ""
+    }).catch(()=>null);
 
-    // אין cache — שלוף מ-Sheets
-    let usersToCheck = [];
-    try {
-      const uRes = await sheetCall("getUsers");
-      if (Array.isArray(uRes?.users) && uRes.users.length > 0) {
-        usersToCheck = applyFetchedUsers(uRes.users);
-        try {
-          const c = JSON.parse(localStorage.getItem("galileo_cache")||"{}");
-          localStorage.setItem("galileo_cache", JSON.stringify({...c, users:usersToCheck, cachedAt:Date.now()}));
-        } catch(e) {}
-      }
-    } catch(e) {}
-
-    if (!usersToCheck.length) {
-      setLoginErr("לא נטענו משתמשים. בדוק Google Sheets.");
-      setLoginLoading(false);
-      setAction("login", "error", 2200);
-      haptic("medium");
-      return;
-    }
-
-    const found = usersToCheck.find(u =>
-      String(u.username||"").toLowerCase().trim() === inputUser &&
-      String(u.password||"").trim() === inputPass
-    );
-
-    if (found) {
+    if (result?.success && result.user) {
       setAction("login", "success", 1200);
-      _doLogin(found);
+      _doLogin(result.user);
     } else {
-      setLoginErr("שם משתמש או סיסמה שגויים");
+      setLoginErr(result?.error === "login_locked"
+        ? "יותר מדי ניסיונות — הכניסה ננעלה זמנית"
+        : result?.error === "license_suspended"
+          ? "⛔ השירות מושהה — נא לפנות למנהל המערכת"
+          : "שם משתמש או סיסמה שגויים");
       setAction("login", "error", 2200);
       haptic("medium");
     }
@@ -7722,6 +7702,8 @@ useEffect(() => {
     if (slider.disabledReason === "נעול בבריכת מלח") return "Locked for a salt pool";
     return slider.disabledReason;
   };
+
+  if (sessionChecking) return <div dir="rtl" style={{minHeight:"100vh",display:"grid",placeItems:"center",background:"#e7f0fb",color:C.blue,fontFamily:"'Plus Jakarta Sans',sans-serif",fontWeight:900}}>מאמת חיבור מאובטח…</div>;
 
   if (showSetup) return (
     <>

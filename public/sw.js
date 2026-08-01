@@ -114,13 +114,14 @@ async function updatePendingRecordIfPresent(record) {
   }
 }
 
-async function postSheet(scriptUrl, sheetId, action, payload = {}) {
+async function postSheet(sheetId, action, payload = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45000);
   try {
-    const response = await fetch(scriptUrl, {
+    const response = await fetch("/api/backend", {
       method:"POST",
-      headers:{"Content-Type":"text/plain"},
+      headers:{"Content-Type":"application/json"},
+      credentials:"same-origin",
       body:JSON.stringify({ action, sheetId, ...payload }),
       signal:controller.signal
     });
@@ -153,8 +154,8 @@ function reportFoundInSheet(sheetReport = {}, report = {}) {
 }
 
 async function confirmSaved(record, report) {
-  if (!record.scriptUrl || !record.sheetId || !report.client || !report.reportDate) return false;
-  const response = await postSheet(record.scriptUrl, record.sheetId, "getReportStorageStatus", { report });
+  if (!record.sheetId || !report.client || !report.reportDate) return false;
+  const response = await postSheet(record.sheetId, "getReportStorageStatus", { report });
   const wantedId = normalize(report.id);
   return Array.isArray(response?.matches) && response.matches.some(item =>
     item?.confirmed === true ||
@@ -170,7 +171,7 @@ async function notifyClients(message) {
 async function savePendingRecord(record) {
   const item = record.item || {};
   const report = item.report || item;
-  if (!record.scriptUrl || !record.sheetId || !report?.client || !report?.reportDate) return false;
+  if (!record.sheetId || !report?.client || !report?.reportDate) return false;
   if (item?.editingPaused) return true;
   if (item?.report && item.savedToSheet) return true;
   if (!await pendingRecordIsCurrent(record)) return false;
@@ -178,7 +179,6 @@ async function savePendingRecord(record) {
   const original = item?.report ? item.updateOriginal : undefined;
   const supplyUpdate = item?.report ? item.supplyUpdate : undefined;
   const response = await postSheet(
-    record.scriptUrl,
     record.sheetId,
     original ? "updateReport" : "saveReport",
     original
