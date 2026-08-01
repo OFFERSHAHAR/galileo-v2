@@ -2,6 +2,7 @@
   // הלקוח משתף את הגיליון שלו עם האימייל שלך ומכניס את ה-ID באפליקציה
 
   var GALILEO_SCRIPT_BUILD_ = "20260801-secure-gateway-v1";
+  var BACKEND_PROXY_SECRET_SHA256_ = "de93cb656ff2e8f74d83231532976b2daaa4a98099723fbee9a4ac05c6aa6477";
 
   function managementSpreadsheet_() {
     const id = PropertiesService.getScriptProperties().getProperty("MANAGEMENT_SHEET_ID") || "17jNBWSAkW17zfz4o2gY3wOsERa3_NAgSZ3b9HPkNspk";
@@ -9,13 +10,13 @@
   }
 
   function isBackendProxyAuthorized_(data) {
-    const expected = String(PropertiesService.getScriptProperties().getProperty("BACKEND_PROXY_SECRET") || "");
+    const expected = String(PropertiesService.getScriptProperties().getProperty("BACKEND_PROXY_SECRET_SHA256") || BACKEND_PROXY_SECRET_SHA256_).toLowerCase();
     const provided = String(data && data.backendSecret || "");
     if (!expected || !provided) return false;
-    const left = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, expected, Utilities.Charset.UTF_8);
-    const right = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, provided, Utilities.Charset.UTF_8);
-    let different = left.length ^ right.length;
-    for (let i = 0; i < Math.max(left.length, right.length); i++) different |= (left[i % left.length] ^ right[i % right.length]);
+    const actual = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, provided, Utilities.Charset.UTF_8)
+      .map(byte => ("0" + ((byte + 256) % 256).toString(16)).slice(-2)).join("");
+    let different = expected.length ^ actual.length;
+    for (let i = 0; i < Math.max(expected.length, actual.length); i++) different |= expected.charCodeAt(i % expected.length) ^ actual.charCodeAt(i % actual.length);
     return different === 0;
   }
 
@@ -74,7 +75,7 @@
 
   function sendOwnerLoginCode_(data) {
     const props = PropertiesService.getScriptProperties();
-    const email = String(props.getProperty("SECURITY_ALERT_EMAIL") || "").trim();
+    const email = String(props.getProperty("SECURITY_ALERT_EMAIL") || Session.getEffectiveUser().getEmail() || "").trim();
     const ownerId = String(props.getProperty("SECURITY_OWNER_USER_ID") || "or").trim().toLowerCase();
     const code = String(data.code || "").replace(/\D/g, "");
     if (!/^\d{6}$/.test(code)) return { sent:false, error:"invalid_code" };
@@ -105,7 +106,7 @@
     sheet.appendRow([new Date(), event, details]);
     const message = event + "\n" + details;
     let sent = false;
-    const email = String(props.getProperty("SECURITY_ALERT_EMAIL") || "").trim();
+    const email = String(props.getProperty("SECURITY_ALERT_EMAIL") || Session.getEffectiveUser().getEmail() || "").trim();
     if (email) {
       try { MailApp.sendEmail(email, "התראת אבטחה Galileo", message); sent = true; } catch (e) {}
     }
