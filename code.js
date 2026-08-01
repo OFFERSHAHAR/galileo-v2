@@ -74,56 +74,20 @@
   }
 
   function securityAlertEmail_() {
-    const configured = String(PropertiesService.getScriptProperties().getProperty("SECURITY_ALERT_EMAIL") || "").trim();
-    if (configured) return configured;
-    try {
-      const sheetOwner = String(managementSpreadsheet_().getOwner().getEmail() || "").trim();
-      if (sheetOwner) return sheetOwner;
-    } catch (e) {}
-    try {
-      return String(DriveApp.getFileById(ScriptApp.getScriptId()).getOwner().getEmail() || "").trim();
-    } catch (e) {
-      return "";
-    }
-  }
-
-  function securityOwnerChannels_() {
-    const ownerId = String(PropertiesService.getScriptProperties().getProperty("SECURITY_OWNER_USER_ID") || "or").trim().toLowerCase();
-    let owner = {};
-    try {
-      owner = getUsers_(managementSpreadsheet_()).find(function(user) {
-        return String(user.username || "").trim().toLowerCase() === ownerId;
-      }) || {};
-    } catch (e) {}
-    return {
-      ownerId: ownerId,
-      email: securityAlertEmail_() || String(owner.email || owner.Email || owner.adminEmail || owner["אימייל"] || owner["מייל"] || owner["דוא\"ל"] || "").trim(),
-      phone: String(owner.phone || "").trim()
-    };
+    return String(PropertiesService.getScriptProperties().getProperty("SECURITY_ALERT_EMAIL") || "").trim();
   }
 
   function sendOwnerLoginCode_(data) {
-    const channels = securityOwnerChannels_();
+    const email = securityAlertEmail_();
     const code = String(data.code || "").replace(/\D/g, "");
     if (!/^\d{6}$/.test(code)) return { sent:false, error:"invalid_code" };
-    let sent = false;
-    if (channels.email) {
-      try {
-        MailApp.sendEmail(channels.email, "קוד כניסה מאובטח ל-Galileo", "קוד הכניסה החד-פעמי שלך: " + code + "\nהקוד תקף ל-5 דקות.");
-        sent = true;
-      } catch (e) {}
-    }
+    if (!email) return { sent:false, error:"recipient_unconfigured" };
     try {
-      const push = sendAppNotificationToUser_({ externalUserId:channels.ownerId, title:"קוד כניסה מאובטח", message:"קוד הכניסה: " + code + " (תקף ל-5 דקות)" }, managementSpreadsheet_());
-      sent = sent || !!(push && (push.success || push.sent || Number(push.recipients || 0) > 0));
-    } catch (e) {}
-    if (channels.phone) {
-      try {
-        const whatsapp = sendGreenApiWhatsApp_({ phone:channels.phone, message:"קוד הכניסה המאובטח ל-Galileo: " + code + " (תקף ל-5 דקות)", messageType:"ownerLoginCode" });
-        sent = sent || !!(whatsapp && whatsapp.success);
-      } catch (e) {}
+      MailApp.sendEmail(email, "קוד כניסה מאובטח ל-Galileo", "קוד הכניסה החד-פעמי שלך: " + code + "\nהקוד תקף ל-5 דקות.");
+      return { sent:true };
+    } catch (e) {
+      return { sent:false, error:"email_unavailable" };
     }
-    return { sent:sent };
   }
 
   function securityAlert_(data) {
@@ -138,20 +102,8 @@
     sheet.appendRow([new Date(), event, details]);
     const message = event + "\n" + details;
     let sent = false;
-    const channels = securityOwnerChannels_();
-    if (channels.email) {
-      try { MailApp.sendEmail(channels.email, "התראת אבטחה Galileo", message); sent = true; } catch (e) {}
-    }
-    try {
-      const push = sendAppNotificationToUser_({ externalUserId:channels.ownerId, title:"התראת אבטחה", message:message }, ss);
-      sent = sent || !!(push && (push.success || push.sent || Number(push.recipients || 0) > 0));
-    } catch (e) {}
-    if (channels.phone) {
-      try {
-        const whatsapp = sendGreenApiWhatsApp_({ phone:channels.phone, message:"התראת אבטחה Galileo\n" + message, messageType:"securityAlert" });
-        sent = sent || !!(whatsapp && whatsapp.success);
-      } catch (e) {}
-    }
+    const email = securityAlertEmail_();
+    if (email) try { MailApp.sendEmail(email, "התראת אבטחה Galileo", message); sent = true; } catch (e) {}
     return { success:true, sent:sent };
   }
 
