@@ -87,28 +87,46 @@
     }
   }
 
+  function securityOwnerChannels_() {
+    const ownerId = String(PropertiesService.getScriptProperties().getProperty("SECURITY_OWNER_USER_ID") || "or").trim().toLowerCase();
+    let owner = {};
+    try {
+      owner = getUsers_(managementSpreadsheet_()).find(function(user) {
+        return String(user.username || "").trim().toLowerCase() === ownerId;
+      }) || {};
+    } catch (e) {}
+    return {
+      ownerId: ownerId,
+      email: securityAlertEmail_() || String(owner.email || owner.Email || owner.adminEmail || owner["אימייל"] || owner["מייל"] || owner["דוא\"ל"] || "").trim(),
+      phone: String(owner.phone || "").trim()
+    };
+  }
+
   function sendOwnerLoginCode_(data) {
-    const props = PropertiesService.getScriptProperties();
-    const email = securityAlertEmail_();
-    const ownerId = String(props.getProperty("SECURITY_OWNER_USER_ID") || "or").trim().toLowerCase();
+    const channels = securityOwnerChannels_();
     const code = String(data.code || "").replace(/\D/g, "");
     if (!/^\d{6}$/.test(code)) return { sent:false, error:"invalid_code" };
     let sent = false;
-    if (email) {
+    if (channels.email) {
       try {
-        MailApp.sendEmail(email, "קוד כניסה מאובטח ל-Galileo", "קוד הכניסה החד-פעמי שלך: " + code + "\nהקוד תקף ל-5 דקות.");
+        MailApp.sendEmail(channels.email, "קוד כניסה מאובטח ל-Galileo", "קוד הכניסה החד-פעמי שלך: " + code + "\nהקוד תקף ל-5 דקות.");
         sent = true;
       } catch (e) {}
     }
     try {
-      const push = sendAppNotificationToUser_({ externalUserId:ownerId, title:"קוד כניסה מאובטח", message:"קוד הכניסה: " + code + " (תקף ל-5 דקות)" }, managementSpreadsheet_());
+      const push = sendAppNotificationToUser_({ externalUserId:channels.ownerId, title:"קוד כניסה מאובטח", message:"קוד הכניסה: " + code + " (תקף ל-5 דקות)" }, managementSpreadsheet_());
       sent = sent || !!(push && (push.success || push.sent || Number(push.recipients || 0) > 0));
     } catch (e) {}
+    if (channels.phone) {
+      try {
+        const whatsapp = sendGreenApiWhatsApp_({ phone:channels.phone, message:"קוד הכניסה המאובטח ל-Galileo: " + code + " (תקף ל-5 דקות)", messageType:"ownerLoginCode" });
+        sent = sent || !!(whatsapp && whatsapp.success);
+      } catch (e) {}
+    }
     return { sent:sent };
   }
 
   function securityAlert_(data) {
-    const props = PropertiesService.getScriptProperties();
     const ss = managementSpreadsheet_();
     let sheet = ss.getSheetByName("SecurityAudit");
     if (!sheet) {
@@ -120,14 +138,20 @@
     sheet.appendRow([new Date(), event, details]);
     const message = event + "\n" + details;
     let sent = false;
-    const email = securityAlertEmail_();
-    if (email) {
-      try { MailApp.sendEmail(email, "התראת אבטחה Galileo", message); sent = true; } catch (e) {}
+    const channels = securityOwnerChannels_();
+    if (channels.email) {
+      try { MailApp.sendEmail(channels.email, "התראת אבטחה Galileo", message); sent = true; } catch (e) {}
     }
     try {
-      const push = sendAppNotificationToUser_({ externalUserId:String(props.getProperty("SECURITY_OWNER_USER_ID") || "or"), title:"התראת אבטחה", message:message }, ss);
+      const push = sendAppNotificationToUser_({ externalUserId:channels.ownerId, title:"התראת אבטחה", message:message }, ss);
       sent = sent || !!(push && (push.success || push.sent || Number(push.recipients || 0) > 0));
     } catch (e) {}
+    if (channels.phone) {
+      try {
+        const whatsapp = sendGreenApiWhatsApp_({ phone:channels.phone, message:"התראת אבטחה Galileo\n" + message, messageType:"securityAlert" });
+        sent = sent || !!(whatsapp && whatsapp.success);
+      } catch (e) {}
+    }
     return { success:true, sent:sent };
   }
 
