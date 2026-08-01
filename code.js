@@ -102,6 +102,13 @@
     };
   }
 
+  function configureSecurityOwnerEmail() {
+    const email = String(Session.getEffectiveUser().getEmail() || "").trim();
+    if (!email) throw new Error("Owner email is unavailable for this account");
+    PropertiesService.getScriptProperties().setProperty("SECURITY_ALERT_EMAIL", email);
+    return { configured:true };
+  }
+
   function sendOwnerLoginCode_(data) {
     const channels = securityOwnerChannels_();
     const code = String(data.code || "").replace(/\D/g, "");
